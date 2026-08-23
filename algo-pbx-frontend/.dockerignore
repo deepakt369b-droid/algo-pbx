@@ -1,0 +1,13 @@
+# Did not exist before — without it, `COPY . .` in the Dockerfile's builder
+# stage picked up a developer's local .env (real secrets) and baked it into
+# a build layer that ends up in any registry the image is pushed to, plus
+# unnecessary node_modules/.next bloat slowing every build.
+node_modules
+.next
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.git
+.vscode
+coverage

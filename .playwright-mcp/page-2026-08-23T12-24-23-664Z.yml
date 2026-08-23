@@ -1,0 +1,182 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e3]:
+    - generic [ref=f4e4]:
+      - heading "Supervisor / Admin Dashboard" [level=1] [ref=f4e5]
+      - generic [ref=f4e6]:
+        - generic [ref=f4e7]: admin@algopbx.local
+        - button "Sign out" [ref=f4e9] [cursor=pointer]
+    - navigation [ref=f4e10]:
+      - link "Wallboard" [ref=f4e11] [cursor=pointer]:
+        - /url: /admin
+      - link "Queues" [ref=f4e12] [cursor=pointer]:
+        - /url: /admin/queues
+      - link "CDR" [ref=f4e13] [cursor=pointer]:
+        - /url: /admin/cdr
+      - link "Extensions" [ref=f4e14] [cursor=pointer]:
+        - /url: /admin/extensions
+      - link "Users" [ref=f4e15] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Do Not Call" [ref=f4e16] [cursor=pointer]:
+        - /url: /admin/dnc
+      - link "WhatsApp" [ref=f4e17] [cursor=pointer]:
+        - /url: /admin/whatsapp
+      - link "SIM SMS" [ref=f4e18] [cursor=pointer]:
+        - /url: /admin/sms
+      - link "Rooms" [ref=f4e19] [cursor=pointer]:
+        - /url: /admin/rooms
+      - link "Sign-Ins" [ref=f4e20] [cursor=pointer]:
+        - /url: /admin/sign-ins
+      - link "Reports" [ref=f4e21] [cursor=pointer]:
+        - /url: /admin/reports
+      - link "Settings" [ref=f4e22] [cursor=pointer]:
+        - /url: /admin/settings
+    - generic [ref=f4e23]:
+      - heading "Runtime Settings" [level=1] [ref=f4e24]
+      - paragraph [ref=f4e25]: These take effect immediately — no restart needed. Secret values are never shown again once saved; leaving a field blank keeps the existing value.
+      - generic [ref=f4e27]:
+        - generic [ref=f4e28]:
+          - heading "Email (Resend)" [level=2] [ref=f4e29]
+          - button "Test connection" [ref=f4e30] [cursor=pointer]
+        - generic [ref=f4e31]:
+          - generic [ref=f4e32]:
+            - generic [ref=f4e33]: Resend API Key
+            - paragraph [ref=f4e34]: https://resend.com/api-keys — used only to deliver agent invite emails.
+            - generic [ref=f4e35]:
+              - textbox "configured, ending null" [ref=f4e36]
+              - button "Save" [disabled] [ref=f4e37]
+            - paragraph [ref=f4e38]: Configured (ending null)
+          - generic [ref=f4e39]:
+            - generic [ref=f4e40]: Invite From Address
+            - generic [ref=f4e41]:
+              - textbox "not configured" [ref=f4e42]: invites@algopbx.local
+              - button "Save" [disabled] [ref=f4e43]
+            - paragraph [ref=f4e44]: Configured
+      - generic [ref=f4e45]:
+        - generic [ref=f4e46]:
+          - heading "WhatsApp — OpenWA" [level=2] [ref=f4e47]
+          - button "Test connection" [ref=f4e48] [cursor=pointer]
+        - generic [ref=f4e49]:
+          - generic [ref=f4e50]:
+            - generic [ref=f4e51]: OpenWA Base URL
+            - generic [ref=f4e52]:
+              - textbox "not configured" [ref=f4e53]: http://localhost:2785
+              - button "Save" [disabled] [ref=f4e54]
+            - paragraph [ref=f4e55]: Configured
+          - generic [ref=f4e56]:
+            - generic [ref=f4e57]: OpenWA API Key
+            - generic [ref=f4e58]:
+              - textbox "configured, ending null" [ref=f4e59]
+              - button "Save" [disabled] [ref=f4e60]
+            - paragraph [ref=f4e61]: Configured (ending null)
+          - generic [ref=f4e62]:
+            - generic [ref=f4e63]: OpenWA Webhook Shared Secret
+            - paragraph [ref=f4e64]: Must match the value configured on the OpenWA sidecar's outbound webhook.
+            - generic [ref=f4e65]:
+              - textbox "configured, ending null" [ref=f4e66]
+              - button "Save" [disabled] [ref=f4e67]
+            - paragraph [ref=f4e68]: Configured (ending null)
+      - generic [ref=f4e69]:
+        - generic [ref=f4e70]:
+          - heading "WhatsApp — Meta Cloud API (fallback)" [level=2] [ref=f4e71]
+          - button "Test connection" [ref=f4e72] [cursor=pointer]
+        - generic [ref=f4e73]:
+          - generic [ref=f4e74]:
+            - generic [ref=f4e75]: Meta WABA Access Token
+            - generic [ref=f4e76]:
+              - textbox "not configured" [ref=f4e77]
+              - button "Save" [disabled] [ref=f4e78]
+          - generic [ref=f4e79]:
+            - generic [ref=f4e80]: Meta Phone Number ID
+            - generic [ref=f4e81]:
+              - textbox "not configured" [ref=f4e82]
+              - button "Save" [disabled] [ref=f4e83]
+      - generic [ref=f4e84]:
+        - generic [ref=f4e85]:
+          - heading "SMS — Dinstar UC2000" [level=2] [ref=f4e86]
+          - button "Test connection" [ref=f4e87] [cursor=pointer]
+        - generic [ref=f4e88]:
+          - generic [ref=f4e89]:
+            - generic [ref=f4e90]: Dinstar Gateway Address
+            - paragraph [ref=f4e91]: Host or origin reachable over the Tailscale route the voice trunk already uses.
+            - generic [ref=f4e92]:
+              - textbox "not configured" [ref=f4e93]: 192.168.1.50
+              - button "Save" [disabled] [ref=f4e94]
+            - paragraph [ref=f4e95]: Configured
+          - generic [ref=f4e96]:
+            - generic [ref=f4e97]: Dinstar Admin Username
+            - generic [ref=f4e98]:
+              - textbox "not configured" [ref=f4e99]: admin
+              - button "Save" [disabled] [ref=f4e100]
+            - paragraph [ref=f4e101]: Configured
+          - generic [ref=f4e102]:
+            - generic [ref=f4e103]: Dinstar Admin Password
+            - generic [ref=f4e104]:
+              - textbox "configured, ending null" [ref=f4e105]
+              - button "Save" [disabled] [ref=f4e106]
+            - paragraph [ref=f4e107]: Configured (ending null)
+      - generic [ref=f4e108]:
+        - heading "OTP Delivery" [level=2] [ref=f4e110]
+        - generic [ref=f4e111]:
+          - generic [ref=f4e112]:
+            - generic [ref=f4e113]: OTP Delivery Channel
+            - paragraph [ref=f4e114]: Which channel sends verification codes for agent registration and login 2FA.
+            - generic [ref=f4e115]:
+              - textbox "not configured" [ref=f4e116]: OPENWA
+              - button "Save" [disabled] [ref=f4e117]
+            - paragraph [ref=f4e118]: Configured
+          - generic [ref=f4e119]:
+            - generic [ref=f4e120]: OTP WhatsApp Instance
+            - paragraph [ref=f4e121]: Which paired WaInstance sends OTPs when the channel is OpenWA — leave blank to use the first available instance. Dedicate one SIM here to isolate OTP traffic from customer messaging.
+            - generic [ref=f4e122]:
+              - textbox "not configured" [ref=f4e123]
+              - button "Save" [disabled] [ref=f4e124]
+          - generic [ref=f4e125]:
+            - generic [ref=f4e126]: Meta OTP Template Name
+            - paragraph [ref=f4e127]: Only used when OTP_CHANNEL is META_CLOUD — must be a pre-approved authentication-category template.
+            - generic [ref=f4e128]:
+              - textbox "not configured" [ref=f4e129]: agent_otp_verification
+              - button "Save" [disabled] [ref=f4e130]
+            - paragraph [ref=f4e131]: Configured
+          - generic [ref=f4e132]:
+            - generic [ref=f4e133]: Meta OTP Template Language
+            - generic [ref=f4e134]:
+              - textbox "not configured" [ref=f4e135]: en
+              - button "Save" [disabled] [ref=f4e136]
+            - paragraph [ref=f4e137]: Configured
+      - generic [ref=f4e138]:
+        - generic [ref=f4e139]:
+          - heading "Firebase (optional OTP channel)" [level=2] [ref=f4e140]
+          - button "Test connection" [ref=f4e141] [cursor=pointer]
+        - generic [ref=f4e142]:
+          - generic [ref=f4e143]:
+            - generic [ref=f4e144]: Firebase API Key
+            - paragraph [ref=f4e145]: Not a secret — identifies the Firebase project, does not authorize anything.
+            - generic [ref=f4e146]:
+              - textbox "not configured" [ref=f4e147]
+              - button "Save" [disabled] [ref=f4e148]
+          - generic [ref=f4e149]:
+            - generic [ref=f4e150]: Firebase Auth Domain
+            - generic [ref=f4e151]:
+              - textbox "not configured" [ref=f4e152]
+              - button "Save" [disabled] [ref=f4e153]
+          - generic [ref=f4e154]:
+            - generic [ref=f4e155]: Firebase Project ID
+            - generic [ref=f4e156]:
+              - textbox "not configured" [ref=f4e157]
+              - button "Save" [disabled] [ref=f4e158]
+          - generic [ref=f4e159]:
+            - generic [ref=f4e160]: Firebase Service Account (JSON)
+            - paragraph [ref=f4e161]: The full service-account key file contents. This IS the actual secret — never sent to the browser.
+            - generic [ref=f4e162]:
+              - textbox "not configured" [ref=f4e163]
+              - button "Save" [disabled] [ref=f4e164]
+      - generic [ref=f4e165]:
+        - heading "CRM Webhooks" [level=2] [ref=f4e167]
+        - generic [ref=f4e169]:
+          - generic [ref=f4e170]: CRM Webhook Signing Secret
+          - paragraph [ref=f4e171]: Shared HMAC secret used when a WebhookSubscription row has no per-subscription secret of its own.
+          - generic [ref=f4e172]:
+            - textbox "configured, ending null" [ref=f4e173]
+            - button "Save" [disabled] [ref=f4e174]
+          - paragraph [ref=f4e175]: Configured (ending null)
+  - alert [ref=f4e26]

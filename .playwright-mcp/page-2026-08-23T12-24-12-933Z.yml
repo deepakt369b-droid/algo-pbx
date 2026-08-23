@@ -1,0 +1,36 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e3]:
+    - generic [ref=f4e4]:
+      - heading "Supervisor / Admin Dashboard" [level=1] [ref=f4e5]
+      - generic [ref=f4e6]:
+        - generic [ref=f4e7]: admin@algopbx.local
+        - button "Sign out" [ref=f4e9] [cursor=pointer]
+    - navigation [ref=f4e10]:
+      - link "Wallboard" [ref=f4e11] [cursor=pointer]:
+        - /url: /admin
+      - link "Queues" [ref=f4e12] [cursor=pointer]:
+        - /url: /admin/queues
+      - link "CDR" [ref=f4e13] [cursor=pointer]:
+        - /url: /admin/cdr
+      - link "Extensions" [ref=f4e14] [cursor=pointer]:
+        - /url: /admin/extensions
+      - link "Users" [ref=f4e15] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Do Not Call" [ref=f4e16] [cursor=pointer]:
+        - /url: /admin/dnc
+      - link "WhatsApp" [ref=f4e17] [cursor=pointer]:
+        - /url: /admin/whatsapp
+      - link "SIM SMS" [ref=f4e18] [cursor=pointer]:
+        - /url: /admin/sms
+      - link "Rooms" [ref=f4e19] [cursor=pointer]:
+        - /url: /admin/rooms
+      - link "Sign-Ins" [ref=f4e20] [cursor=pointer]:
+        - /url: /admin/sign-ins
+      - link "Reports" [ref=f4e21] [cursor=pointer]:
+        - /url: /admin/reports
+      - link "Settings" [ref=f4e22] [cursor=pointer]:
+        - /url: /admin/settings
+    - generic [ref=f4e23]:
+      - heading "Runtime Settings" [level=1] [ref=f4e24]
+      - paragraph [ref=f4e25]: These take effect immediately — no restart needed. Secret values are never shown again once saved; leaving a field blank keeps the existing value.
+  - alert [ref=f4e26]

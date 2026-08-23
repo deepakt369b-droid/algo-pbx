@@ -1,0 +1,670 @@
+// Algo PBX data model.
+// ORM decision (was open in LLM.md): Prisma, for schema-migration ergonomics
+// and typed client generation used by src/lib/db.ts and the API routes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AgentStatus {
+  AVAILABLE
+  BUSY
+  BREAK
+  OFFLINE
+}
+
+enum Role {
+  AGENT
+  SUPERVISOR
+  ADMIN
+}
+
+model User {
+  id                String            @id @default(cuid())
+  email             String            @unique
+  // Nullable now: an admin-created user starts with NO password at all
+  // (Workstream D) — Invite.tokenHash is the only way to set one, once,
+  // via the Resend-delivered link. A row with passwordHash null AND no
+  // pending unconsumed Invite is an account that was created but never
+  // completed onboarding; the login path (src/auth.ts) must treat null
+  // the same as "credentials can never match", not as an open door.
+  passwordHash      String?
+  name              String
+  role              Role              @default(AGENT)
+  // Revocation for a terminated/compromised account. auth.config.ts's jwt
+  // callback checks this on every request (not just at sign-in) so a
+  // revoked account's existing JWT stops working immediately rather than
+  // staying valid for up to the session's 30-day default lifetime — see
+  // that file's comment for why a DB check inside the JWT callback is an
+  // accepted latency/security tradeoff here.
+  disabled          Boolean           @default(false)
+  disabledAt        DateTime?
+  // --- Agent registration (post-invite profile completion) ---
+  // Normalized via src/lib/phone-normalize.ts's normalizeToE164() before
+  // storage, same convention as Contact.numberE164 and
+  // DoNotCallEntry.numberE164. Nullable-unique is correct Postgres
+  // behavior here: many NULLs are allowed (most rows, before an agent
+  // registers) while no two real numbers may collide.
+  phoneE164             String?   @unique
+  phoneVerifiedAt        DateTime?
+  // NULL = the agent verified it themselves via OTP (Firebase or the
+  // WhatsApp fallback). Set = an admin overrode verification (their user
+  // id). Kept distinguishable deliberately — an override is a weaker
+  // claim than a real OTP round-trip, and an auditor should be able to
+  // tell the two apart at a glance rather than inferring it from
+  // AuditLog metadata.
+  phoneVerifiedByAdminId String?
+  phoneVerifiedByAdmin   User?     @relation("PhoneVerifiedByAdmin", fields: [phoneVerifiedByAdminId], references: [id])
+  phoneVerifiedOverrides User[]    @relation("PhoneVerifiedByAdmin")
+  address                String?
+  photoPath              String?
+  // Set only once the registration form (name/address/phone/photo) AND
+  // phone verification both succeed — see src/middleware.ts and
+  // GET /api/me/sip-credentials, the two places that actually gate an
+  // agent's access on this being non-null.
+  profileCompletedAt     DateTime?
+  // Per-admin "last viewed the sign-in feed" marker — powers the unread
+  // badge on /admin/sign-ins without a separate read-state table.
+  signInFeedSeenAt       DateTime?
+  extension         Extension?
+  doNotCallEntries  DoNotCallEntry[]
+  hiddenRecordings  Recording[]
+  auditLogs         AuditLog[]
+  invitesCreated    Invite[]          @relation("InviteCreatedBy")
+  invite            Invite?
+  waInstancesPaired WaInstance[]
+  assignedConversations Conversation[]
+  smsAccessRequestsMade     SmsAccessRequest[] @relation("SmsAccessRequestedBy")
+  smsAccessRequestsDecided  SmsAccessRequest[] @relation("SmsAccessDecidedBy")
+  loginAttempts     LoginAttempt[]
+  otpChallenges     OtpChallenge[]
+  trustedDevices    TrustedDevice[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([disabled])
+  @@index([profileCompletedAt])
+}
+
+enum OtpPurpose {
+  PHONE_VERIFICATION
+  LOGIN_2FA
+}
+
+enum OtpChannel {
+  WHATSAPP
+  SMS
+}
+
+// Server-side OTP challenge state — used ONLY by the WhatsApp fallback
+// (registration) and by login 2FA (Workstream 6). The PRIMARY
+// registration path (Firebase Phone Auth) needs none of this: Firebase
+// manages its own challenge/attempt/expiry state, and the server only
+// ever verifies the resulting ID token (see src/lib/firebase/admin.ts) —
+// never a code typed against a row in this table.
+//
+// This table doubles as its own rate limiter rather than reusing
+// src/lib/rate-limit.ts's checkSimpleRateLimit(): that limiter is an
+// in-process Map, explicitly documented there as acceptable only for
+// "lower-value targets" since it resets on restart and doesn't work
+// across replicas. An OTP is exactly the kind of thing that needs a
+// real, DB-backed limit — send-throttling is "count challenges created
+// for this userId in the last hour", guess-throttling is `attempts`
+// capped at 5, both correct regardless of process restarts or replica
+// count.
+model OtpChallenge {
+  id         String     @id @default(cuid())
+  user       User       @relation(fields: [userId], references: [id])
+  userId     String
+  phoneE164  String
+  // SHA-256 of the 6-digit code — the plaintext code is never persisted,
+  // same one-way-hash discipline as every other secret in this schema.
+  codeHash   String
+  purpose    OtpPurpose
+  channel    OtpChannel
+  expiresAt  DateTime
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+// Remembers a browser/device that has already cleared login 2FA, so an
+// agent isn't OTP-challenged on every single sign-in from their usual
+// machine (Workstream 6) — only on a new device or IP. The raw token
+// lives in an httpOnly cookie on the client; only its hash is stored
+// here, matching the Invite/ApiKey/McpApproval one-time-disclosure
+// pattern used everywhere else in this schema.
+model TrustedDevice {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  tokenHash  String   @unique
+  // Short user-agent summary for the agent/admin to recognize the device
+  // by, not a fingerprinting mechanism.
+  label      String?
+  lastSeenIp String?
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Login rate-limiting / lockout state (Workstream C — there was previously
+// no defense at all against unlimited password guessing). One row per
+// (email, ip) bucket rather than per-account-only, so a single leaked
+// account can't be used to fingerprint-limit an attacker off of other
+// accounts, and a single IP hammering many emails is still tracked.
+// Cleared on successful login; see src/lib/rate-limit.ts.
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  email       String
+  ip          String
+  attempts    Int       @default(0)
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+
+  @@unique([email, ip])
+  @@index([lockedUntil])
+}
+
+// Single-use, short-expiry agent onboarding tokens (Workstream D). Replaces
+// the previous flow where an admin typed a "temporary password" that was
+// never emailed and never rotatable. An agent can set their password
+// exactly once, at /invite/[token]; there is deliberately no route that
+// lets them change it again afterward — see api/admin/users/route.ts's
+// comment on why that's a requirement, not an oversight.
+model Invite {
+  id          String    @id @default(cuid())
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String    @unique
+  // SHA-256 of the actual token — the token itself is only ever in the
+  // emailed URL and the client's one request to consume it, never stored
+  // or logged in plaintext (same pattern as a password reset token).
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdById String
+  createdBy   User      @relation("InviteCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+model Extension {
+  id          String   @id @default(cuid())
+  number      String   @unique // e.g. "1001" — matches the PJSIP endpoint id generated into pjsip_dynamic.conf
+  kind        String   @default("webrtc") // "webrtc" | "hardware"
+  user        User?    @relation(fields: [userId], references: [id])
+  userId      String?  @unique
+  status      AgentStatus @default(OFFLINE)
+  lastSeenAt  DateTime?
+  // The PJSIP digest-auth secret for this endpoint — deliberately NOT the
+  // same value as User.passwordHash. passwordHash is a one-way bcrypt hash
+  // (correct for a web login, useless for Asterisk's SIP digest auth, which
+  // needs the plaintext-equivalent secret). Generated server-side
+  // (crypto.randomBytes) when the extension is created; never returned to
+  // anyone but the owning user's own authenticated session (GET
+  // /api/me/sip-credentials) or staff provisioning it. Not encrypted at
+  // rest yet — flagged as a gap in LLM.md, same tier of risk as any other
+  // plaintext service-account secret in this schema today.
+  sipSecret   String?
+  // Numeric PIN for VoicemailMain() access (Phase E) — a separate secret
+  // from both sipSecret (SIP digest auth) and User.passwordHash (web
+  // login). Generated server-side alongside sipSecret, same one-time-
+  // disclosure treatment via GET /api/me/sip-credentials.
+  voicemailPin String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Queue {
+  id          String   @id @default(cuid())
+  name        String   @unique // e.g. "support_queue" — matches extensions.conf
+  strategy    String   @default("ringall") // "ringall" | "leastrecent" | "roundrobin"
+  members     QueueMember[]
+  createdAt   DateTime @default(now())
+}
+
+model QueueMember {
+  id        String   @id @default(cuid())
+  queue     Queue    @relation(fields: [queueId], references: [id])
+  queueId   String
+  extension String
+  penalty   Int      @default(0)
+
+  @@unique([queueId, extension])
+}
+
+model CallDetailRecord {
+  id           String   @id @default(cuid())
+  uniqueId     String   @unique // Asterisk's linkedid/uniqueid for the call
+  callerNumber String
+  destination  String
+  direction    String   // "inbound" | "outbound" | "internal"
+  disposition  String   // "ANSWERED" | "NO ANSWER" | "BUSY" | "FAILED"
+  startedAt    DateTime
+  answeredAt   DateTime?
+  endedAt      DateTime?
+  durationSec  Int      @default(0)
+  billsecSec   Int      @default(0)
+  recordingUrl String? // kept for backward compat; Recording is the source of truth going forward (Phase D)
+  queueName    String?
+  agentExtension String?
+  createdAt    DateTime @default(now())
+  recordings   Recording[]
+
+  @@index([startedAt])
+  @@index([agentExtension])
+}
+
+// Do Not Call compliance blocklist (Phase C). Enforcement is defense-in-
+// depth across TWO layers, and this table is the shared source of truth for
+// both, even though they can't literally share code:
+//   1. App layer: GET /api/dnc/check, called from the softphone before
+//      dialing (src/contexts/sip-context.tsx) — good UX (immediate
+//      feedback), but bypassable by a hardware SIP phone dialing straight
+//      into extensions.conf.
+//   2. Dialplan layer (mandatory, closes that gap): a func_odbc lookup in
+//      extensions.conf's [from-agent] outbound context, straight against
+//      this table via a direct Postgres ODBC connection — see
+//      pbx_configs/{res_odbc,func_odbc}.conf and extensions.conf's DNC_CHECK
+//      comment for the normalization caveat (the dialplan can't call
+//      src/lib/phone-normalize.ts, so it does a cruder direct-string match).
+model DoNotCallEntry {
+  id         String   @id @default(cuid())
+  numberE164 String   @unique // normalized via src/lib/phone-normalize.ts before storage
+  reason     String?
+  source     String   @default("manual") // "manual" | "bulk_import"
+  addedById  String
+  addedBy    User     @relation(fields: [addedById], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+// Recording retention with asymmetric agent/admin deletion (Phase D).
+// Requirement, verbatim: "the voice recording will be on admin side also
+// but the agent side deletion will not delete the recording."
+//
+// A dedicated model rather than more CallDetailRecord fields: recordings
+// have their own lifecycle (file path, size, hidden state) independent of
+// the call record itself, and a future phase (attended transfer / conference,
+// Phases F/G) could produce more than one recording per call.
+//
+// "Ownership" of a recording is inherited from its CallDetailRecord via
+// agentExtension — a bare string, not a foreign key (see that model's
+// comment) — matched against the caller's session.user.extension. The
+// single source of truth for the allow/deny decision is the pure function
+// src/lib/recording-access.ts's canAccessRecording(), used identically by
+// both the listing endpoint (GET /api/recordings) and the byte-serving
+// route (GET /api/recordings/[uniqueid]) so they cannot drift apart — a
+// hidden recording must be unreachable by direct URL, not merely absent
+// from a list.
+model Recording {
+  id                String    @id @default(cuid())
+  cdrId             String
+  cdr               CallDetailRecord @relation(fields: [cdrId], references: [id])
+  filePath          String    // relative to RECORDINGS_DIR, e.g. "<uniqueId>.wav"
+  fileSizeBytes     Int?
+  // Agent-side "hide" only — never a delete. Staff/admin still see and can
+  // stream the recording regardless of this field; only an agent's own
+  // view (GET /api/recordings, and the byte-serving route when the caller
+  // is an AGENT) respects it.
+  hiddenFromAgentAt DateTime?
+  hiddenByUserId    String?
+  hiddenByUser      User?     @relation(fields: [hiddenByUserId], references: [id])
+  createdAt         DateTime  @default(now())
+
+  @@index([cdrId])
+}
+
+// Audit trail — originally scoped to recording lifecycle actions only, now
+// the shared audit sink for every sensitive admin/supervisor action in the
+// system: recording hide/hard-delete, voicemail delete, call intervention
+// (spy/whisper/barge), invite issue/consume/revoke, WhatsApp instance
+// pair/logout, SMS access-request approve/decline/revoke, and MCP write-
+// tool calls (Workstream F). `action` is a free-form dotted string
+// ("domain.verb") by convention, not an enum, so new action types never
+// need a migration.
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String   // e.g. "recording.hide" | "recording.hard_delete" | "intervention.barge" | "sms_access.approve"
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id])
+  targetId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  // Was entirely unindexed — the audit table was flagged as the first
+  // thing to degrade under real usage, and every admin-facing "recent
+  // activity" view needs at least one of these.
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([action])
+}
+
+// Periodic client-side WebRTC quality samples (Workstream B) — see
+// src/lib/webrtc-stats.ts. Joined to CallDetailRecord.uniqueId via the SIP
+// Call-ID captured client-side at call start (sip-context.tsx), NOT a hard
+// foreign key: samples can arrive before the CDR row exists (the CDR is
+// created by the AMI listener asynchronously after the call ends), and a
+// sample stream for a call that never got a CDR (e.g. a failed AMI ingest)
+// should still be retained for diagnosis rather than being rejected.
+model CallQualitySample {
+  id                String   @id @default(cuid())
+  callId            String   // SIP Call-ID / uniqueId correlation key, not an FK — see comment above
+  extension         String?  // the agent extension this sample was captured on, for MCP/troubleshooting queries
+  jitterMs          Float?
+  packetsLost       Int?
+  packetsReceived   Int?
+  roundTripTimeMs   Float?
+  jitterBufferDelayMs Float?
+  mosEstimate       Float?
+  createdAt         DateTime @default(now())
+
+  @@index([callId])
+  @@index([createdAt])
+}
+
+// =========================================
+// WORKSTREAM E — WhatsApp + SMS unified messaging
+// =========================================
+
+enum MessageChannel {
+  WHATSAPP
+  SMS
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageProviderKind {
+  OPENWA
+  META_CLOUD
+  DINSTAR_SMS
+}
+
+enum WaInstanceStatus {
+  PAIRING
+  CONNECTED
+  DISCONNECTED
+  LOGGED_OUT
+}
+
+// One row per Dinstar SIM port paired as a WhatsApp identity (up to 4 —
+// the hardware ceiling). Pairing, re-pairing, and logout are admin-only
+// actions (requireAdminSession, see src/app/admin/whatsapp) — agents get a
+// read-only connection-status view in their own UI with NO logout control
+// rendered and no route that would accept one if forged, per the
+// requirement that only an admin can log an agent's WhatsApp session out.
+model WaInstance {
+  id            String            @id @default(cuid())
+  label         String            @unique // e.g. "SIM 1 — +971 5X XXX XXXX"
+  simPort       Int               @unique // 1-4, the Dinstar UC2000 port this identity was paired via OTP on
+  phoneE164     String?           // populated once pairing completes
+  provider      MessageProviderKind @default(OPENWA)
+  status        WaInstanceStatus  @default(DISCONNECTED)
+  pairedByAdminId String?
+  pairedByAdmin User?             @relation(fields: [pairedByAdminId], references: [id])
+  lastConnectedAt DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  conversations Conversation[]
+}
+
+// The only E.164-canonical contact identity in the schema besides
+// DoNotCallEntry — deliberately copies that model's pattern (numberE164
+// unique, normalized via src/lib/phone-normalize.ts before storage) so the
+// two can be joined without re-normalizing. Note WhatsApp's own wa_id is
+// E.164 *without* the leading '+' — the inbound webhook handler must
+// prefix it before calling normalizeToE164().
+model Contact {
+  id            String         @id @default(cuid())
+  numberE164    String         @unique
+  displayName   String?
+  conversations Conversation[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+// A conversation is scoped to (contact, channel) — a contact can have both
+// an open WhatsApp thread and an open SMS thread simultaneously, shown
+// interleaved in the agent UI (channel badge per message) but tracked as
+// two rows so read/unread and assignment can differ per channel.
+// assignedAgentId is the ownership mechanism requested: with 4 shared
+// WaInstances (one per SIM) rather than one per agent, this field is what
+// stops two agents replying to the same customer, not the WaInstance
+// itself.
+model Conversation {
+  id              String         @id @default(cuid())
+  contact         Contact        @relation(fields: [contactId], references: [id])
+  contactId       String
+  channel         MessageChannel
+  waInstance      WaInstance?    @relation(fields: [waInstanceId], references: [id])
+  waInstanceId    String?
+  assignedAgent   User?          @relation(fields: [assignedAgentId], references: [id])
+  assignedAgentId String?
+  lastMessageAt   DateTime?
+  unreadCount     Int            @default(0)
+  messages        ChatMessage[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([contactId, channel, waInstanceId])
+  @@index([assignedAgentId])
+  @@index([lastMessageAt])
+}
+
+// Named ChatMessage, not Message — "message" is already heavily
+// overloaded across the codebase for voicemail messages and raw AMI
+// protocol framing (30+ call sites); a distinct name avoids that
+// collision rather than fighting it with import aliases everywhere.
+model ChatMessage {
+  id                String            @id @default(cuid())
+  conversation      Conversation      @relation(fields: [conversationId], references: [id])
+  conversationId    String
+  direction         MessageDirection
+  body              String?
+  mediaUrl          String?
+  mediaMimeType     String?
+  providerMessageId String?           // id from OpenWA/Meta/Dinstar, for status-webhook correlation
+  deliveryStatus    String            @default("pending") // "pending" | "sent" | "delivered" | "read" | "failed"
+  // OTP/verification-code heuristic classification (Workstream E,
+  // SIM-SMS-only in practice today — WhatsApp OTPs aren't routed through
+  // us). A `sensitive` message is never returned by any agent-facing API
+  // response; see src/lib/messaging/sensitive-detect.ts and
+  // api/messaging/conversations/[id]/messages/route.ts's filter.
+  sensitive         Boolean           @default(false)
+  accessRequests    SmsAccessRequest[]
+  createdAt         DateTime          @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([providerMessageId])
+}
+
+// Rooms (Workstream E, client requirement: "just a UI view, no data model
+// change" in spirit — no tenancy, no row-level scoping added to any other
+// model). This is the one minimal table needed to let an admin NAME and
+// PERSIST a group of agents to view together; storing that only in
+// component state would lose it on every page reload. memberUserIds is a
+// plain JSON array of User.id, not a join table — a room is a saved
+// filter, not a relation other models need to query through.
+model Room {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  memberUserIds Json     // string[] of User.id
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum SmsAccessRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  REVOKED
+}
+
+// The lock -> request -> admin-approve/decline/revoke workflow for sensitive
+// (OTP-shaped) SIM SMS. One row per agent's request to view one sensitive
+// ChatMessage. Approval is time-boxed (expiresAt) and every transition is
+// mirrored into AuditLog so there is a durable record of who saw what OTP
+// and when, independent of this table's own current-state row.
+model SmsAccessRequest {
+  id            String                  @id @default(cuid())
+  message       ChatMessage             @relation(fields: [messageId], references: [id])
+  messageId     String
+  requestedBy   User                    @relation("SmsAccessRequestedBy", fields: [requestedById], references: [id])
+  requestedById String
+  status        SmsAccessRequestStatus  @default(PENDING)
+  decidedBy     User?                   @relation("SmsAccessDecidedBy", fields: [decidedById], references: [id])
+  decidedById   String?
+  decidedAt     DateTime?
+  expiresAt     DateTime?
+  createdAt     DateTime                @default(now())
+
+  @@index([status])
+  @@index([requestedById])
+}
+
+// =========================================
+// WORKSTREAM F — internal MCP server approvals
+// =========================================
+//
+// NOTE ON THE MISSING @relation: every model below stores the minting /
+// creating admin as a bare `String` user id with an index, NOT a Prisma
+// relation. That is deliberate: declaring `mintedByAdmin User @relation(...)`
+// would require adding a back-reference field to `User`, and this workstream
+// is constrained to APPEND models only — existing models (User included) are
+// owned by other workstreams and must not be edited. The tradeoff is that
+// Postgres will not enforce referential integrity on these columns; the
+// routes that write them always source the id from an authenticated
+// `requireAdminSession()` session, so a dangling id can only appear if a
+// user row is hard-deleted (which this app never does — see User.disabled).
+// Same reasoning as CallDetailRecord.agentExtension being a bare string.
+
+// A single-use, short-expiry capability token an ADMIN mints out-of-band
+// (POST /api/admin/mcp-approvals) and pastes into an MCP *write* tool call.
+// The MCP server (mcp-server/) is stdio-only and has no session context of
+// its own — whoever can run it on the VM can already read everything the
+// read tools expose. This table is what stops that same operator (or an LLM
+// driving them) from mutating the PBX without a human deliberately
+// authorizing that one specific action, once.
+//
+// Only the SHA-256 of the token is stored, exactly like Invite.tokenHash:
+// the raw token exists only in the mint response and the tool call that
+// consumes it, never in the DB, never in a log line.
+model McpApproval {
+  id              String    @id @default(cuid())
+  tokenHash       String    @unique
+  mintedByAdminId String
+  // The write tool this approval authorizes, e.g. "pjsip.reload" or
+  // "container.restart". "*" is an unscoped master approval and is NEVER
+  // the default — the mint route requires an explicit opt-in flag to
+  // produce one, and the highest-severity tools (restart_container) refuse
+  // a "*" approval outright and demand their exact scope.
+  scope           String
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@index([mintedByAdminId])
+}
+
+// =========================================
+// WORKSTREAM G — CRM connectivity
+// =========================================
+
+// An outbound webhook destination. Generic on purpose: no first-class
+// HubSpot/Zoho/Salesforce adapter is built (see src/app/api/crm/README.md) —
+// this is the substrate such an adapter would sit on after the trial run.
+model WebhookSubscription {
+  id          String   @id @default(cuid())
+  url         String
+  // Per-subscription HMAC key. Null means "use CRM_WEBHOOK_SECRET" — the
+  // single shared deployment secret. Per-subscription keys are preferable
+  // once there is more than one integrator, so one partner's leaked secret
+  // can't be used to forge payloads to another.
+  secret      String?
+  // Event names this destination wants, e.g. ["call.ended","message.received"].
+  // Matched with Prisma's `has` (Postgres array containment), so adding a new
+  // event type never needs a migration.
+  events      String[]
+  active      Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@index([active])
+  @@index([createdById])
+}
+
+// Bearer credentials for the machine-to-machine CRM API under /api/crm/*.
+// Separate from User/session auth entirely: an external CRM has no browser
+// session and must not be handed one. Same one-time-disclosure discipline as
+// Invite and Extension.sipSecret — only the hash is stored.
+model ApiKey {
+  id          String    @id @default(cuid())
+  keyHash     String    @unique
+  label       String
+  createdById String
+  lastUsedAt  DateTime?
+  // Soft revocation rather than a delete, so an audit trail of which key
+  // touched what survives the key being turned off.
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([revokedAt])
+  @@index([createdById])
+}
+
+// =========================================
+// RUNTIME CONFIGURATION (admin-panel-editable settings)
+// =========================================
+
+// Every external-service credential the app used to read only from
+// process.env (Resend, OpenWA, Meta Cloud, Dinstar SMS, Firebase, CRM
+// webhook signing) now resolves DB-first — see
+// src/lib/settings/service.ts's getSetting(): database row, else
+// process.env[key], else the registry default in
+// src/lib/settings/schema.ts. `.env` remains a valid way to seed a value
+// and is what a fresh deploy falls back to before an admin ever opens
+// /admin/settings; it is never required once a DB row exists.
+//
+// `valueEncrypted` is AES-256-GCM ciphertext (src/lib/settings/crypto.ts)
+// under SETTINGS_ENCRYPTION_KEY — encrypting every setting uniformly,
+// not just the "obviously secret" ones, avoids a per-key judgement call
+// that would eventually be gotten wrong (e.g. INVITE_FROM_EMAIL looks
+// harmless but reveals the sending domain; OTP_CHANNEL looks harmless
+// but is still an operational detail worth not leaving in plaintext next
+// to actual API keys in the same table). GCM is authenticated, so a
+// tampered row fails to decrypt rather than silently yielding
+// attacker-chosen plaintext.
+//
+// Deliberately NOT storing telephony settings here (AMI, Coturn,
+// VM_PUBLIC_DOMAIN) — those values are duplicated into
+// pbx_configs/manager.conf and the Asterisk/Coturn container commands,
+// and editing only the DB side would produce a silent mismatch that
+// breaks calls. Making those safely editable needs generating those
+// config files from the database too, which is out of scope here.
+model AppSetting {
+  id             String   @id @default(cuid())
+  key            String   @unique
+  valueEncrypted String
+  updatedAt      DateTime @updatedAt
+  updatedById    String?
+
+  @@index([updatedAt])
+}

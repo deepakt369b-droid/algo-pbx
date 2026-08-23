@@ -1,0 +1,9 @@
+
+> algo-pbx-frontend@0.1.0 build
+> next build
+
+  ▲ Next.js 14.2.35
+  - Environments: .env.local
+
+   Creating an optimized production build ...
+Next.js build worker exited with code: 3221225794 and signal: null

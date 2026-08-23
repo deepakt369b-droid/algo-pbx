@@ -1,0 +1,346 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: algo-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Bound to loopback only, not 0.0.0.0 — the only consumers of this
+      # published port are on the same host: the `asterisk` service (via
+      # ODBC, network_mode: host, see odbc.ini's comment) and a developer
+      # running a local DB client. `web` reaches Postgres over the internal
+      # `algo-net` bridge DNS name instead and never needs this port at all.
+      # Publishing to every interface would expose Postgres to the public
+      # internet on a real cloud VM with no compensating control — tightened
+      # here while wiring Phase C's ODBC dependency on this same port.
+      - "127.0.0.1:5432:5432"
+    networks:
+      - algo-net
+
+  # 2. Coturn STUN/TURN Server
+  coturn:
+    image: coturn/coturn:latest
+    container_name: algo-coturn
+    restart: always
+    network_mode: host
+    volumes:
+      # Same real, CA-issued cert http.conf uses for WSS (see
+      # pbx_configs/keys/README.md) — needed for the turns: (TLS) listener,
+      # the escape hatch for agents behind firewalls that block plain UDP.
+      - ./pbx_configs/keys:/certs:ro
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      # Disjoint from Asterisk's rtp.conf range (10000-20000) — both
+      # services run network_mode: host and previously claimed the
+      # identical 10000-10100 range, so whichever process bound a given
+      # port first won it and the other got EADDRINUSE per-port: random
+      # one-way audio and call-setup failures that looked like generic
+      # network flakiness. Also widened for real headroom.
+      - "--min-port=20001"
+      - "--max-port=30000"
+      - "--realm=${COTURN_REALM}"
+      - "--use-auth-secret"
+      - "--static-auth-secret=${COTURN_AUTH_SECRET}"
+      # Without --external-ip, coturn advertises the NIC's address in relay
+      # candidates. On every major cloud provider that's a private address
+      # behind 1:1 NAT (the VM's real public IP lives on the NAT/LB in
+      # front of it) — browsers then try to relay to an unreachable
+      # 10.x.x.x address and the TURN fallback silently fails, which
+      # defeats the entire reason TURN was deployed (see sip-context.tsx's
+      # iceServers wiring). Fill in the real values in .env.
+      - "--external-ip=${VM_PUBLIC_IP}/${VM_PRIVATE_IP}"
+      - "--listening-port=3478"
+      - "--tls-listening-port=5349"
+      - "--cert=/certs/fullchain.pem"
+      - "--pkey=/certs/privkey.pem"
+      - "--fingerprint"
+      - "--no-multicast-peers"
+      - "--no-cli"
+      - "--stale-nonce=600"
+
+  # 3. Asterisk 20 PBX (host network mode for direct RTP handling)
+  asterisk:
+    image: tiredofit/asterisk:20-latest
+    container_name: algo-asterisk
+    restart: always
+    network_mode: host
+    # Grants the elevated scheduling priority pbx_configs/asterisk.conf's
+    # highpriority=yes requests — without this capability that setting
+    # silently has no effect and Asterisk stays at normal priority,
+    # contending with the other four containers for CPU.
+    cap_add:
+      - SYS_NICE
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core show uptime' | grep -q 'System uptime'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    env_file:
+      - .env
+    volumes:
+      - ./pbx_configs/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./pbx_configs/pjsip-base.conf:/etc/asterisk/pjsip-base.conf:ro
+      - ./pbx_configs/asterisk.conf:/etc/asterisk/asterisk.conf:ro
+      # Serves the WSS (8089) transport pjsip-base.conf's [transport-wss]
+      # points at — without this file nothing listens on that port at all
+      # (see http.conf's own header comment for why the PJSIP bind= line
+      # alone doesn't do it).
+      - ./pbx_configs/http.conf:/etc/asterisk/http.conf:ro
+      # DTLS-SRTP media certs (self-signed OK) + the real WSS TLS cert —
+      # see pbx_configs/keys/README.md for what must be generated here
+      # before agents can register at all.
+      - ./pbx_configs/keys:/etc/asterisk/keys:ro
+      - ./pbx_configs/confbridge.conf:/etc/asterisk/confbridge.conf:ro
+      # NOT :ro — Phase A's provisioning route (in the `web` service) writes
+      # this file directly, then triggers `pjsip reload` over AMI. Both
+      # services bind-mount the same host path, so a write from `web` is
+      # immediately visible to `asterisk` without any extra sync step.
+      - ./pbx_configs/pjsip_dynamic.conf:/etc/asterisk/pjsip_dynamic.conf
+      - ./pbx_configs/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./pbx_configs/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./pbx_configs/manager.conf:/etc/asterisk/manager.conf:ro
+      - ./pbx_configs/queues.conf:/etc/asterisk/queues.conf:ro
+      - ./pbx_configs/musiconhold.conf:/etc/asterisk/musiconhold.conf:ro
+      - ./moh/default:/var/lib/asterisk/moh/default:ro
+      # Do Not Call dialplan enforcement (Phase C) — see func_odbc.conf's
+      # and odbc.ini's file-header comments for the unverified-image caveat.
+      - ./pbx_configs/res_odbc.conf:/etc/asterisk/res_odbc.conf:ro
+      - ./pbx_configs/func_odbc.conf:/etc/asterisk/func_odbc.conf:ro
+      - ./pbx_configs/odbc.ini:/etc/odbc.ini:ro
+      - ./pbx_configs/odbcinst.ini:/etc/odbcinst.ini:ro
+      - ./recordings:/var/spool/asterisk/monitor
+      - ./pbx_configs/voicemail.conf:/etc/asterisk/voicemail.conf:ro
+      # NOT :ro, same reasoning as pjsip_dynamic.conf above — the `web`
+      # service (Phase A/E provisioning) writes this file, asterisk reads it.
+      - ./pbx_configs/voicemail_dynamic.conf:/etc/asterisk/voicemail_dynamic.conf
+      # Asterisk writes voicemail messages here; `web` reads them read-only
+      # (src/app/api/voicemail) to list/stream/delete, mirroring how
+      # ./recordings is shared for call recordings.
+      - ./voicemail:/var/spool/asterisk/voicemail
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 4. Algo PBX Next.js Web App
+  web:
+    build:
+      context: ./algo-pbx-frontend
+      dockerfile: Dockerfile
+      target: runner
+    container_name: algo-web
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      NEXT_PUBLIC_SIP_WS_SERVER: "wss://${VM_PUBLIC_DOMAIN}:8089/ws"
+      NEXT_PUBLIC_TURN_SERVER: "turn:${VM_PUBLIC_DOMAIN}:3478"
+      # Server-side (not NEXT_PUBLIC_) — used only by
+      # api/me/turn-credentials to build the ICE server URL list returned
+      # to an authenticated agent's browser; never sent to the client bundle.
+      VM_PUBLIC_DOMAIN: "${VM_PUBLIC_DOMAIN}"
+      AMI_HOST: "${AMI_HOST:-host.docker.internal}"
+      AMI_PORT: "${AMI_PORT:-5038}"
+      AMI_USERNAME: "${AMI_USERNAME}"
+      AMI_SECRET: "${AMI_SECRET}"
+      AUTH_SECRET: "${AUTH_SECRET}"
+      AUTH_URL: "${AUTH_URL}"
+      AUTH_TRUST_HOST: "${AUTH_TRUST_HOST:-true}"
+      CDR_INGEST_SECRET: "${CDR_INGEST_SECRET}"
+      # Encrypts every runtime setting stored via /admin/settings or the
+      # first-run /setup wizard (src/lib/settings/crypto.ts) — required
+      # before either can be used; POST /api/setup refuses without it.
+      SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY}"
+      RECORDINGS_DIR: /recordings
+      PJSIP_DYNAMIC_CONF_PATH: /pjsip_dynamic.conf
+      VOICEMAIL_DYNAMIC_CONF_PATH: /voicemail_dynamic.conf
+      VOICEMAIL_DIR: /voicemail
+      # Coturn REST ephemeral credentials (RFC 5766) — coturn runs
+      # --use-auth-secret, so the browser can't use a static TURN
+      # username/password; src/app/api/me/turn-credentials/route.ts mints
+      # a short-lived HMAC-SHA1 credential per agent from this shared
+      # secret, matching COTURN_AUTH_SECRET above.
+      COTURN_AUTH_SECRET: "${COTURN_AUTH_SECRET}"
+      COTURN_REALM: "${COTURN_REALM}"
+      # First mail dependency in the project (Resend) — used only by the
+      # admin-invite flow (src/lib/mail/resend.ts). No self-service
+      # password reset exists or is added; agents cannot use this to
+      # change their own credentials.
+      RESEND_API_KEY: "${RESEND_API_KEY}"
+      INVITE_FROM_EMAIL: "${INVITE_FROM_EMAIL:-invites@algopbx.local}"
+      # Outbound webhook signing for CRM connectivity (Workstream G).
+      CRM_WEBHOOK_SECRET: "${CRM_WEBHOOK_SECRET}"
+      # OpenWA sidecar (Workstream E) — internal-network-only, never
+      # published publicly; web reaches it over algo-net by service name.
+      # Also the default OTP delivery channel (OTP_CHANNEL below) — no
+      # Meta template approval or Firebase project needed for OTP to work.
+      OPENWA_BASE_URL: "${OPENWA_BASE_URL:-http://openwa:2785}"
+      OPENWA_API_KEY: "${OPENWA_API_KEY}"
+      # Dinstar UC2000 SMS HTTP/JSON API (Workstream E) — same box the
+      # voice trunk already reaches via Tailscale, see DINSTAR_LAN_IP.
+      DINSTAR_LAN_IP: "${DINSTAR_LAN_IP}"
+      DINSTAR_SMS_USERNAME: "${DINSTAR_SMS_USERNAME}"
+      DINSTAR_SMS_PASSWORD: "${DINSTAR_SMS_PASSWORD}"
+      # Meta Cloud API fallback provider (Workstream E) — only exercised
+      # when an admin flips a WaInstance's provider off OpenWA.
+      META_WABA_TOKEN: "${META_WABA_TOKEN}"
+      META_PHONE_NUMBER_ID: "${META_PHONE_NUMBER_ID}"
+      # Agent registration: phone OTP (channel-selectable — OpenWA by
+      # default, Meta Cloud or Firebase optionally — and login 2FA) and
+      # profile photo storage.
+      OTP_CHANNEL: "${OTP_CHANNEL:-OPENWA}"
+      OTP_WA_INSTANCE_ID: "${OTP_WA_INSTANCE_ID:-}"
+      NEXT_PUBLIC_FIREBASE_API_KEY: "${NEXT_PUBLIC_FIREBASE_API_KEY}"
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}"
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: "${NEXT_PUBLIC_FIREBASE_PROJECT_ID}"
+      FIREBASE_SERVICE_ACCOUNT_JSON: "${FIREBASE_SERVICE_ACCOUNT_JSON}"
+      WHATSAPP_OTP_TEMPLATE_NAME: "${WHATSAPP_OTP_TEMPLATE_NAME:-agent_otp_verification}"
+      WHATSAPP_OTP_TEMPLATE_LANG: "${WHATSAPP_OTP_TEMPLATE_LANG:-en}"
+      AGENT_PHOTOS_DIR: /agent-photos
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Linux Docker Engine needs this explicitly; Docker Desktop provides it natively.
+    volumes:
+      # Read-write (was :ro): the admin hard-delete route
+      # (api/admin/recordings/[id]) actually unlinks files here — a
+      # read-only mount meant that unlink silently no-op'd (the route
+      # swallowed EROFS and reported success) while the DB row was
+      # deleted anyway, orphaning the audio file permanently. See that
+      # route's fix for the corresponding error-handling change.
+      - ./recordings:/recordings
+      # Read-write: this is the SAME host file the asterisk service mounts
+      # at /etc/asterisk/pjsip_dynamic.conf — src/lib/pjsip-config.ts's
+      # output gets written here by the extensions API route, then an AMI
+      # `pjsip reload` (sent to the asterisk service) picks it up.
+      - ./pbx_configs/pjsip_dynamic.conf:/pjsip_dynamic.conf
+      # Same shared-file pattern for voicemail (Phase E).
+      - ./pbx_configs/voicemail_dynamic.conf:/voicemail_dynamic.conf
+      # Read-write (was :ro): api/voicemail/[id] DELETE unlinks the .wav/
+      # .txt pair here — same silent-EROFS bug as recordings above.
+      - ./voicemail:/voicemail
+      # Agent profile photos (src/lib/agent-photo.ts, POST
+      # /api/register/photo). Read-write: the same container both writes
+      # (on upload/replace) and serves (GET /api/me/photo/[id]) these.
+      - ./agent-photos:/agent-photos
+    ports:
+      - "3000:3000"
+    networks:
+      - algo-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 5. CDR ingestion listener — a standalone long-running AMI subscriber,
+  # deliberately NOT part of the `web` service. See
+  # algo-pbx-frontend/scripts/ami-cdr-listener.ts's file-header comment for
+  # why this couldn't be a Next.js instrumentation.ts hook instead (no
+  # single-execution guarantee across workers/restarts for a stateful AMI
+  # connection). Talks to `web` over the internal `algo-net` network, not a
+  # published port.
+  cdr-listener:
+    build:
+      context: ./algo-pbx-frontend
+      dockerfile: Dockerfile
+      target: cdr-listener
+    container_name: algo-cdr-listener
+    restart: always
+    environment:
+      AMI_HOST: "${AMI_HOST:-host.docker.internal}"
+      AMI_PORT: "${AMI_PORT:-5038}"
+      # Uses the narrowly-scoped [algopbx-cdr-listener] AMI account (see
+      # manager.conf) instead of sharing [algopbx-app]'s full event class
+      # subscription — this process only ever needs Cdr events.
+      AMI_USERNAME: "${CDR_AMI_USERNAME:-algopbx-cdr-listener}"
+      AMI_SECRET: "${CDR_AMI_SECRET}"
+      CDR_INGEST_URL: "http://web:3000/api/cdr"
+      CDR_INGEST_SECRET: "${CDR_INGEST_SECRET}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - algo-net
+    depends_on:
+      web:
+        condition: service_healthy
+
+  # 6. OpenWA sidecar (Workstream E) — WhatsApp engine, MIT-licensed,
+  # forked/vendored under vendor/openwa (see that directory's README for
+  # why OpenWA over evolution-go: no license-activation gate, actively
+  # maintained, dual whatsapp-web.js/baileys engine choice). Never exposed
+  # publicly — web reaches it over algo-net by service name
+  # (OPENWA_BASE_URL) and it is not in `ports:`. Pairing/QR/session
+  # management happens through OpenWA's own dashboard, reverse-proxied at
+  # /admin/whatsapp/* by the web app rather than published directly (see
+  # src/app/admin/whatsapp/page.tsx) so it stays behind our own
+  # requireAdminSession guard, not OpenWA's own auth.
+  openwa:
+    build:
+      context: ./vendor/openwa
+    container_name: algo-openwa
+    restart: always
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=openwa"
+      API_KEY: "${OPENWA_API_KEY}"
+      ENGINE_TYPE: "${OPENWA_ENGINE:-baileys}"
+      # baileys default (not whatsapp-web.js): ~30-80MB RAM per session vs
+      # ~300-500MB, and this deployment runs up to 4 concurrent instances
+      # (one per Dinstar SIM, see WaInstance) on the same modest cloud VM
+      # already carrying Asterisk's media engine. whatsapp-web.js's lower
+      # ban risk (it simulates real WhatsApp Web browser traffic) is worth
+      # revisiting if ban rate becomes a problem in practice.
+      WEBHOOK_URL: "http://web:3000/api/messaging/openwa-webhook"
+      WEBHOOK_SECRET: "${OPENWA_WEBHOOK_SECRET}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:2785/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    networks:
+      - algo-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+
+networks:
+  algo-net:
+    driver: bridge

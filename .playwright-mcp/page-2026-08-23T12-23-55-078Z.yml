@@ -1,0 +1,8 @@
+- generic [active] [ref=f3e1]:
+  - main [ref=f3e2]:
+    - generic [ref=f3e3]:
+      - heading "Algo PBX Sign In" [level=1] [ref=f3e4]
+      - textbox "you@algopbx.local" [ref=f3e5]: admin@algopbx.local
+      - textbox "Password" [ref=f3e6]: TestPass123
+      - button "Sign in" [ref=f3e7] [cursor=pointer]
+  - alert [ref=f3e8]

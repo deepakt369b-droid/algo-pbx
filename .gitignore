@@ -1,0 +1,37 @@
+.env
+*.env
+.env.local
+!.env.example
+
+# Local Docker overrides (per-machine ports, etc.)
+docker-compose.override.yml
+
+# Asterisk runtime data
+recordings/*
+!recordings/.gitkeep
+voicemail/*
+!voicemail/.gitkeep
+agent-photos/*
+!agent-photos/README.md
+pbx_configs/keys/*
+!pbx_configs/keys/README.md
+
+# Music-on-hold audio — licensing is an operator concern, don't commit media
+moh/default/*
+!moh/default/README.md
+
+# Postgres/docker volumes (bind-mounted, not tracked)
+postgres_data/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Graphify output (regeneratable)
+graphify-out/
+
+# OS
+.DS_Store
+Thumbs.db
