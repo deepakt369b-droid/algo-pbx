@@ -27,9 +27,23 @@ export default function SignInsPage() {
           setLastSeenAt((prev) => prev ?? data.lastSeenAt);
         });
     };
-    load();
+
+    // The GET above must complete and capture the PRE-visit lastSeenAt
+    // (via the `prev ?? ` guard, so later polls never overwrite it)
+    // before the mark-seen POST fires — sending both in parallel raced,
+    // and when the POST won, the very GET meant to show what's unread
+    // would already reflect the just-updated timestamp, so the unread
+    // dot never appeared. Chaining .then() after the first load's fetch
+    // (not the interval's later ones) fixes the ordering.
+    fetch("/api/admin/sign-ins")
+      .then((r) => r.json())
+      .then((data) => {
+        setEvents(data.events ?? []);
+        setLastSeenAt(data.lastSeenAt);
+        return fetch("/api/admin/sign-ins", { method: "POST" });
+      });
+
     const interval = setInterval(load, 5000);
-    fetch("/api/admin/sign-ins", { method: "POST" });
     return () => clearInterval(interval);
   }, []);
 

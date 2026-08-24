@@ -37,11 +37,21 @@ export default function SettingsPage() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [testingSection, setTestingSection] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<{ key: string; text: string } | null>(null);
+
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = () => {
     fetch("/api/admin/settings")
-      .then((r) => r.json())
-      .then((data) => setSettings(data.settings ?? []));
+      .then((r) => {
+        if (!r.ok) throw new Error(r.status === 403 ? "Only an ADMIN can view runtime settings." : `Request failed (${r.status})`);
+        return r.json();
+      })
+      .then((data) => {
+        setSettings(data.settings ?? []);
+        setLoadError(null);
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Could not load settings."));
   };
 
   useEffect(load, []);
@@ -50,6 +60,7 @@ export default function SettingsPage() {
     const value = edits[key];
     if (value === undefined) return;
     setSavingKey(key);
+    setSaveMessage(null);
     try {
       const res = await fetch("/api/admin/settings", {
         method: "PATCH",
@@ -62,11 +73,24 @@ export default function SettingsPage() {
           delete next[key];
           return next;
         });
+        // A stale green "reachable" from before this edit is misleading
+        // once the underlying value has changed — clear that section's
+        // test result rather than leaving it looking current.
+        const section = settings.find((s) => s.key === key)?.section;
+        if (section) {
+          setTestResults((prev) => {
+            const next = { ...prev };
+            delete next[section];
+            return next;
+          });
+        }
         load();
       } else {
         const data = await res.json();
-        alert(data.error ?? "Save failed");
+        setSaveMessage({ key, text: data.error ?? "Save failed" });
       }
+    } catch (err) {
+      setSaveMessage({ key, text: err instanceof Error ? err.message : "Network error." });
     } finally {
       setSavingKey(null);
     }
@@ -82,6 +106,14 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       setTestResults((prev) => ({ ...prev, [section]: { ok: res.ok && data.ok, message: data.message ?? data.error ?? "Unknown result" } }));
+    } catch (err) {
+      // A network-level failure (fetch itself throwing) previously left
+      // testingSection cleared with no result line ever appearing — the
+      // "Testing..." state just silently reverted with no feedback.
+      setTestResults((prev) => ({
+        ...prev,
+        [section]: { ok: false, message: err instanceof Error ? err.message : "Network error." },
+      }));
     } finally {
       setTestingSection(null);
     }
@@ -97,6 +129,12 @@ export default function SettingsPage() {
         These take effect immediately — no restart needed. Secret values are never shown again once saved;
         leaving a field blank keeps the existing value.
       </p>
+
+      {loadError && (
+        <div className="w-full max-w-2xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+          {loadError}
+        </div>
+      )}
 
       {sections.map((section) => (
         <div key={section} className="glass-card w-full max-w-2xl p-6">
@@ -150,6 +188,7 @@ export default function SettingsPage() {
                       {s.updatedAt && ` — updated ${new Date(s.updatedAt).toLocaleString()}`}
                     </p>
                   )}
+                  {saveMessage?.key === s.key && <p className="text-xs text-red-400">{saveMessage.text}</p>}
                 </div>
               ))}
           </div>

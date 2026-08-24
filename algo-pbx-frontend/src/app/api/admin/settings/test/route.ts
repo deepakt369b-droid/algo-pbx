@@ -3,7 +3,8 @@ import { z } from "zod";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getSetting, requireSetting } from "@/lib/settings/service";
 import { getProvider } from "@/lib/messaging/registry";
-import { basicAuthHeader } from "@/lib/messaging/http";
+import { statsOverview } from "@/lib/messaging/openwa-client";
+import { probeDinstarCredentials } from "@/lib/dinstar-discovery";
 import { verifyFirebasePhoneToken } from "@/lib/firebase/admin";
 import { sendInviteEmail } from "@/lib/mail/resend";
 
@@ -36,16 +37,15 @@ export async function POST(request: NextRequest) {
       }
 
       case "whatsapp_openwa": {
-        // No specific instance to check yet at settings-test time — just
-        // confirm the base URL + API key can reach the sidecar at all.
-        const base = (await getSetting("OPENWA_BASE_URL")) || "http://openwa:2785";
-        const key = await getSetting("OPENWA_API_KEY");
-        const res = await fetch(`${base.replace(/\/+$/, "")}/api/health`, {
-          headers: key ? { api_key: key } : {},
-          signal: AbortSignal.timeout(10_000),
+        // No specific instance to check yet at settings-test time — hit
+        // an authenticated endpoint (stats/overview) rather than the bare
+        // health check, so this actually proves the API key authenticates
+        // and not merely that a port is listening.
+        const stats = await statsOverview();
+        return NextResponse.json({
+          ok: true,
+          message: `OpenWA sidecar reachable and key authenticated (${stats.ready}/${stats.total} sessions ready).`,
         });
-        if (!res.ok) throw new Error(`OpenWA responded ${res.status}`);
-        return NextResponse.json({ ok: true, message: "OpenWA sidecar reachable." });
       }
 
       case "whatsapp_meta": {
@@ -57,14 +57,21 @@ export async function POST(request: NextRequest) {
 
       case "sms_dinstar": {
         const ip = await requireSetting("DINSTAR_LAN_IP");
-        const [username, password] = await Promise.all([getSetting("DINSTAR_SMS_USERNAME"), getSetting("DINSTAR_SMS_PASSWORD")]);
+        const [username, password, authStyle] = await Promise.all([
+          getSetting("DINSTAR_SMS_USERNAME"),
+          getSetting("DINSTAR_SMS_PASSWORD"),
+          getSetting("DINSTAR_AUTH_STYLE"),
+        ]);
         const origin = /^https?:\/\//.test(ip) ? ip : `http://${ip}`;
-        const res = await fetch(`${new URL(origin).origin}/goip_get_status.html`, {
-          headers: { Authorization: basicAuthHeader(username || "", password || "") },
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) throw new Error(`Dinstar gateway responded ${res.status}`);
-        return NextResponse.json({ ok: true, message: "Dinstar gateway reachable." });
+        const result = await probeDinstarCredentials(new URL(origin).hostname, username || "", password || "");
+        if (!result.authenticated) throw new Error(result.error ?? "Authentication failed.");
+        if (authStyle && authStyle !== result.authStyle) {
+          return NextResponse.json({
+            ok: true,
+            message: `Dinstar gateway reachable via ${result.authStyle} auth (differs from the saved ${authStyle} — re-run the setup wizard to update it).`,
+          });
+        }
+        return NextResponse.json({ ok: true, message: `Dinstar gateway reachable — ${result.ports.length} SIM port(s) reported.` });
       }
 
       case "firebase": {

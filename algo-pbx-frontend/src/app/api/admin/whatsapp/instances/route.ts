@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { getProvider } from "@/lib/messaging/registry";
+import { createSession, registerSessionWebhook, sessionNameFor, startSession } from "@/lib/messaging/openwa-client";
+import { getSetting } from "@/lib/settings/service";
+import { ProviderHttpError } from "@/lib/messaging/http";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +20,10 @@ export async function GET() {
 
   const instances = await db.waInstance.findMany({
     orderBy: { simPort: "asc" },
-    include: { pairedByAdmin: { select: { name: true, email: true } } },
+    include: {
+      pairedByAdmin: { select: { name: true, email: true } },
+      assignedUser: { select: { id: true, name: true, email: true } },
+    },
   });
   return NextResponse.json({ instances });
 }
@@ -28,6 +33,11 @@ const CreateSchema = z.object({
   simPort: z.number().int().min(1).max(4),
   provider: z.enum(["OPENWA", "META_CLOUD"]).default("OPENWA"),
 });
+
+function errorMessage(err: unknown): string {
+  if (err instanceof ProviderHttpError) return `OpenWA ${err.status}: ${err.body || err.message}`;
+  return err instanceof Error ? err.message : "Unknown error";
+}
 
 export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
@@ -43,7 +53,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `SIM port ${parsed.data.simPort} already has an instance.` }, { status: 409 });
   }
 
-  const instance = await db.waInstance.create({
+  let instance = await db.waInstance.create({
     data: {
       label: parsed.data.label,
       simPort: parsed.data.simPort,
@@ -62,11 +72,42 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // Kick off pairing immediately (best-effort — the admin page polls
-  // status/QR afterward regardless of whether this synchronous call
-  // succeeds, since OpenWA's own pairing flow is inherently async).
-  const provider = getProvider(instance.provider as "OPENWA" | "META_CLOUD");
-  const pairing = provider.startPairing ? await provider.startPairing(instance.id).catch(() => null) : null;
+  // OpenWA needs a real session created (and started) before the admin UI
+  // has anything to poll a QR/pairing-code from. META_CLOUD has no
+  // equivalent lifecycle — provider.startPairing is optional precisely
+  // for that case (see MessageProvider's contract), so this whole block
+  // only runs for OPENWA.
+  if (parsed.data.provider === "OPENWA") {
+    const sessionName = sessionNameFor(instance);
+    try {
+      const session = await createSession({ name: sessionName });
+      instance = await db.waInstance.update({
+        where: { id: instance.id },
+        data: { sessionName, openwaSessionId: session.id },
+      });
 
-  return NextResponse.json({ instance, pairing }, { status: 201 });
+      const [webhookUrl, webhookSecret] = await Promise.all([
+        getSetting("OPENWA_WEBHOOK_URL"),
+        getSetting("OPENWA_WEBHOOK_SECRET"),
+      ]);
+      if (webhookUrl) {
+        await registerSessionWebhook(session.id, { url: webhookUrl, secret: webhookSecret || undefined });
+        instance = await db.waInstance.update({ where: { id: instance.id }, data: { webhookRegisteredAt: new Date() } });
+      }
+
+      await startSession(session.id);
+    } catch (err) {
+      const message = errorMessage(err);
+      instance = await db.waInstance.update({
+        where: { id: instance.id },
+        data: { status: "DISCONNECTED", lastError: message },
+      });
+      return NextResponse.json(
+        { instance, error: `Could not start WhatsApp pairing: ${message}` },
+        { status: 502 }
+      );
+    }
+  }
+
+  return NextResponse.json({ instance }, { status: 201 });
 }

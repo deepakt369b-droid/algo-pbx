@@ -1,49 +1,85 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getProvider } from "@/lib/messaging/registry";
 import { ingestInboundEvent } from "@/lib/messaging/ingest";
+import { getSetting } from "@/lib/settings/service";
+import { verifyOpenWaSignature } from "@/lib/messaging/openwa-webhook-auth";
+import {
+  OPENWA_DELIVERY_ID_HEADER,
+  OPENWA_EVENT_HEADER,
+  OPENWA_IDEMPOTENCY_HEADER,
+  OPENWA_SIGNATURE_HEADER,
+} from "@/lib/messaging/openwa-types";
 
 export const dynamic = "force-dynamic";
 
 // POST /api/messaging/openwa-webhook — inbound WhatsApp events pushed by
-// the OpenWA sidecar (docker-compose.yml's `openwa` service,
-// WEBHOOK_URL=http://web:3000/api/messaging/openwa-webhook). Verified with
-// a shared-secret header (OPENWA_WEBHOOK_SECRET) compared in constant time
-// — mirrors the timingSafeEqual pattern already used by
-// src/app/api/cdr/route.ts for its own server-to-server ingest secret,
-// rather than inventing a second convention. A HUMAN MUST VERIFY the
-// actual header name OpenWA sends the shared secret in; this assumes
-// `x-webhook-secret`, documented as such at the top of
-// src/lib/messaging/openwa-provider.ts's UNVERIFIED block.
-function isAuthorized(request: NextRequest): boolean {
-  const expected = process.env.OPENWA_WEBHOOK_SECRET;
-  if (!expected) return false;
-  const provided = request.headers.get("x-webhook-secret") ?? "";
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
+// the OpenWA sidecar, to whichever URL we registered per-session at
+// pairing time (src/lib/messaging/openwa-client.ts's
+// registerSessionWebhook, OPENWA_WEBHOOK_URL setting).
+//
+// Verified against the raw request body with HMAC-SHA256, per OpenWA's
+// documented webhook-signature-verification scheme (X-OpenWA-Signature:
+// "sha256=<hex>", computed over the exact raw bytes — NOT the re-serialized
+// JSON, which can differ in whitespace/key order — see
+// openwa-webhook-auth.ts). This supersedes the previous `x-webhook-secret`
+// header check, which compared against an invented header name that
+// OpenWA never sends.
 export async function POST(request: NextRequest) {
-  if (!isAuthorized(request)) {
+  // MUST read the raw body before any JSON parsing — the signature is
+  // computed over the exact bytes OpenWA sent, and re-serializing first
+  // (even losslessly) can produce a different byte sequence.
+  const rawBody = await request.text();
+
+  const secret = await getSetting("OPENWA_WEBHOOK_SECRET");
+  if (!secret || !verifyOpenWaSignature(rawBody, request.headers.get(OPENWA_SIGNATURE_HEADER), secret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const payload = await request.json().catch(() => null);
+  const payload = JSON.parse(rawBody || "null");
   if (!payload) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+
+  // Dedupe on OpenWA's idempotency key — a delivery that doesn't get a 2xx
+  // is retried (X-OpenWA-Retry-Count), and re-ingesting an already-seen
+  // delivery would duplicate the ChatMessage row.
+  const idempotencyKey = request.headers.get(OPENWA_IDEMPOTENCY_HEADER);
+  const eventName = request.headers.get(OPENWA_EVENT_HEADER) ?? "unknown";
+  if (idempotencyKey) {
+    try {
+      await db.inboundWebhookDelivery.create({
+        data: {
+          idempotencyKey,
+          deliveryId: request.headers.get(OPENWA_DELIVERY_ID_HEADER),
+          event: eventName,
+        },
+      });
+    } catch {
+      // Unique-constraint violation = already processed this delivery.
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
+  }
+
+  // session.status carries live status without waiting for the admin
+  // page's poll — update it directly rather than routing through
+  // parseInbound(), which is scoped to message events.
+  if (eventName === "session.status") {
+    const sessionId = typeof (payload as Record<string, unknown>)?.sessionId === "string" ? (payload as Record<string, unknown>).sessionId as string : null;
+    if (sessionId) {
+      await db.waInstance
+        .updateMany({ where: { openwaSessionId: sessionId }, data: { lastStatusAt: new Date() } })
+        .catch(() => undefined);
+    }
+    return NextResponse.json({ ok: true });
+  }
 
   const provider = getProvider("OPENWA");
   const events = provider.parseInbound(payload);
 
   for (const event of events) {
-    // Resolve the OpenWA session id the adapter reported back to a
-    // WaInstance row — instanceRef is the WaInstance.id itself (it's used
-    // as the OpenWA session name, see openwa-provider.ts), so this is a
-    // direct lookup, not a search.
+    // instanceRef is the OpenWA-assigned session id, not WaInstance.id —
+    // resolve it to a WaInstance row via the persisted openwaSessionId.
     const waInstance = event.instanceRef
-      ? await db.waInstance.findUnique({ where: { id: event.instanceRef } })
+      ? await db.waInstance.findUnique({ where: { openwaSessionId: event.instanceRef } })
       : null;
     await ingestInboundEvent(event, "WHATSAPP", waInstance?.id ?? null);
   }

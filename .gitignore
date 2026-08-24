@@ -32,6 +32,10 @@ out/
 # Graphify output (regeneratable)
 graphify-out/
 
+# OpenWA upstream source — fetched at the pinned commit by
+# vendor/openwa/prepare.sh, never committed (see vendor/openwa/README.md)
+vendor/openwa/upstream/
+
 # OS
 .DS_Store
 Thumbs.db

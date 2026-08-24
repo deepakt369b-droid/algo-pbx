@@ -103,7 +103,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return NextResponse.json({ error: "This WhatsApp conversation has no instance assigned." }, { status: 409 });
     }
     providerKind = conversation.waInstance.provider as "OPENWA" | "META_CLOUD";
-    instanceId = conversation.waInstance.id;
+    if (providerKind === "OPENWA") {
+      if (!conversation.waInstance.openwaSessionId) {
+        return NextResponse.json({ error: "This WhatsApp instance has no active OpenWA session. Re-pair it in /admin/whatsapp." }, { status: 409 });
+      }
+      instanceId = conversation.waInstance.openwaSessionId;
+    } else {
+      instanceId = conversation.waInstance.id;
+    }
   }
 
   // MessageProvider.sendText's toE164 is always E.164-with-plus regardless

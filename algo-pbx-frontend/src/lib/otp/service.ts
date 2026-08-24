@@ -50,24 +50,32 @@ export interface OtpSendResult {
   challengeId?: string;
 }
 
-/** Resolve which WaInstance sends OTP over OpenWA. Explicit
- * OTP_WA_INSTANCE_ID setting wins (an operator can dedicate one SIM to
- * OTP to isolate its ban-risk blast radius from customer messaging —
- * see the plan); otherwise the first CONNECTED OpenWA instance is used.
- * Throws if none exists — a clear, named failure rather than silently
- * picking an arbitrary disconnected instance. */
-async function resolveOpenWaInstanceId(): Promise<string> {
-  const configured = await getSetting("OTP_WA_INSTANCE_ID");
-  if (configured) return configured;
+/** Resolve which OpenWA SESSION sends OTP. Explicit OTP_WA_INSTANCE_ID
+ * setting names a WaInstance.id (an operator can dedicate one SIM to OTP
+ * to isolate its ban-risk blast radius from customer messaging); it is
+ * resolved to that instance's openwaSessionId — the id OpenWA's own API
+ * calls need, NOT WaInstance.id. Otherwise the first CONNECTED OpenWA
+ * instance with a bound session is used. Throws if none exists — a clear,
+ * named failure rather than silently picking an arbitrary disconnected
+ * instance. */
+async function resolveOpenWaSessionId(): Promise<string> {
+  const configuredInstanceId = await getSetting("OTP_WA_INSTANCE_ID");
+  if (configuredInstanceId) {
+    const configured = await db.waInstance.findUnique({ where: { id: configuredInstanceId } });
+    if (!configured?.openwaSessionId) {
+      throw new Error("OTP_WA_INSTANCE_ID is set but that instance has no active OpenWA session. Re-pair it in /admin/whatsapp.");
+    }
+    return configured.openwaSessionId;
+  }
 
   const instance = await db.waInstance.findFirst({
-    where: { provider: "OPENWA", status: "CONNECTED" },
+    where: { provider: "OPENWA", status: "CONNECTED", openwaSessionId: { not: null } },
     orderBy: { simPort: "asc" },
   });
-  if (!instance) {
+  if (!instance?.openwaSessionId) {
     throw new Error("No connected OpenWA instance is available to send OTPs. Pair one in /admin/whatsapp or set OTP_WA_INSTANCE_ID.");
   }
-  return instance.id;
+  return instance.openwaSessionId;
 }
 
 /**
@@ -116,14 +124,18 @@ export async function sendOtp(params: {
 
   let result;
   if (channel === "OPENWA") {
-    let instanceId: string;
+    let openwaSessionId: string;
     try {
-      instanceId = await resolveOpenWaInstanceId();
+      openwaSessionId = await resolveOpenWaSessionId();
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "No OTP-capable WhatsApp instance available." };
     }
     const provider = getProvider("OPENWA");
-    result = await provider.sendText({ instanceId, toE164: params.phoneE164, text: `Your Algo PBX verification code is ${code}. It expires in 5 minutes.` });
+    result = await provider.sendText({
+      instanceId: openwaSessionId,
+      toE164: params.phoneE164,
+      text: `Your Algo PBX verification code is ${code}. It expires in 5 minutes.`,
+    });
   } else {
     const provider = getProvider("META_CLOUD");
     if (!provider.sendTemplate) {

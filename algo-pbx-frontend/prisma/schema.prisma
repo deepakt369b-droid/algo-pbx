@@ -3,7 +3,16 @@
 // and typed client generation used by src/lib/db.ts and the API routes.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Explicit, not "native": Prisma 5.22's OpenSSL auto-detection doesn't
+  // recognize Alpine 3.23's OpenSSL 3.x (the runner stage's base image,
+  // node:20-alpine) and silently falls back to an openssl-1.1.x engine
+  // binary — which then fails at runtime with "Could not parse schema
+  // engine response" because no libssl 1.1 compat lib exists on that
+  // image. "native" is also kept so `npx prisma generate`/tests on a
+  // developer's own machine (Windows/macOS/glibc Linux) keep working
+  // unchanged.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -78,6 +87,10 @@ model User {
   invitesCreated    Invite[]          @relation("InviteCreatedBy")
   invite            Invite?
   waInstancesPaired WaInstance[]
+  // The single SIM port / WhatsApp identity this agent owns (one agent per
+  // port, see WaInstance.assignedUserId). Nullable — an agent may exist
+  // with no port assigned when all four are already taken.
+  waInstance        WaInstance? @relation("WaInstanceAssignedUser")
   assignedConversations Conversation[]
   smsAccessRequestsMade     SmsAccessRequest[] @relation("SmsAccessRequestedBy")
   smsAccessRequestsDecided  SmsAccessRequest[] @relation("SmsAccessDecidedBy")
@@ -416,12 +429,58 @@ model WaInstance {
   phoneE164     String?           // populated once pairing completes
   provider      MessageProviderKind @default(OPENWA)
   status        WaInstanceStatus  @default(DISCONNECTED)
+
+  // --- OpenWA session binding ---------------------------------------------
+  /// The OpenWA session `name` we created (alphanumeric + hyphens, 3-50),
+  /// derived once at create time via openwa-client.ts's sessionNameFor() —
+  /// never the raw cuid, so a schema-level id change can't orphan a live
+  /// session.
+  sessionName         String?   @unique
+  /// The id OpenWA itself assigned to the session. Every /api/sessions/{id}/*
+  /// call uses THIS, not WaInstance.id.
+  openwaSessionId      String?   @unique
+  /// Raw upstream OpenWaSessionStatus, kept alongside the coarser `status`
+  /// above for admin debugging (see openwa-types.ts's toWaInstanceStatus()).
+  providerStatusRaw    String?
+  pushName             String?
+  lastError            String?
+  lastStatusAt         DateTime?
+  /// data:image/png;base64 QR, cached so a page reload mid-pairing doesn't
+  /// lose it. Cleared on ready/logout. Never selected by any agent-reachable
+  /// route.
+  lastQrCode           String?   @db.Text
+  lastQrAt             DateTime?
+  pairingCode          String?
+  pairingCodeAt        DateTime?
+  webhookRegisteredAt  DateTime?
+  // -------------------------------------------------------------------------
+
   pairedByAdminId String?
   pairedByAdmin User?             @relation(fields: [pairedByAdminId], references: [id])
+  // One agent per SIM port (the Dinstar hardware ceiling is 4, so this is
+  // also the ceiling on how many agents can hold a WhatsApp-enabled seat).
+  // Provisioning happens at user-creation time (src/app/api/admin/users) —
+  // this is ownership, distinct from pairedByAdminId above, which is only
+  // an audit stamp of who ran the pairing flow.
+  assignedUserId String? @unique
+  assignedUser   User?   @relation("WaInstanceAssignedUser", fields: [assignedUserId], references: [id])
   lastConnectedAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
   conversations Conversation[]
+}
+
+// Idempotency ledger for OpenWA's inbound webhook deliveries
+// (X-OpenWA-Idempotency-Key) — OpenWA retries a delivery that doesn't get a
+// 2xx, so a delivery seen before must not be re-ingested as a new message.
+model InboundWebhookDelivery {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  deliveryId     String?
+  event          String
+  receivedAt     DateTime @default(now())
+
+  @@index([receivedAt])
 }
 
 // The only E.164-canonical contact identity in the schema besides

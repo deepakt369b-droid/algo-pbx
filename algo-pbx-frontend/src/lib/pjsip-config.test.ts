@@ -49,7 +49,9 @@ describe("renderPjsipConf", () => {
     expect(output).toContain("[2002]");
     expect(output).toContain("type=endpoint");
     expect(output).toContain("transport=transport-udp");
-    expect(output).toContain("context=from-internal");
+    // "from-internal" was never defined in extensions.conf — hardware
+    // endpoints now share from-agent's context with WebRTC endpoints.
+    expect(output).toContain("context=from-agent");
     expect(output).toContain("disallow=all");
     expect(output).toContain("allow=alaw,ulaw");
     expect(output).toContain("auth=2002-auth");

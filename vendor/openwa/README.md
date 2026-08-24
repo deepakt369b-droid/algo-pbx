@@ -1,7 +1,7 @@
 # OpenWA — vendored WhatsApp engine
 
-Upstream: https://github.com/rmyndharis/OpenWA (MIT license, ~13k stars,
-actively maintained — pushed within the last day as of this writing).
+Upstream: https://github.com/rmyndharis/OpenWA (MIT license, actively
+maintained). Pinned commit: `99874630c9d386340d71f191b310c8bd8aa52ee3`.
 
 ## Why OpenWA and not evolution-go
 
@@ -26,41 +26,65 @@ independently — see `src/lib/messaging/provider.ts`'s `MessageProvider`
 interface, which is deliberately transport-agnostic for exactly this
 reason.
 
-## Why this directory is (almost) empty
+## How this is built
 
-OpenWA is a full NestJS application (~18MB source, its own `node_modules`,
-its own Postgres schema, a bundled React dashboard). Vendoring the entire
-upstream source tree into this repo's git history is the wrong tradeoff —
-it would need to track upstream security fixes forever, and 99% of it is
-code we never touch. Instead this directory holds only the integration
-surface:
+OpenWA is a full NestJS application with its own bundled dashboard SPA,
+its own Postgres/SQLite schema, and a real multi-stage Dockerfile (Chromium
+for the whatsapp-web.js engine, ffmpeg, a pinned Postgres client for its
+backup/restore scripts, several backport patches applied at image-build
+time). Re-deriving that by hand in a from-scratch Dockerfile is exactly
+what the previous version of this directory did — and it was wrong: it
+called invented API paths, dropped the entrypoint script, and never
+actually built. Reimplementing upstream's own build is the wrong tradeoff
+for the same reason it was the first time: it goes stale the moment
+anything about that build changes upstream.
 
-- `Dockerfile` — builds the actual OpenWA image by cloning the upstream
-  repo at a **pinned commit** (not `main` — pin it explicitly so a
-  `docker compose build` next month doesn't silently pull in unreviewed
-  upstream changes) and layering our config on top.
-- This README.
+Instead:
+
+- **`prepare.sh`** clones upstream at the **pinned commit** into
+  `vendor/openwa/upstream/` (gitignored — this is a fetch step, not
+  something committed). Run it before the first build, and again whenever
+  the pinned commit changes:
+  ```
+  bash vendor/openwa/prepare.sh
+  ```
+  It refuses to silently drift: it verifies the checked-out `HEAD` matches
+  the pinned SHA exactly and fails loudly otherwise.
+- `docker-compose.yml`'s `openwa` service builds `context: ./vendor/openwa/upstream`
+  directly — i.e. **upstream's own `Dockerfile`**, unmodified. All of the
+  configuration this deployment needs (database, engine, session storage,
+  SSRF allowlist) is supplied as environment variables and a named volume
+  on the compose service, not by patching the image.
+- **`initdb/01-create-openwa-db.sql`** — mounted into the `postgres`
+  service's `/docker-entrypoint-initdb.d/`, gives OpenWA its own database
+  (`openwa`) on first Postgres init, since upstream takes a whole
+  `DATABASE_NAME`, not a `?schema=` URL fragment.
 
 Everything Algo PBX-specific — pairing UI, per-agent conversation
 assignment, the OTP-lock/admin-approval workflow, provider fallback to
 Meta Cloud API — lives in `algo-pbx-frontend/src/lib/messaging/` and talks
-to this container **only** over its REST API and webhooks
-(`docker-compose.yml`'s `openwa` service, reached at `OPENWA_BASE_URL`
-from inside `algo-net`; never published to a host port). We do not modify
-OpenWA's own source. If a change to OpenWA itself is ever needed, fork it
-properly (a real fork on GitHub, our own pinned commit here) rather than
-patching in-place — keeps upstream security updates mergeable.
+to this container **only** over its REST API (`/api/sessions/...`,
+`X-API-Key` auth) and per-session webhooks it registers at pairing time.
+We do not modify OpenWA's own source. If a change to OpenWA itself is ever
+needed, fork it properly (a real fork on GitHub, re-point `prepare.sh` at
+our fork + our own pinned commit) rather than patching the cloned tree
+in-place — keeps upstream security updates mergeable.
 
 ## Before first build
 
-1. Pick and record the upstream commit SHA to pin (`git ls-remote
-   https://github.com/rmyndharis/OpenWA main` and copy the SHA into the
-   `Dockerfile`'s `OPENWA_COMMIT` build arg default below). Re-review and
-   re-pin deliberately, not automatically, when bumping.
-2. Confirm OpenWA's current Postgres schema requirements against the
-   `openwa` schema created for it in the shared `algopbx_db` database (see
-   `docker-compose.yml`'s `DATABASE_URL` for the `openwa` service) — it may
-   expect its own dedicated database/user instead; check upstream docs at
-   build time, this was not verified against a live OpenWA instance.
-3. Generate `OPENWA_API_KEY` and `OPENWA_WEBHOOK_SECRET` (`openssl rand
-   -hex 32` each) and set them in `.env` — see `.env.example`.
+1. Run `bash vendor/openwa/prepare.sh`.
+2. Generate `OPENWA_API_MASTER_KEY` and `OPENWA_WEBHOOK_SECRET`
+   (`openssl rand -hex 32` each, both >= 32 chars — OpenWA refuses to boot
+   in production with a shorter or default `API_MASTER_KEY`) and set them
+   in `.env`. `OPENWA_API_MASTER_KEY` is shared: `web`'s `OPENWA_API_KEY`
+   and the `openwa` service's `API_MASTER_KEY` are both set from it, so
+   the app and the sidecar always agree on the key.
+3. `docker compose build openwa && docker compose up -d openwa`.
+4. Verify from inside `web`:
+   ```
+   docker compose exec web sh -c 'curl -s -H "X-API-Key: $OPENWA_API_KEY" http://openwa:2785/api/sessions'
+   docker compose exec web sh -c 'curl -sf http://openwa:2785/api/health/ready'
+   ```
+5. Re-pinning later: edit `OPENWA_COMMIT` in `prepare.sh`, re-run it, then
+   `docker compose build openwa`. Re-review and re-pin deliberately, not
+   automatically.

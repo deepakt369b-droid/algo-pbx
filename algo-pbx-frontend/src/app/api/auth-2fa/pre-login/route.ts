@@ -64,12 +64,22 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  if (!user.phoneE164 || !user.phoneVerifiedAt) {
-    // No verified number on file to challenge — can't do 2FA at all.
+  if (!user.phoneE164 || !user.phoneVerifiedAt || user.phoneVerifiedByAdminId) {
+    // No verified number on file to challenge, OR the "verification" is
+    // an admin override (phoneVerifiedByAdminId set, e.g. an agent
+    // created directly by an admin via POST /api/admin/users with a
+    // password — see that route) rather than a real OTP round-trip.
     // Fail OPEN here (skip 2FA) rather than lock the user out entirely:
     // an agent mid-registration (profile not complete yet) still needs
     // to be able to sign in to REACH the registration flow in the first
-    // place — see src/middleware.ts's gate, which runs after this.
+    // place — see src/middleware.ts's gate, which runs after this. An
+    // admin-provisioned agent has the same problem for a different
+    // reason: challenging them over WhatsApp requires a CONNECTED
+    // WaInstance, which may not exist yet on a fresh deployment — 2FA
+    // would make the very first login impossible. An admin override is
+    // already a weaker verification claim than a real OTP (see
+    // phoneVerifiedByAdminId's schema comment); not gating login 2FA on
+    // it is consistent with that.
     const response = NextResponse.json({ needs2fa: false });
     response.cookies.set(OTP_VERIFIED_COOKIE, signOtpVerifiedToken(user.id), {
       httpOnly: true,

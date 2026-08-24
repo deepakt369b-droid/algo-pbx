@@ -49,10 +49,29 @@ until they exist.
 
 ## 3. Build and start
 
+The OpenWA (WhatsApp) sidecar builds from a pinned upstream commit that
+must be fetched separately before the first build — it is not vendored
+into this repo's git history (see `vendor/openwa/README.md`):
+
+```bash
+bash vendor/openwa/prepare.sh
+```
+
+Then:
+
 ```bash
 docker compose build
 docker compose up -d
 docker compose logs -f web   # watch for a clean startup
+```
+
+If Postgres's data volume already existed before this deploy (i.e. this
+isn't a fresh volume), OpenWA's dedicated database won't have been created
+by the init script — run it by hand once:
+
+```bash
+docker compose exec postgres psql -U "$POSTGRES_USER" -d postgres \
+  -f /docker-entrypoint-initdb.d/01-create-openwa-db.sql
 ```
 
 The `web` container runs `prisma migrate deploy` automatically on start

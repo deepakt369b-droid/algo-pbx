@@ -24,10 +24,14 @@ import type {
 //   status  GET  /goip_get_status.html
 //
 // Firmware revisions differ substantially in path names (some expose
-// /api/send_sms, some require a `?username=&password=` query string instead
-// of Basic auth) and in response key casing. EVERY path, key and auth
-// mechanism in this file must be checked against the actual unit before
-// this is trusted in production.
+// /api/send_sms) and in response key casing — those remain unverified.
+// The auth-mechanism half of this caveat is resolved: the /admin/dinstar
+// setup wizard's probe step (src/lib/dinstar-discovery.ts) tries both
+// Basic auth and the `?username=&password=` query-string style against
+// the real device and persists which one worked as the DINSTAR_AUTH_STYLE
+// setting — authHeaders()/authQueryParams() below read it. Everything
+// else in this file must still be checked against the actual unit before
+// being trusted in production.
 //
 // PORT NUMBERING: the UC2000 HTTP API is 0-indexed (port 0..3) while
 // WaInstance.simPort in prisma/schema.prisma is 1-indexed (1..4) because
@@ -59,12 +63,36 @@ async function baseUrl(): Promise<string> {
   return url.origin;
 }
 
+/** One of the two UNVERIFIED-no-longer auth styles Dinstar firmware
+ * variants use, discovered once by the /admin/dinstar wizard's probe step
+ * (src/lib/dinstar-discovery.ts's probeDinstarCredentials) and persisted
+ * as the DINSTAR_AUTH_STYLE setting — permanently resolving what used to
+ * be one of this file's two UNVERIFIED caveats. Falls back to "basic"
+ * (the more common style) if the wizard has never been run. */
+async function authStyle(): Promise<"basic" | "query"> {
+  const style = await getSetting("DINSTAR_AUTH_STYLE");
+  return style === "query" ? "query" : "basic";
+}
+
 async function authHeaders(): Promise<Record<string, string>> {
+  if ((await authStyle()) === "query") return {};
   const [username, password] = await Promise.all([
     getSetting("DINSTAR_SMS_USERNAME"),
     getSetting("DINSTAR_SMS_PASSWORD"),
   ]);
   return { Authorization: basicAuthHeader(username || "", password || "") };
+}
+
+/** Query-string auth params to append when DINSTAR_AUTH_STYLE is "query"
+ * — empty otherwise, so callers can unconditionally spread this into
+ * their URLSearchParams. */
+async function authQueryParams(): Promise<Record<string, string>> {
+  if ((await authStyle()) !== "query") return {};
+  const [username, password] = await Promise.all([
+    getSetting("DINSTAR_SMS_USERNAME"),
+    getSetting("DINSTAR_SMS_PASSWORD"),
+  ]);
+  return { username: username || "", password: password || "" };
 }
 
 /** WaInstance.simPort (1-4, as labelled on the hardware) -> UC2000 HTTP API
@@ -120,8 +148,9 @@ export class DinstarSmsProvider implements MessageProvider {
     if (!to) return { providerMessageId: null, status: "failed", error: "Destination is not a valid number" };
 
     try {
-      const [base, headers] = await Promise.all([baseUrl(), authHeaders()]);
-      const res = await requestJson<DinstarSendResponse>(`${base}/goip_send_sms.html`, {
+      const [base, headers, query] = await Promise.all([baseUrl(), authHeaders(), authQueryParams()]);
+      const qs = Object.keys(query).length ? `?${new URLSearchParams(query)}` : "";
+      const res = await requestJson<DinstarSendResponse>(`${base}/goip_send_sms.html${qs}`, {
         method: "POST",
         headers,
         body: {
@@ -159,11 +188,12 @@ export class DinstarSmsProvider implements MessageProvider {
   async getStatus(instanceId: string): Promise<ProviderStatus> {
     try {
       const apiPort = apiPortFromInstanceId(instanceId);
-      const [base, headers] = await Promise.all([baseUrl(), authHeaders()]);
+      const [base, headers, query] = await Promise.all([baseUrl(), authHeaders(), authQueryParams()]);
+      const qs = Object.keys(query).length ? `?${new URLSearchParams(query)}` : "";
       const res = await requestJson<{
         error_code?: number;
         status?: Array<{ port?: number; type?: string; gsm_remain_credit?: string; sim?: string }>;
-      }>(`${base}/goip_get_status.html`, { headers, timeoutMs: 10_000 });
+      }>(`${base}/goip_get_status.html${qs}`, { headers, timeoutMs: 10_000 });
 
       const port = res.status?.find((s) => s.port === apiPort);
       // "Registered" / "OK" vary by firmware — treat any non-empty,
@@ -235,7 +265,8 @@ export class DinstarSmsProvider implements MessageProvider {
     if (instanceId && instanceId !== "all") {
       params.set("port", String(apiPortFromInstanceId(instanceId)));
     }
-    const [base, headers] = await Promise.all([baseUrl(), authHeaders()]);
+    const [base, headers, query] = await Promise.all([baseUrl(), authHeaders(), authQueryParams()]);
+    for (const [k, v] of Object.entries(query)) params.set(k, v);
     const res = await requestJson<unknown>(
       `${base}/goip_get_sms.html?${params.toString()}`,
       { headers, timeoutMs: 20_000 }

@@ -312,6 +312,12 @@ bind=0.0.0.0:8089
 
 ; =========================================
 ; DINSTAR 4-PORT GSM GATEWAY TRUNK (UAE)
+; Static endpoint settings live in pjsip-base.conf, as below. The
+; [dinstar-aor]/[dinstar-identify] contact IP itself is NOT here anymore —
+; it is generated into pjsip_dinstar.conf by src/lib/dinstar-config.ts,
+; written by the /admin/dinstar setup wizard (or the DINSTAR_LAN_IP
+; setting), so changing the gateway's IP no longer requires SSH/hand-
+; editing this file. See §6.3.1 below.
 ; =========================================
 [dinstar-trunk]
 type=endpoint
@@ -322,14 +328,15 @@ allow=alaw,ulaw,g729
 aors=dinstar-aor
 direct_media=no
 
-[dinstar-aor]
-type=aor
-contact=sip:192.168.1.50:5060 ; Tailscale local IP of Dinstar
-
-[dinstar-identify]
-type=identify
-endpoint=dinstar-trunk
-match=192.168.1.50
+; --- Generated separately into pjsip_dinstar.conf, shown here for reference ---
+; [dinstar-aor]
+; type=aor
+; contact=sip:<discovered-ip>:5060
+;
+; [dinstar-identify]
+; type=identify
+; endpoint=dinstar-trunk
+; match=<discovered-ip>
 
 ; =========================================
 ; WEBRTC AGENT TEMPLATE (Extension 1001)
@@ -453,6 +460,16 @@ ping 192.168.1.50
 curl -I http://192.168.1.50
 
 ```
+
+Steps 1.3 (Tailscale route approval) and physical SIM/cabling are manual,
+unscriptable. Everything else — finding the gateway's actual IP on the
+LAN, testing its admin credentials, detecting which HTTP auth style its
+firmware uses, and writing that IP into Asterisk's trunk config — is
+automated by the **`/admin/dinstar` setup wizard** (`src/lib/dinstar-
+discovery.ts`, `src/lib/dinstar-config.ts`/`dinstar-provision.ts`; API
+under `POST /api/admin/dinstar/{discover,probe,apply}`) once the
+Tailscale route above is up. See §10 (LLM.md) for what it automates vs.
+what stays manual.
 
 ---
 

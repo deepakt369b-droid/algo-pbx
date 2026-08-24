@@ -17,11 +17,20 @@ export default function DncPage() {
   const [reason, setReason] = useState("");
   const [bulkText, setBulkText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
   const load = () => {
     fetch("/api/dnc")
-      .then((r) => r.json())
-      .then((data) => setEntries(data.entries ?? []));
+      .then((r) => {
+        if (!r.ok) throw new Error(`Request failed (${r.status})`);
+        return r.json();
+      })
+      .then((data) => {
+        setEntries(data.entries ?? []);
+        setLoadError(null);
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Could not load the DNC list."));
   };
 
   useEffect(load, []);
@@ -37,15 +46,25 @@ export default function DncPage() {
     if (res.ok) {
       setNumber("");
       setReason("");
+      setMessage(`${number} added to the Do Not Call list.`);
       load();
     } else {
-      setMessage(`Failed: ${JSON.stringify(data.error ?? data)}`);
+      setMessage(`Failed: ${data.error ?? "unknown error"}`);
     }
   };
 
-  const remove = async (id: string) => {
-    await fetch(`/api/dnc/${id}`, { method: "DELETE" });
-    load();
+  const remove = async (id: string, label: string) => {
+    try {
+      const res = await fetch(`/api/dnc/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMessage(`Could not remove ${label}: ${data.error ?? "unknown error"}`);
+        return;
+      }
+      load();
+    } finally {
+      setConfirmRemoveId(null);
+    }
   };
 
   const bulkImport = async () => {
@@ -75,6 +94,12 @@ export default function DncPage() {
         separately, at the Asterisk dialplan level (the enforcement that actually matters —
         see pbx_configs/func_odbc.conf).
       </p>
+
+      {loadError && (
+        <div className="w-full max-w-md rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+          {loadError}
+        </div>
+      )}
 
       <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Add a number</h2>
@@ -124,9 +149,20 @@ export default function DncPage() {
                   <p>{e.numberE164}</p>
                   {e.reason && <p className="text-xs text-slate-500">{e.reason}</p>}
                 </div>
-                <button onClick={() => remove(e.id)} className="text-xs text-red-400 hover:text-red-300">
-                  Remove
-                </button>
+                {confirmRemoveId === e.id ? (
+                  <span className="flex items-center gap-2 text-xs">
+                    <button onClick={() => remove(e.id, e.numberE164)} className="text-red-400 hover:text-red-300">
+                      Confirm
+                    </button>
+                    <button onClick={() => setConfirmRemoveId(null)} className="text-slate-500">
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button onClick={() => setConfirmRemoveId(e.id)} className="text-xs text-red-400 hover:text-red-300">
+                    Remove
+                  </button>
+                )}
               </li>
             ))}
           </ul>

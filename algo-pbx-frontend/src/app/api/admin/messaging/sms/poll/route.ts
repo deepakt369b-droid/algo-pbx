@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getProvider } from "@/lib/messaging/registry";
@@ -6,20 +7,28 @@ import { ingestInboundEvent } from "@/lib/messaging/ingest";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/admin/messaging/sms/poll — the Dinstar UC2000 has no
-// documented outbound webhook (see dinstar-sms-provider.ts's header), so
-// inbound SMS is pulled rather than pushed. This route drives that pull.
-// Admin-session-gated for interactive use from /admin/sms's "Check for new
-// SMS" button; for unattended polling, hit it on a schedule with a cron
-// job authenticated the same way (an admin session cookie won't work from
-// cron — run this via a scheduled admin-authenticated request, or extend
-// this route with the same bearer-secret pattern api/cdr/route.ts uses for
-// its own server-to-server ingest if unattended polling is needed before a
-// human is available to click the button. Left as an explicit follow-up
-// rather than guessed at, since the choice has real security tradeoffs.)
-export async function POST() {
-  const guard = await requireAdminSession();
-  if ("response" in guard) return guard.response;
+// This route now has two authorized callers, same split as api/cdr/route.ts:
+// an interactive admin session (the "Check for new SMS" button in
+// /admin/sms) OR a shared bearer secret for unattended cron polling — the
+// Dinstar UC2000 has no outbound webhook (dinstar-sms-provider.ts's
+// header), so without a cron path inbound SMS only ever arrived when a
+// human clicked a button, which is itself a "system isn't ready" symptom.
+// Crontab line (adjust the interval to taste):
+//   * * * * * curl -s -X POST -H "Authorization: Bearer $SMS_POLL_SECRET" http://web:3000/api/admin/messaging/sms/poll
+function isAuthorizedCronRequest(req: NextRequest): boolean {
+  const expected = process.env.SMS_POLL_SECRET;
+  if (!expected) return false; // fail closed if the secret was never configured
+  const provided = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export async function POST(request: NextRequest) {
+  if (!isAuthorizedCronRequest(request)) {
+    const guard = await requireAdminSession();
+    if ("response" in guard) return guard.response;
+  }
 
   const provider = getProvider("DINSTAR_SMS");
   if (!provider.pollInbound) {

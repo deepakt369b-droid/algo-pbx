@@ -101,7 +101,13 @@ function renderHardwareStanza(ext: ExtensionForPjsip): string {
   return `[${ext.number}]
 type=endpoint
 transport=transport-udp
-context=from-internal
+; Was "from-internal", a context pbx_configs/extensions.conf never
+; defined — a hardware phone endpoint could register but every outbound
+; dial would hit Asterisk's dialplan with no matching context and fail
+; silently. from-agent is the same context WebRTC endpoints use (DNC
+; check, jitterbuffer, Dinstar trunk dial, internal extension dialing) —
+; a desk phone needs exactly the same outbound path a softphone does.
+context=from-agent
 disallow=all
 allow=alaw,ulaw
 direct_media=no

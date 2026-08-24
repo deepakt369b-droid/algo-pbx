@@ -150,7 +150,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // pre-login itself already fails open for them, see that route's
         // comment for why an agent must be able to sign in to REACH
         // registration in the first place.
-        if (user.phoneE164 && user.phoneVerifiedAt) {
+        // phoneVerifiedByAdminId set = an admin override, not a real OTP
+        // round-trip — exempt from the 2FA cookie requirement for the
+        // same reason POST /api/auth-2fa/pre-login exempts it: an
+        // admin-provisioned agent (POST /api/admin/users with a
+        // password) may exist before any WhatsApp instance is CONNECTED
+        // to challenge them over, which would otherwise make their very
+        // first login impossible.
+        if (user.phoneE164 && user.phoneVerifiedAt && !user.phoneVerifiedByAdminId) {
           const cookieToken = readCookie(request, OTP_VERIFIED_COOKIE);
           if (!verifyOtpVerifiedToken(cookieToken, user.id)) {
             await recordLoginFailure(email, ip, user.id);

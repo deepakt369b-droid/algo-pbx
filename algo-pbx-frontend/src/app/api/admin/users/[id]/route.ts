@@ -3,6 +3,8 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { maybeCompleteProfile } from "@/lib/registration";
+import { getAmiClient } from "@/lib/ami-client";
+import { addQueueMember, removeQueueMember } from "@/lib/queue-membership";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +32,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
-  const target = await db.user.findUnique({ where: { id: params.id } });
+  const target = await db.user.findUnique({ where: { id: params.id }, include: { extension: true } });
   if (!target) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Same escalation guard as user creation: a SUPERVISOR may not act on a
@@ -58,7 +60,23 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       },
     });
 
-    return NextResponse.json({ user: { id: updated.id, email: updated.email, disabled: updated.disabled } });
+    // Keep queue membership in sync — a disabled agent must stop
+    // receiving calls immediately, and a re-enabled one should start
+    // again without a separate manual step.
+    let queueWarning: string | undefined;
+    if (target.extension) {
+      try {
+        if (parsed.data.disabled) await removeQueueMember(getAmiClient(), target.extension.number);
+        else await addQueueMember(getAmiClient(), target.extension.number);
+      } catch (err) {
+        queueWarning = `Account ${parsed.data.disabled ? "disabled" : "enabled"}, but updating queue membership failed: ${err instanceof Error ? err.message : "unknown error"}.`;
+      }
+    }
+
+    return NextResponse.json({
+      user: { id: updated.id, email: updated.email, disabled: updated.disabled },
+      warning: queueWarning,
+    });
   }
 
   // verifyPhoneOverride

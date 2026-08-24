@@ -1,24 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch, ApiError } from "@/lib/client/api";
+import { PairingCard, type WaInstance } from "@/components/whatsapp/pairing-card";
 
-interface WaInstance {
-  id: string;
-  label: string;
-  simPort: number;
-  phoneE164: string | null;
-  provider: "OPENWA" | "META_CLOUD" | "DINSTAR_SMS";
-  status: "PAIRING" | "CONNECTED" | "DISCONNECTED" | "LOGGED_OUT";
-  lastConnectedAt: string | null;
-  pairedByAdmin: { name: string; email: string } | null;
-}
-
-const STATUS_COLOR: Record<WaInstance["status"], string> = {
-  CONNECTED: "text-green-400",
-  PAIRING: "text-cyan",
-  DISCONNECTED: "text-slate-500",
-  LOGGED_OUT: "text-red-400",
-};
+const REFRESH_INTERVAL_MS = 5000;
 
 // Admin-only WhatsApp provisioning (Workstream E). Pairing, re-pairing,
 // and logout live EXCLUSIVELY here — agent/page.tsx's chat panel shows a
@@ -26,54 +12,52 @@ const STATUS_COLOR: Record<WaInstance["status"], string> = {
 // underlying API routes (src/app/api/admin/whatsapp/instances/**) are
 // requireAdminSession-gated so even a forged request from an agent's own
 // session is rejected, not just hidden by this page not rendering a button.
+//
+// Each SIM port gets its OWN card with its own live QR/pairing-code state
+// (src/components/whatsapp/pairing-card.tsx) — the previous version of
+// this page kept a single global `qr` variable, so only one instance
+// could ever show a code at a time.
 export default function WhatsAppAdminPage() {
   const [instances, setInstances] = useState<WaInstance[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [simPort, setSimPort] = useState(1);
-  const [qr, setQr] = useState<{ instanceId: string; qrCode: string } | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  const load = () => {
-    fetch("/api/admin/whatsapp/instances")
-      .then((r) => r.json())
-      .then((data) => setInstances(data.instances ?? []));
+  const load = async () => {
+    try {
+      const data = await apiFetch<{ instances: WaInstance[] }>("/api/admin/whatsapp/instances");
+      setInstances(data.instances ?? []);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : "Could not load WhatsApp instances.");
+    }
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   const usedPorts = new Set(instances.map((i) => i.simPort));
 
   const pair = async () => {
-    setMessage(null);
-    const res = await fetch("/api/admin/whatsapp/instances", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label, simPort, provider: "OPENWA" }),
-    });
-    const data = await res.json();
-    if (res.ok) {
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await apiFetch("/api/admin/whatsapp/instances", {
+        method: "POST",
+        body: { label, simPort, provider: "OPENWA" },
+      });
       setLabel("");
-      if (data.pairing?.qrCode) setQr({ instanceId: data.instance.id, qrCode: data.pairing.qrCode });
-      load();
-    } else {
-      setMessage(`Failed: ${JSON.stringify(data.error ?? data)}`);
+      await load();
+    } catch (err) {
+      setCreateError(err instanceof ApiError ? err.message : "Could not start pairing.");
+    } finally {
+      setCreating(false);
     }
-  };
-
-  const act = async (id: string, action: "refresh" | "logout" | "repair") => {
-    const res = await fetch(`/api/admin/whatsapp/instances/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-    const data = await res.json();
-    if (action === "repair" && data.pairing?.qrCode) setQr({ instanceId: id, qrCode: data.pairing.qrCode });
-    load();
-  };
-
-  const remove = async (id: string) => {
-    await fetch(`/api/admin/whatsapp/instances/${id}`, { method: "DELETE" });
-    load();
   };
 
   return (
@@ -83,6 +67,12 @@ export default function WhatsAppAdminPage() {
         Up to 4 instances — one per Dinstar SIM port. Pairing and logout are admin-only; agents see a
         read-only connection status in their own chat panel and have no control over these sessions.
       </p>
+
+      {loadError && (
+        <div className="w-full max-w-2xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+          {loadError}
+        </div>
+      )}
 
       {instances.length < 4 && (
         <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
@@ -104,68 +94,28 @@ export default function WhatsAppAdminPage() {
               </option>
             ))}
           </select>
-          <button onClick={pair} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
-            Start pairing
+          <button
+            onClick={pair}
+            disabled={creating || !label.trim() || usedPorts.has(simPort)}
+            className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+          >
+            {creating ? "Starting…" : "Start pairing"}
           </button>
-          {message && <p className="text-xs text-slate-500">{message}</p>}
+          {createError && <p className="text-xs text-red-400">{createError}</p>}
         </div>
       )}
 
-      {qr && (
-        <div className="glass-card flex w-full max-w-xs flex-col items-center gap-3 p-6">
-          <p className="text-xs text-slate-400">Scan with WhatsApp on the paired SIM&apos;s phone</p>
-          {/* qrCode is a data: URL or raw string from the provider — render
-              as an <img> when it looks like a data URL, else show the raw
-              payload for manual QR generation as a fallback. */}
-          {qr.qrCode.startsWith("data:") ? (
-            <img src={qr.qrCode} alt="WhatsApp pairing QR code" className="h-48 w-48" />
-          ) : (
-            <p className="break-all text-xs text-slate-500">{qr.qrCode}</p>
-          )}
-          <button onClick={() => setQr(null)} className="text-xs text-slate-400 hover:text-slate-200">
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <div className="glass-card w-full max-w-2xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+      <div className="flex w-full max-w-2xl flex-col gap-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
           Instances ({instances.length}/4)
         </h2>
-        {instances.length === 0 ? (
-          <p className="text-slate-500">None paired yet.</p>
+        {instances.length === 0 && !loadError ? (
+          <div className="glass-card flex flex-col items-center gap-2 p-8 text-center">
+            <p className="text-slate-300">No WhatsApp numbers paired yet.</p>
+            <p className="text-xs text-slate-500">Pair a SIM port above to get started — each number gets its own live QR or pairing code.</p>
+          </div>
         ) : (
-          <ul className="flex flex-col gap-3 text-sm text-slate-200">
-            {instances.map((i) => (
-              <li key={i.id} className="flex items-center justify-between border-t border-border pt-3 first:border-0 first:pt-0">
-                <div>
-                  <p>
-                    {i.label} <span className="text-xs text-slate-500">(SIM {i.simPort})</span>
-                  </p>
-                  <p className="text-xs text-slate-500">{i.phoneE164 ?? "not yet linked"}</p>
-                  <p className={`text-xs font-medium ${STATUS_COLOR[i.status]}`}>{i.status}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => act(i.id, "refresh")} className="text-xs text-slate-400 hover:text-slate-200">
-                    Refresh
-                  </button>
-                  {i.status !== "CONNECTED" && (
-                    <button onClick={() => act(i.id, "repair")} className="text-xs text-cyan hover:underline">
-                      Re-pair
-                    </button>
-                  )}
-                  {i.status === "CONNECTED" && (
-                    <button onClick={() => act(i.id, "logout")} className="text-xs text-red-400 hover:text-red-300">
-                      Log out
-                    </button>
-                  )}
-                  <button onClick={() => remove(i.id)} className="text-xs text-red-400 hover:text-red-300">
-                    Remove
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          instances.map((instance) => <PairingCard key={instance.id} instance={instance} onChanged={load} />)
         )}
       </div>
     </div>

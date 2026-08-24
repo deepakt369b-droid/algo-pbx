@@ -66,18 +66,34 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
     key: "OPENWA_API_KEY",
     section: "whatsapp_openwa",
     label: "OpenWA API Key",
+    help: "Must equal the OpenWA sidecar's own API_MASTER_KEY (docker-compose.yml's openwa service) — sent as the X-API-Key header on every call. >= 32 chars in production.",
     secret: true,
+    // The web container's own env var is named OPENWA_API_KEY (see
+    // docker-compose.yml's `web` service, itself set from the
+    // OPENWA_API_MASTER_KEY value in .env) — envFallback must name the
+    // variable actually present in THIS container's environment, not the
+    // .env source variable that fed it.
     envFallback: "OPENWA_API_KEY",
     validator: z.string().min(1),
   },
   {
     key: "OPENWA_WEBHOOK_SECRET",
     section: "whatsapp_openwa",
-    label: "OpenWA Webhook Shared Secret",
-    help: "Must match the value configured on the OpenWA sidecar's outbound webhook.",
+    label: "OpenWA Webhook Signing Secret",
+    help: "HMAC-SHA256 secret we register on each WhatsApp session's webhook at pairing time (POST /api/sessions/{id}/webhooks) — not configured on the sidecar directly, OpenWA has no global webhook setting.",
     secret: true,
     envFallback: "OPENWA_WEBHOOK_SECRET",
     validator: z.string().min(1),
+  },
+  {
+    key: "OPENWA_WEBHOOK_URL",
+    section: "whatsapp_openwa",
+    label: "OpenWA Webhook Target URL",
+    help: "Where the OpenWA sidecar delivers inbound events — must be reachable FROM the openwa container, not from a browser. The docker-compose default (internal algo-net DNS) is correct for the shipped stack; override only for a non-standard topology.",
+    secret: false,
+    envFallback: "OPENWA_WEBHOOK_URL",
+    default: "http://web:3000/api/messaging/openwa-webhook",
+    validator: z.string().url(),
   },
 
   // --- WhatsApp: Meta Cloud API ---
@@ -123,6 +139,14 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
     secret: true,
     envFallback: "DINSTAR_SMS_PASSWORD",
     validator: z.string().min(1),
+  },
+  {
+    key: "DINSTAR_AUTH_STYLE",
+    section: "sms_dinstar",
+    label: "Dinstar Auth Style",
+    help: "Which auth style this gateway's firmware actually accepts — set automatically by the /admin/dinstar setup wizard's probe step, not meant to be typed by hand.",
+    secret: false,
+    validator: z.enum(["basic", "query"]),
   },
 
   // --- OTP routing ---

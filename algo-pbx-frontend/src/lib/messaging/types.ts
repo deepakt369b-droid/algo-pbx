@@ -17,9 +17,10 @@ export type Channel = "WHATSAPP" | "SMS";
 
 export interface SendTextInput {
   /** Provider-scoped instance/session identifier. For OpenWA this is the
-   * WaInstance.id used as the sidecar's session name; for Dinstar it is the
-   * SIM port number as a string; for Meta Cloud it is ignored (the phone
-   * number id comes from META_PHONE_NUMBER_ID). */
+   * OpenWA-assigned session id (WaInstance.openwaSessionId) — NOT
+   * WaInstance.id; for Dinstar it is the SIM port number as a string; for
+   * Meta Cloud it is ignored (the phone number id comes from
+   * META_PHONE_NUMBER_ID). */
   instanceId: string;
   /** E.164 with leading '+', as stored on Contact.numberE164. Adapters that
    * need the bare-digits form (WhatsApp wa_id) strip it themselves. */

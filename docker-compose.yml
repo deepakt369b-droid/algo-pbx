@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. PostgreSQL Database
   postgres:
@@ -22,6 +20,10 @@ services:
           memory: 1G
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Runs once, only on a fresh volume — gives OpenWA (service `openwa`
+      # below) its own database. See that file's header for the by-hand
+      # command to run this against an already-initialized volume.
+      - ./vendor/openwa/initdb:/docker-entrypoint-initdb.d:ro
     ports:
       # Bound to loopback only, not 0.0.0.0 — the only consumers of this
       # published port are on the same host: the `asterisk` service (via
@@ -120,6 +122,11 @@ services:
       # services bind-mount the same host path, so a write from `web` is
       # immediately visible to `asterisk` without any extra sync step.
       - ./pbx_configs/pjsip_dynamic.conf:/etc/asterisk/pjsip_dynamic.conf
+      # NOT :ro — same reasoning: the Dinstar setup wizard
+      # (src/lib/dinstar-provision.ts) writes this file, then triggers
+      # `pjsip reload`. Was hardcoded into pjsip-base.conf's read-only
+      # mount before, which meant changing the Dinstar's IP required SSH.
+      - ./pbx_configs/pjsip_dinstar.conf:/etc/asterisk/pjsip_dinstar.conf
       - ./pbx_configs/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./pbx_configs/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./pbx_configs/manager.conf:/etc/asterisk/manager.conf:ro
@@ -180,12 +187,16 @@ services:
       AUTH_URL: "${AUTH_URL}"
       AUTH_TRUST_HOST: "${AUTH_TRUST_HOST:-true}"
       CDR_INGEST_SECRET: "${CDR_INGEST_SECRET}"
+      # Unattended cron auth for POST /api/admin/messaging/sms/poll — see
+      # .env.example's crontab line.
+      SMS_POLL_SECRET: "${SMS_POLL_SECRET}"
       # Encrypts every runtime setting stored via /admin/settings or the
       # first-run /setup wizard (src/lib/settings/crypto.ts) — required
       # before either can be used; POST /api/setup refuses without it.
       SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY}"
       RECORDINGS_DIR: /recordings
       PJSIP_DYNAMIC_CONF_PATH: /pjsip_dynamic.conf
+      PJSIP_DINSTAR_CONF_PATH: /pjsip_dinstar.conf
       VOICEMAIL_DYNAMIC_CONF_PATH: /voicemail_dynamic.conf
       VOICEMAIL_DIR: /voicemail
       # Coturn REST ephemeral credentials (RFC 5766) — coturn runs
@@ -208,7 +219,14 @@ services:
       # Also the default OTP delivery channel (OTP_CHANNEL below) — no
       # Meta template approval or Firebase project needed for OTP to work.
       OPENWA_BASE_URL: "${OPENWA_BASE_URL:-http://openwa:2785}"
-      OPENWA_API_KEY: "${OPENWA_API_KEY}"
+      # Must equal the openwa service's API_MASTER_KEY below — this is the
+      # key the app authenticates to OpenWA's REST API with (X-API-Key).
+      OPENWA_API_KEY: "${OPENWA_API_MASTER_KEY}"
+      # HMAC-SHA256 secret registered on each WhatsApp session's webhook at
+      # creation time (see src/lib/messaging/openwa-client.ts) — NOT read
+      # by the openwa container itself as an env var; OpenWA has no global
+      # webhook config, webhooks are per-session.
+      OPENWA_WEBHOOK_SECRET: "${OPENWA_WEBHOOK_SECRET}"
       # Dinstar UC2000 SMS HTTP/JSON API (Workstream E) — same box the
       # voice trunk already reaches via Tailscale, see DINSTAR_LAN_IP.
       DINSTAR_LAN_IP: "${DINSTAR_LAN_IP}"
@@ -245,6 +263,9 @@ services:
       # output gets written here by the extensions API route, then an AMI
       # `pjsip reload` (sent to the asterisk service) picks it up.
       - ./pbx_configs/pjsip_dynamic.conf:/pjsip_dynamic.conf
+      # Same shared-file pattern for the Dinstar setup wizard's discovered
+      # gateway IP.
+      - ./pbx_configs/pjsip_dinstar.conf:/pjsip_dinstar.conf
       # Same shared-file pattern for voicemail (Phase E).
       - ./pbx_configs/voicemail_dynamic.conf:/voicemail_dynamic.conf
       # Read-write (was :ro): api/voicemail/[id] DELETE unlinks the .wav/
@@ -295,23 +316,31 @@ services:
         condition: service_healthy
 
   # 6. OpenWA sidecar (Workstream E) — WhatsApp engine, MIT-licensed,
-  # forked/vendored under vendor/openwa (see that directory's README for
-  # why OpenWA over evolution-go: no license-activation gate, actively
+  # vendored under vendor/openwa (see that directory's README for why
+  # OpenWA over evolution-go: no license-activation gate, actively
   # maintained, dual whatsapp-web.js/baileys engine choice). Never exposed
   # publicly — web reaches it over algo-net by service name
   # (OPENWA_BASE_URL) and it is not in `ports:`. Pairing/QR/session
-  # management happens through OpenWA's own dashboard, reverse-proxied at
-  # /admin/whatsapp/* by the web app rather than published directly (see
-  # src/app/admin/whatsapp/page.tsx) so it stays behind our own
-  # requireAdminSession guard, not OpenWA's own auth.
+  # management is entirely OUR OWN UI (src/app/admin/whatsapp/page.tsx,
+  # requireAdminSession-gated) calling OpenWA's REST API — there is no
+  # reverse proxy to OpenWA's own dashboard anywhere in this stack.
+  #
+  # Builds directly from upstream's own multi-stage Dockerfile (Chromium/
+  # ffmpeg/postgres-client image with several backport patches applied at
+  # build time — not something worth re-deriving by hand). Run
+  # `bash vendor/openwa/prepare.sh` before the first build (and again
+  # whenever the pinned commit changes) to fetch the source into
+  # vendor/openwa/upstream/ at the exact commit that script pins.
   openwa:
     build:
-      context: ./vendor/openwa
+      context: ./vendor/openwa/upstream
     container_name: algo-openwa
     restart: always
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=openwa"
-      API_KEY: "${OPENWA_API_KEY}"
+      NODE_ENV: production
+      # >= 32 chars in production — OpenWA refuses to boot otherwise. Must
+      # equal `web`'s OPENWA_API_KEY above.
+      API_MASTER_KEY: "${OPENWA_API_MASTER_KEY}"
       ENGINE_TYPE: "${OPENWA_ENGINE:-baileys}"
       # baileys default (not whatsapp-web.js): ~30-80MB RAM per session vs
       # ~300-500MB, and this deployment runs up to 4 concurrent instances
@@ -319,19 +348,44 @@ services:
       # already carrying Asterisk's media engine. whatsapp-web.js's lower
       # ban risk (it simulates real WhatsApp Web browser traffic) is worth
       # revisiting if ban rate becomes a problem in practice.
-      WEBHOOK_URL: "http://web:3000/api/messaging/openwa-webhook"
-      WEBHOOK_SECRET: "${OPENWA_WEBHOOK_SECRET}"
+      DATABASE_TYPE: postgres
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      # A dedicated database (see vendor/openwa/initdb/), not a schema
+      # inside algopbx_db — upstream's config takes a whole database name,
+      # not a `?schema=` URL fragment.
+      DATABASE_NAME: openwa
+      DATABASE_USERNAME: "${POSTGRES_USER}"
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD}"
+      DATABASE_SYNCHRONIZE: "false"
+      SESSION_DATA_PATH: /app/data/sessions
+      BAILEYS_AUTH_DIR: /app/data/baileys
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/data/media
+      # Webhooks are registered PER SESSION by the app at pairing time
+      # (src/lib/messaging/openwa-client.ts registerSessionWebhook), not
+      # via a global env var — OpenWA has no such var. SSRF protection is
+      # on by default and would otherwise refuse a webhook URL pointing at
+      # the private `web` service.
+      WEBHOOK_SSRF_PROTECT: "true"
+      SSRF_ALLOWED_HOSTS: "web"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:2785/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "curl", "-f", "http://localhost:2785/api/health/ready"]
       interval: 15s
       timeout: 5s
       retries: 6
-      start_period: 20s
+      start_period: 30s
     deploy:
       resources:
         limits:
           cpus: "1.0"
           memory: 1G
+    volumes:
+      # Session credentials/media persist here. WITHOUT this volume every
+      # paired WhatsApp number is wiped on container restart/recreate —
+      # confirmed as the cause of "the current pair cannot be
+      # refreshed/deleted" (there was never anything durable behind it).
+      - openwa_data:/app/data
     networks:
       - algo-net
     depends_on:
@@ -340,6 +394,7 @@ services:
 
 volumes:
   postgres_data:
+  openwa_data:
 
 networks:
   algo-net:

@@ -58,3 +58,15 @@
 [ 3082375ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:3000/admin/settings:0
 [ 3082375ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:3000/admin/settings:0
 [ 3082375ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:3000/admin/settings:0
+[21962091ms] [ERROR] Connecting to 'https://localhost/login?callbackUrl=%2Fadmin%2Fwhatsapp' violates the following Content Security Policy directive: "connect-src 'self' wss: turn: turns: stun:". The action has been blocked. @ http://localhost:3000/admin/users:0
+[21962093ms] [ERROR] Failed to fetch RSC payload for http://localhost:3000/admin/whatsapp. Falling back to browser navigation. TypeError: Failed to fetch
+    at f (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:45430)
+    at http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:58956
+    at Object.u [as task] (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:31831)
+    at c.s (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:32536)
+    at c.enqueue (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:31961)
+    at s (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:58919)
+    at i (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:58459)
+    at a (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:65248)
+    at f (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:1:75108)
+    at Object.action (http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:2:7080) @ http://localhost:3000/_next/static/chunks/117-f9f4984ea2720060.js:0
