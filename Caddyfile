@@ -1,0 +1,30 @@
+# Algo PBX reverse proxy.
+#
+# Terminates TLS for the web app on 443 using the SAME certificate pair
+# Asterisk (WSS 8089) and Coturn (5349) read from pbx_configs/keys/ —
+# one certbot issuance serves everything; see DEPLOYMENT.md §2 for
+# issuance and for why the renewal deploy-hook must restart asterisk,
+# coturn AND caddy.
+#
+# Certificates are supplied manually (bind-mounted read-only), so ACME /
+# auto-HTTPS is disabled — certbot owns issuance, Caddy only serves.
+# WebSockets (Next.js server actions / future SSE) proxy natively through
+# reverse_proxy without extra config.
+
+{
+	auto_https off
+}
+
+# Plain HTTP: redirect everything to HTTPS (also serves certbot HTTP-01
+# challenges if that renewal mode is chosen over DNS-01).
+http://{$VM_PUBLIC_DOMAIN} {
+	redir https://{$VM_PUBLIC_DOMAIN}{uri} permanent
+}
+
+https://{$VM_PUBLIC_DOMAIN} {
+	tls /certs/fullchain.pem /certs/privkey.pem
+
+	encode zstd gzip
+
+	reverse_proxy web:3000
+}

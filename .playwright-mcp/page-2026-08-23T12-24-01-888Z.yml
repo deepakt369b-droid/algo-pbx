@@ -1,0 +1,51 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e10]:
+    - generic [ref=f3e11]:
+      - heading "Supervisor / Admin Dashboard" [level=1] [ref=f3e12]
+      - generic [ref=f3e13]:
+        - generic [ref=f3e14]: admin@algopbx.local
+        - button "Sign out" [ref=f3e16] [cursor=pointer]
+    - navigation [ref=f3e17]:
+      - link "Wallboard" [ref=f3e18] [cursor=pointer]:
+        - /url: /admin
+      - link "Queues" [ref=f3e19] [cursor=pointer]:
+        - /url: /admin/queues
+      - link "CDR" [ref=f3e20] [cursor=pointer]:
+        - /url: /admin/cdr
+      - link "Extensions" [ref=f3e21] [cursor=pointer]:
+        - /url: /admin/extensions
+      - link "Users" [ref=f3e22] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Do Not Call" [ref=f3e23] [cursor=pointer]:
+        - /url: /admin/dnc
+      - link "WhatsApp" [ref=f3e24] [cursor=pointer]:
+        - /url: /admin/whatsapp
+      - link "SIM SMS" [ref=f3e25] [cursor=pointer]:
+        - /url: /admin/sms
+      - link "Rooms" [ref=f3e26] [cursor=pointer]:
+        - /url: /admin/rooms
+      - link "Sign-Ins" [ref=f3e27] [cursor=pointer]:
+        - /url: /admin/sign-ins
+      - link "Reports" [ref=f3e28] [cursor=pointer]:
+        - /url: /admin/reports
+      - link "Settings" [ref=f3e29] [cursor=pointer]:
+        - /url: /admin/settings
+    - generic [ref=f3e30]:
+      - generic [ref=f3e31]:
+        - generic [ref=f3e32]: "0"
+        - generic [ref=f3e33]: Active Calls
+      - generic [ref=f3e34]:
+        - generic [ref=f3e35]: "0"
+        - generic [ref=f3e36]: Agents Online
+      - generic [ref=f3e37]:
+        - generic [ref=f3e38]: "0"
+        - generic [ref=f3e39]: Queues
+      - generic [ref=f3e40]:
+        - generic [ref=f3e41]: Down
+        - generic [ref=f3e42]: AMI Link
+    - generic [ref=f3e43]:
+      - text: "Live call intervention (listen-in / whisper / barge) is unavailable: your account has no linked extension. Ask an admin to provision one under"
+      - link "Extensions" [ref=f3e44] [cursor=pointer]:
+        - /url: /admin/extensions
+      - text: .
+  - alert [ref=f3e8]

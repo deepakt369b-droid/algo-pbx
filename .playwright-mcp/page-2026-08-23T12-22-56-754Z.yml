@@ -1,0 +1,12 @@
+- generic [active] [ref=f2e1]:
+  - main [ref=f2e2]:
+    - generic [ref=f2e5]:
+      - heading "Welcome to Algo PBX" [level=1] [ref=f2e6]
+      - paragraph [ref=f2e7]: Create the first administrator account to get started.
+      - generic [ref=f2e8]:
+        - textbox "Your name" [ref=f2e9]
+        - textbox "Admin email (this becomes your username)" [ref=f2e10]
+        - textbox "Password (min 8 characters)" [ref=f2e11]
+        - textbox "Confirm password" [ref=f2e12]
+        - button "Create admin account" [ref=f2e13] [cursor=pointer]
+  - alert [ref=f2e4]

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Algo PBX — Configuring Credentials, Dinstar &amp; Going Live</title>
+<style>
+  @page {{ size: A4; margin: 18mm 16mm; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #222; }}
+  h1 {{ font-size: 20pt; margin: 0 0 6px; }}
+  h2 {{ font-size: 14pt; margin: 18px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }}
+  h3 {{ font-size: 12pt; margin: 14px 0 6px; }}
+  .cover {{ text-align: center; padding-top: 120px; page-break-after: always; }}
+  .cover .subtitle {{ font-size: 14pt; color: #555; margin-top: 8px; }}
+  .cover .note {{ font-size: 10pt; color: #777; margin-top: 40px; text-align: left; }}
+  .screenshot {{ max-width: 100%; border: 1px solid #ddd; border-radius: 6px; margin: 10px 0; }}
+  .caption {{ font-size: 9pt; color: #555; margin-top: 4px; }}
+  .warn {{ background: #fff3cd; border-left: 4px solid #f0ad4e; padding: 8px 12px; margin: 10px 0; }}
+  code {{ font-family: Consolas, Monaco, monospace; font-size: 9.5pt; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }}
+  pre {{ background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 9pt; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+  th, td {{ border: 1px solid #ccc; padding: 6px; text-align: left; }}
+  th {{ background: #f0f0f0; }}
+  ul {{ margin: 6px 0; padding-left: 22px; }}
+  .page-break {{ page-break-before: always; }}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Algo PBX — Infrastructure Guide 2 of 2</h1>
+  <div class="subtitle">Configuring Credentials, Dinstar &amp; Going Live</div>
+  <p>Wiring up <code>/admin/settings</code>, connecting the physical Dinstar UC2000 gateway over LAN, and cutting your GoDaddy domain over to Cloudflare for free SSL.</p>
+  <div class="note">
+    <strong>Prerequisite:</strong> "Deploying Algo PBX on a Linux VM" completed — the stack is up and you have created the first admin account at <code>/setup</code>.<br><br>
+    The <code>/setup</code> and <code>/admin/settings</code> screenshots below were captured live against the production standalone build running locally. GoDaddy/Cloudflare/Dinstar screens remain reference diagrams — menu wording varies by account region and firmware version, but the fields and order of operations are accurate.
+  </div>
+</div>
+
+<h2>Contents</h2>
+<ol>
+  <li>How <code>/admin/settings</code> works</li>
+  <li>Email — Resend</li>
+  <li>WhatsApp — OpenWA</li>
+  <li>SMS &amp; Voice — the Dinstar UC2000 (LAN-connected gateway)</li>
+  <li>Optional: Meta Cloud API &amp; Firebase</li>
+  <li>Domain cutover: GoDaddy → Cloudflare, and free SSL</li>
+  <li>Final checklist</li>
+  <li>Appendix A — /setup first-run screenshot</li>
+  <li>Appendix B — Ports on the telephony side</li>
+</ol>
+
+<h2 class="page-break">1. How /admin/settings works</h2>
+<p>Every external-service credential (Resend, OpenWA, Meta, Dinstar, Firebase, CRM webhook secret) is admin-configurable here, encrypted at rest (AES-256-GCM), and takes effect immediately with no restart. The only exceptions are telephony-level settings (<code>AMI</code>, <code>Coturn</code>, <code>VM_PUBLIC_DOMAIN</code>) — those stay in <code>.env</code> / <code>pbx_configs/</code> by design and need a restart.</p>
+
+<img class="screenshot" src="{settings_img}" alt="/admin/settings runtime settings page">
+<div class="caption">Live screenshot: /admin/settings showing Email (Resend), WhatsApp (OpenWA), SMS (Dinstar UC2000), OTP, Firebase and CRM Webhooks sections. Captured on an earlier build — the current app wraps every admin page in the grouped-sidebar shell with a live system-health pill; fields and layout shown here are unchanged.</div>
+
+<p>Each section has a <strong>Test connection</strong> button — always click it after saving. It is the fastest way to catch a typo'd key or an unreachable host before an agent hits the same failure live.</p>
+
+<h2 class="page-break">2. Email — Resend</h2>
+<p>Required before any agent invite can be sent.</p>
+<ol>
+  <li>Sign up / log in at resend.com.</li>
+  <li>Add and verify your sending domain under <strong>Domains</strong> (adds a few DNS records — see Section&nbsp;6 if you are also moving DNS to Cloudflare; do this after the cutover so you only touch DNS once).</li>
+  <li>Go to <strong>API Keys → Create API Key</strong>, copy the key (shown once).</li>
+  <li>In Algo PBX: <code>/admin/settings → Email</code>, paste the key and the verified sender address, then click <strong>Test connection</strong>.</li>
+</ol>
+
+<h2>3. WhatsApp — OpenWA (four SIM ports)</h2>
+<p>The Dinstar holds up to four GSM SIMs, and each SIM can carry its own WhatsApp number. Algo PBX runs <strong>one OpenWA engine</strong> that hosts all of them as separate sessions — so there are exactly two layers to configure, and only one of them lives in settings:</p>
+<table>
+  <tr><th>Layer</th><th>Where</th><th>How many</th></tr>
+  <tr><td>OpenWA connection (sidecar host, API key, webhook secret)</td><td><code>/admin/settings → WhatsApp: OpenWA</code></td><td><strong>1</strong> — configured once, shared by every number</td></tr>
+  <tr><td>WhatsApp numbers (sessions)</td><td><code>/admin/whatsapp</code> — the SIM port board</td><td><strong>up to 4</strong> — one per GSM port</td></tr>
+</table>
+<ol>
+  <li>Configure the OpenWA connection details (host/webhook secret) at <code>/admin/settings → WhatsApp: OpenWA</code>, then click <strong>Test connection</strong>. This is a one-time step.</li>
+  <li>Open <code>/admin/whatsapp</code>. You get a fixed board of four slots — <strong>SIM Port 1–4</strong>, matching the gateway's physical ports — all live at once.</li>
+  <li>For each port you're using: type the SIM's label into its slot and click <strong>Start pairing</strong>. The slot immediately asks for that number and shows a big pairing code (tap to copy) — on the phone, go to WhatsApp → Linked Devices → Link with phone number instead, enter the code, done. Prefer scanning? Toggle <em>Scan QR instead</em> in the same slot.</li>
+  <li>All four slots keep their codes visible simultaneously — you can link four phones back-to-back without navigating anywhere.</li>
+  <li>Each slot flips to green <strong>Connected</strong> as its phone links; the header counts <code>n/4 connected</code>. Don't rely on OTP delivery until the port you expect to send OTPs shows Connected.</li>
+</ol>
+<img class="screenshot" src="{whatsapp_img}" alt="/admin/whatsapp SIM port board">
+<div class="caption">The /admin/whatsapp SIM port board — four slots mirroring the gateway's GSM ports, each scan-ready at the same time (pairing code big and tap-to-copy, QR one toggle away).</div>
+<p><strong>Tip:</strong> any one port can be dedicated to OTP traffic only (isolating its ban-risk from customer conversations) via <code>OTP_WA_INSTANCE_ID</code> in <code>.env</code>. Ports map to agents through the SIM-port field when provisioning users in <code>/admin/users</code>.</p>
+
+<h2 class="page-break">4. SMS &amp; Voice — the Dinstar UC2000</h2>
+<p>The Dinstar UC2000 is a 4-port GSM gateway that bridges physical SIM cards to Algo PBX two separate ways: a SIP trunk for voice (<code>Asterisk / pjsip.conf</code>) and an HTTP/JSON API for SMS (<code>/admin/settings</code>). Same box, same LAN IP, two integration points — don't confuse them.</p>
+
+<h3>4.1 — Physically connect it</h3>
+<ol>
+  <li>Connect the Dinstar's LAN port to your office router/switch with a standard Ethernet cable (or directly to the PC's NIC if point-to-point — but a router/switch is strongly preferred so both the Dinstar and the office PC/VM sit on the same routable subnet).</li>
+  <li>Insert your GSM SIM card(s) into the port(s) you intend to use (1–4).</li>
+  <li>Power it on — wait for the LAN/status LEDs to settle (roughly 60–90 seconds for full boot and SIM registration).</li>
+</ol>
+
+<h3>Finding its IP address</h3>
+<p>By default most Dinstar UC2000 units either DHCP an address from your router or ship with a static factory default (commonly <code>192.168.1.101</code> or similar — check the label). Two reliable ways to find it:</p>
+<pre>
+# Option A — router DHCP client list (usually http://192.168.1.1 or http://192.168.0.1)
+# look for a device named "UC2000" or a Dinstar MAC OUI.
+
+# Option B — network scan
+nmap -sn 192.168.1.0/24        # Linux/macOS
+# or use "Advanced IP Scanner" on Windows
+</pre>
+
+<h3>4.2 — Log into the Dinstar's own web GUI</h3>
+<ol>
+  <li>Open <code>http://&lt;dinstar-ip&gt;</code> in a browser on the same network.</li>
+  <li>Default credentials are typically <code>admin / admin</code> — change this immediately after first login.</li>
+</ol>
+
+<h3>What to configure inside the Dinstar GUI</h3>
+<table>
+  <tr><th>Menu (typical)</th><th>What to set</th><th>Why</th></tr>
+  <tr><td>VoIP / SIP Trunk</td><td>Add a SIP server entry pointing at your Algo PBX VM's LAN/Tailscale IP, port <code>5060</code>, transport UDP. Leave registration off if using IP-based trunking (matches this repo's <code>pjsip.conf</code>).</td><td>Enables the voice trunk — inbound GSM calls route to Asterisk's <code>from-dinstar</code> context; outbound agent calls go out through the SIMs.</td></tr>
+  <tr><td>HTTP API / SMS API</td><td>Enable the HTTP/JSON API (sometimes labelled "GoIP-compatible API" or "Open API"). Set/confirm the admin username and password used for Basic-auth on the API. Note the API port if separate from the web GUI port.</td><td>This is what Algo PBX's SMS inbox polls for send/receive.</td></tr>
+  <tr><td>Network</td><td>Either set a DHCP reservation for this MAC on your router, or assign the Dinstar a static IP here. Pin the IP — if it changes later, every config below breaks silently.</td><td>Algo PBX references this IP in three separate places; it must not move.</td></tr>
+  <tr><td>System → Password</td><td>Change the default admin password.</td><td>This device is reachable from your whole PBX-side network; don't leave it on defaults.</td></tr>
+</table>
+
+<div class="warn"><strong>UNVERIFIED AGAINST A LIVE UNIT.</strong> This repo's SMS adapter targets Dinstar's documented GoIP-compatible HTTP API — <code>POST /goip_send_sms.html</code>, <code>GET /goip_get_sms.html</code>, <code>GET /goip_get_status.html</code>, HTTP Basic auth. Firmware revisions differ in exact path names and auth style. If <strong>Test connection</strong> fails in <code>/admin/settings</code>, check your unit's actual HTTP API manual/firmware version.</div>
+
+<h3>4.3 — Where each Dinstar value gets typed into Algo PBX</h3>
+<table>
+  <tr><th>Dinstar GUI value</th><th>Goes into</th><th>Path / variable</th></tr>
+  <tr><td>LAN IP (static/reserved)</td><td><code>/admin/settings</code> → Dinstar Gateway Address, and the voice-side trunk config</td><td><code>DINSTAR_LAN_IP</code> + generated <code>pjsip_dinstar.conf</code></td></tr>
+  <tr><td>HTTP API admin username</td><td><code>/admin/settings</code> → Dinstar Admin Username</td><td><code>DINSTAR_SMS_USERNAME</code></td></tr>
+  <tr><td>HTTP API admin password</td><td><code>/admin/settings</code> → Dinstar Admin Password (the wizard probes which auth style your firmware uses)</td><td><code>DINSTAR_SMS_USERNAME</code>/<code>DINSTAR_AUTH_STYLE</code></td></tr>
+</table>
+
+<p>The <strong>/admin/dinstar setup wizard</strong> does the voice-side wiring for you: it scans the Tailscale/LAN subnet for the gateway, probes its credentials, writes the generated Asterisk trunk config (<code>pjsip_dinstar.conf</code>), reloads Asterisk over AMI, and <em>verifies the reload actually took effect</em>. You never hand-edit <code>pjsip.conf</code>:</p>
+<pre>
+# In the browser, as an admin:
+/admin/dinstar  →  Discover → probe → Apply
+# Then confirm on /admin/system that "Asterisk AMI" and
+# "Dinstar gateway reachable" both show green.
+</pre>
+<p>The <code>/admin/settings</code> fields (SMS side) are hot-reloaded, no restart. Only the SIM insertion/PIN, changing the device's factory password, and its own SIP-trunk page remain manual inside the Dinstar GUI — the wizard shows a copy-paste values panel for that last one.</p>
+
+<h3>4.4 — If the Dinstar-connected PC isn't on the same LAN as the VM</h3>
+<p>Use Tailscale subnet routing (from <code>ALGO_PBX_MASTER_DOC.md</code> §6.3) when the Dinstar sits in an office network separate from wherever the Algo PBX VM runs:</p>
+<pre>
+# ON THE OFFICE PC (same LAN as the Dinstar):
+echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-tailscale.conf
+sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
+sudo tailscale up --advertise-routes=192.168.1.0/24
+# Then: login.tailscale.com -> Machines -> this device -> Edit Route Settings -> APPROVE the route.
+
+# ON THE ALGO PBX VM:
+sudo tailscale up --accept-routes
+ping 192.168.1.50
+curl -I http://192.168.1.50
+</pre>
+<p>If the office PC and the VM are on the same LAN, skip Tailscale entirely — <code>DINSTAR_LAN_IP</code> is just its LAN IP.</p>
+
+<h2 class="page-break">5. Optional: Meta Cloud API &amp; Firebase</h2>
+<p>Only needed if you switch <code>OTP_CHANNEL</code> away from <code>OPENWA</code> in the OTP section of <code>/admin/settings</code>.</p>
+<ul>
+  <li><strong>Meta Cloud API</strong> — create a Meta developer app, add the WhatsApp product, grab the permanent access token and phone number ID from <code>developers.facebook.com</code>; paste into <code>/admin/settings → WhatsApp: Meta Cloud</code>.</li>
+  <li><strong>Firebase</strong> — create a project at <code>console.firebase.google.com</code>, enable Cloud Messaging, generate a service-account key under <strong>Project Settings → Service Accounts</strong>, paste the JSON into the Firebase section.</li>
+</ul>
+
+<h2 class="page-break">6. Domain cutover: GoDaddy → Cloudflare, free SSL</h2>
+<p>This section is documentation only — nameserver changes affect live DNS and should be done by you directly in your own GoDaddy/Cloudflare accounts. Diagrams below are reference layouts of the current dashboards.</p>
+
+<h3>6.1 — Add your domain to Cloudflare first</h3>
+<ol>
+  <li>Sign up / log in at dash.cloudflare.com.</li>
+  <li>Add a domain, enter the domain you bought on GoDaddy, choose the <strong>Free</strong> plan.</li>
+  <li>Cloudflare scans existing DNS records and shows you a list to import — review them.</li>
+  <li>Cloudflare shows you two nameservers assigned to your domain (e.g. <code>ana.ns.cloudflare.com</code>, <code>bob.ns.cloudflare.com</code>) — copy these for GoDaddy.</li>
+</ol>
+
+<h3>6.2 — Change nameservers at GoDaddy</h3>
+<ol>
+  <li>Log into godaddy.com → <strong>My Products</strong>.</li>
+  <li>Find your domain, click <strong>DNS</strong> next to it.</li>
+  <li>Under <strong>Nameservers</strong>, click <strong>Change</strong>, choose <strong>Enter my own nameservers (Custom)</strong>.</li>
+  <li>Paste the two Cloudflare nameservers from 6.1, remove any GoDaddy-default ones, <strong>Save</strong>.</li>
+</ol>
+
+<div class="warn">Nameserver changes typically take 30 minutes to a few hours, occasionally up to 24–48 hours, to fully propagate. Cloudflare emails you once it detects the change and activates the zone.</div>
+
+<h3>6.3 — DNS records in Cloudflare</h3>
+<p>Once the zone is active, add the A record pointing at your VM:</p>
+<table>
+  <tr><th>Type</th><th>Name</th><th>Content</th><th>Proxy status</th></tr>
+  <tr><td>A</td><td>@ (or your subdomain, e.g. <code>pbx</code>)</td><td>Your VM's public IP</td><td><strong>DNS only</strong> (grey cloud) — see warning below</td></tr>
+</table>
+
+<div class="warn"><strong>IMPORTANT — PROXY (ORANGE CLOUD) DOES NOT WORK FOR THIS STACK.</strong> Cloudflare's proxy only forwards HTTP/HTTPS traffic on a small set of ports and terminates TLS itself. Algo PBX needs raw UDP 5060 (SIP), UDP 10000–20000 (RTP), UDP 20001–30000 (TURN relay), and WSS on 8089 reaching your VM directly — none of that works through the orange-cloud proxy. Set the record to <strong>DNS ONLY</strong> (grey cloud) so it resolves straight to your VM's IP, and get your TLS certificate a different way.</div>
+
+<h3>6.4 — Free SSL: one cert pair serves everything</h3>
+<p>The stack ships a <strong>Caddy reverse proxy</strong> that terminates HTTPS for the web app on 443, plus Asterisk WSS (8089) and Coturn TLS (5349). All three read the <em>same</em> certificate pair from <code>pbx_configs/keys/</code>, so you issue one Let's Encrypt certificate and copy it once.</p>
+<table>
+  <tr><th>Option</th><th>How</th><th>Notes</th></tr>
+  <tr><td>DNS-01 via Cloudflare API (recommended)</td><td><code>certbot certonly --dns-cloudflare</code> with a Zone-DNS-edit API token. No port 80 listener needed; renewal never touches the running stack.</td><td>Works with the grey-cloud (DNS-only) record this guide requires anyway.</td></tr>
+  <tr><td>HTTP-01 standalone (fallback)</td><td><code>sudo docker compose stop caddy</code> → <code>certbot certonly --standalone -d ...</code> → <code>start caddy</code>.</td><td>Stop Caddy, not <code>web</code> — web listens on :3000, it was never the port-80 conflict.</td></tr>
+</table>
+
+<pre>
+# One-time issuance (DNS-01 shown):
+sudo apt install -y certbot python3-certbot-dns-cloudflare
+# create /etc/letsencrypt/cloudflare.ini with dns_cloudflare_api_token = ...
+sudo certbot certonly --dns-cloudflare \
+  --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini -d your-domain.example.com
+sudo cp /etc/letsencrypt/live/your-domain.example.com/fullchain.pem pbx_configs/keys/
+sudo cp /etc/letsencrypt/live/your-domain.example.com/privkey.pem  pbx_configs/keys/
+
+# Renewal (every ~60 days) — the deploy hook MUST restart asterisk, coturn
+# AND caddy, or all three keep serving the expired certificate from memory:
+0 3 * * 1 certbot renew --quiet --deploy-hook \
+  "cp -f /etc/letsencrypt/live/YOUR_DOMAIN/{{fullchain.pem,privkey.pem}} /opt/algo-pbx/pbx_configs/keys/ && docker compose -f /opt/algo-pbx/docker-compose.yml restart asterisk coturn caddy"
+</pre>
+
+<h3>6.5 — Point .env at the final domain</h3>
+<pre>
+VM_PUBLIC_DOMAIN=your-domain.example.com
+AUTH_URL=https://your-domain.example.com
+
+docker compose down
+docker compose up -d
+</pre>
+<p>This is one of the few values that lives only in <code>.env</code> and requires a restart — it is not editable from <code>/admin/settings</code>.</p>
+
+<h2 class="page-break">7. Final checklist</h2>
+<ul>
+  <li>Email (Resend) — connection tested, at least one invite sent successfully</li>
+  <li>WhatsApp OpenWA — all four SIM ports paired on the board (each slot green), status Connected on every port in use</li>
+  <li>Dinstar setup wizard (<code>/admin/dinstar</code>) — discovered, probed, applied; trunk verified by the wizard itself</li>
+  <li>Dinstar SIP trunk — outbound test call placed through a SIM, inbound call reaches the ring group</li>
+  <li>Dinstar SMS API — <code>/admin/settings</code> Test connection passes; a test SMS sent and received</li>
+  <li>GoDaddy nameservers pointed at Cloudflare, zone active</li>
+  <li>DNS A record — DNS-only (grey cloud), not proxied</li>
+  <li>Real TLS cert (Let's Encrypt) installed in <code>pbx_configs/keys/</code> — browser trusts <code>https://</code> AND <code>wss://</code></li>
+  <li><code>VM_PUBLIC_DOMAIN</code> / <code>AUTH_URL</code> updated in <code>.env</code>, stack restarted</li>
+  <li>Certbot renewal cron in place, deploy hook restarting asterisk + coturn + caddy</li>
+  <li>Dinstar default admin password changed from factory default</li>
+  <li><code>/admin/system</code> readiness page — every check green</li>
+  <li><code>scripts/setup-firewall.sh</code> applied; 5060 reachable only over Tailscale</li>
+  <li><code>scripts/backup.sh</code> on cron; one restore drill completed</li>
+</ul>
+
+<h2 class="page-break">Appendix A — /setup first-run screenshot</h2>
+<p>When the stack first starts and no admin exists, browse to <code>/setup</code> to create the first administrator account. After the first admin is created, <code>/setup</code> automatically redirects to <code>/login</code>.</p>
+<img class="screenshot" src="{setup_img}" alt="/setup first-run admin creation form">
+<div class="caption">Live screenshot: /setup rendering the first-administrator creation form in the production standalone build.</div>
+
+<h2 class="page-break">Appendix B — Ports on the telephony side</h2>
+<p>Guide 1 Chapter 2 covers the web-facing ports (443, 80, 8089, TURN/RTP ranges). This
+appendix covers the one telephony port that behaves differently: <strong>5060/udp</strong>,
+the SIP signaling path to the Dinstar UC2000.</p>
+<h3>B.1 — No inbound port is opened anywhere for this</h3>
+<p>The Dinstar trunk is reached exclusively over the <strong>Tailscale mesh</strong> —
+never a public port on the UAE office router, and never forwarded through the VM's router
+(hard constraint, see <code>LLM.md</code> §2). Tailscale only needs outbound UDP from the VM
+to reach its coordination servers; nothing needs to be opened inbound on the router or the
+VM's firewall for the SIP trunk to work.</p>
+<h3>B.2 — Verifying it from the VM</h3>
+<pre>
+# Confirm Asterisk is listening for SIP on the Tailscale interface:
+sudo ss -ulpn | grep 5060
+
+# Confirm the Dinstar endpoint is actually registered:
+docker compose exec asterisk asterisk -rx "pjsip show endpoints"
+
+# Confirm the Tailscale subnet route to the Dinstar is up:
+tailscale status
+</pre>
+<h3>B.3 — Diagnosing "call connects but there's no audio"</h3>
+<p>This is almost always Guide 1 §2.2's RTP range (<code>10000–20000/udp</code>), not the
+SIP port — SIP only carries call setup, the audio itself travels over RTP. If signaling
+works (the call rings and connects) but there's silence, re-check that the RTP range is
+actually forwarded and unblocked end-to-end (Guide 1 Chapter 7), not the Tailscale route.</p>
+<h3>B.4 — Never expose these, regardless of environment</h3>
+<ul>
+  <li><strong>5060/udp</strong> — SIP to the Dinstar. Tailscale interface only.</li>
+  <li><strong>5038/tcp</strong> — Asterisk AMI. Docker bridge ACL only.</li>
+  <li><strong>5432/tcp</strong> — PostgreSQL. Loopback publish only.</li>
+</ul>
+
+</body>
+</html>

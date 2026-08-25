@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Algo PBX — Deploying on a Linux VM</title>
+<style>
+  @page {{ size: A4; margin: 18mm 16mm; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #222; }}
+  h1 {{ font-size: 20pt; margin: 0 0 6px; }}
+  h2 {{ font-size: 14pt; margin: 18px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }}
+  h3 {{ font-size: 12pt; margin: 14px 0 6px; }}
+  h4 {{ font-size: 10.5pt; margin: 12px 0 4px; color: #333; }}
+  .cover {{ text-align: center; padding-top: 100px; page-break-after: always; }}
+  .cover .subtitle {{ font-size: 14pt; color: #555; margin-top: 8px; }}
+  .cover .note {{ font-size: 10pt; color: #777; margin-top: 40px; text-align: left; }}
+  .screenshot {{ max-width: 100%; border: 1px solid #ddd; border-radius: 6px; margin: 10px 0; }}
+  .caption {{ font-size: 9pt; color: #555; margin-top: 4px; }}
+  .warn {{ background: #fff3cd; border-left: 4px solid #f0ad4e; padding: 8px 12px; margin: 10px 0; }}
+  .ok {{ background: #e6f7ee; border-left: 4px solid #2fa860; padding: 8px 12px; margin: 10px 0; }}
+  .step {{ background: #eef4fd; border-left: 4px solid #2563eb; padding: 8px 12px; margin: 10px 0; }}
+  code {{ font-family: Consolas, Monaco, monospace; font-size: 9.5pt; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }}
+  pre {{ background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 8.7pt; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9pt; }}
+  th, td {{ border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }}
+  th {{ background: #f0f0f0; }}
+  ul {{ margin: 6px 0; padding-left: 22px; }}
+  ol {{ margin: 6px 0; padding-left: 22px; }}
+  .page-break {{ page-break-before: always; }}
+  .small {{ font-size: 9pt; color: #555; }}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Algo PBX — Infrastructure Guide 1 of 2</h1>
+  <div class="subtitle">Deploying on a Linux VM (VirtualBox)</div>
+  <p>From a blank Windows PC running Oracle VirtualBox to a running Algo PBX stack: creating
+  the VM, understanding and clearing port conflicts, Docker Compose, secrets, TLS
+  certificates, the first admin account at <code>/setup</code>, firewall, and backups.</p>
+  <div class="note">
+    <strong>Written for a non-technical operator.</strong> Every command in this guide is
+    meant to be copy-pasted exactly as printed — nothing here requires guessing.<br><br>
+    <strong>Next step:</strong> "Configuring Credentials, Dinstar &amp; Going Live" (Guide 2
+    of 2) wires up <code>/admin/settings</code>, connects the physical Dinstar gateway, and
+    cuts your domain over.<br><br>
+    This guide mirrors <code>DEPLOYMENT.md</code> in the repository — if they ever disagree,
+    the repository file wins.
+  </div>
+</div>
+
+<h2>Contents</h2>
+<ol>
+  <li>What you are building, and what this machine needs</li>
+  <li>Ports — the chapter that prevents most failures</li>
+  <li>Creating the <code>algo_pbx</code> VM in VirtualBox</li>
+  <li>First boot — finding and fixing the VM's network address</li>
+  <li>Install Docker Engine + Compose</li>
+  <li>Clone and generate secrets</li>
+  <li>Router port forwarding</li>
+  <li>TLS certificates</li>
+  <li>Build and start</li>
+  <li>First run — <code>/setup</code></li>
+  <li>Firewall</li>
+  <li>Ongoing operations</li>
+  <li>Appendix A — port cheat sheet</li>
+</ol>
+
+<h2 class="page-break">1. What you are building, and what this machine needs</h2>
+<p>Algo PBX is seven Docker containers running together on one Linux VM: <strong>postgres</strong>
+(database), <strong>coturn</strong> (helps agents' browsers connect through home/office
+routers), <strong>asterisk</strong> (the phone system engine), <strong>web</strong> (the
+softphone + admin app you use in a browser), <strong>cdr-listener</strong> (call-log writer),
+<strong>openwa</strong> (WhatsApp), and <strong>caddy</strong> (the front door — it terminates
+HTTPS). When this guide is done, agents anywhere sign into
+<code>https://your-domain</code> and place/receive calls through a physical Dinstar GSM
+gateway (wired up in Guide 2).</p>
+<p><strong>Before you start, confirm on the Windows host machine:</strong></p>
+<ul>
+  <li>Oracle VirtualBox is installed, and virtualization is enabled in the PC's BIOS/UEFI
+  (VirtualBox will refuse to start a VM otherwise — it shows a clear error naming
+  "VT-x/AMD-V" if this is off).</li>
+  <li>At least <strong>4 free CPU cores, 8 GB free RAM, and 80 GB free disk</strong> for the
+  new VM — on top of whatever your existing <code>ubuntuserver</code> VM already uses.</li>
+  <li>An Ubuntu Server 24.04 LTS ISO downloaded (from <code>ubuntu.com/download/server</code>).</li>
+</ul>
+<div class="warn"><strong>Your machine already runs another VM.</strong> The screenshot below
+is this exact setup: an existing <code>ubuntuserver</code> VM (running, with Coolify) already
+forwards host ports <strong>8000, 80, and 443</strong>, and a second VM named
+<code>algo_pbx</code> is where Algo PBX will actually run. Chapter&nbsp;2 explains why this
+matters and exactly what to do about it — read it before creating the VM in Chapter&nbsp;3.</p></div>
+
+<h2 class="page-break">2. Ports — the chapter that prevents most failures</h2>
+
+<h3>2.1 — What a "port" is, in three sentences</h3>
+<p>A port is a numbered door a program listens on for network traffic — port 443 is the
+standard door for HTTPS websites, for example. Only one program on a given machine can hold
+a given port open at a time; if a second program tries to use the same port, it fails to
+start (or, with VirtualBox NAT forwarding, VirtualBox refuses to add the rule). A port can be
+occupied in <strong>three different places</strong> in this setup, and each is checked
+differently: the <strong>Windows host</strong> itself, the <strong>Ubuntu VM</strong> running
+inside it, and your <strong>office/home router</strong> (which decides what reaches the VM
+from the internet).</p>
+
+<h3>2.2 — The full port matrix</h3>
+<p>These are every port the Algo PBX stack uses. "Public?" means it must be reachable from
+the internet, not just your LAN.</p>
+<table>
+  <tr><th>Port</th><th>Protocol</th><th>Purpose</th><th>Public?</th><th>What breaks if it's blocked</th></tr>
+  <tr><td>80</td><td>tcp</td><td>Certbot challenges, redirect to HTTPS</td><td>yes</td><td>Free TLS certificate issuance/renewal fails</td></tr>
+  <tr><td>443</td><td>tcp</td><td>Web app UI (Caddy → web:3000)</td><td>yes</td><td>The website / softphone doesn't load at all</td></tr>
+  <tr><td>8089</td><td>tcp</td><td>Asterisk WSS signaling for agent softphones</td><td>yes</td><td>Agents' browser softphones never register — no dial tone</td></tr>
+  <tr><td>3478</td><td>tcp+udp</td><td>Coturn STUN/TURN listener</td><td>yes</td><td>Agents behind strict NAT/firewalls can't reach media</td></tr>
+  <tr><td>5349</td><td>tcp</td><td>Coturn TURN over TLS</td><td>yes</td><td>TURN relay fails on networks that block plain TURN</td></tr>
+  <tr><td>10000–20000</td><td>udp</td><td>Asterisk RTP media (the actual voice audio)</td><td>yes</td><td>Calls connect but are <strong>completely silent</strong></td></tr>
+  <tr><td>20001–30000</td><td>udp</td><td>Coturn relay range</td><td>yes</td><td>Relayed calls (agents behind strict NAT) are silent</td></tr>
+  <tr><td>5060</td><td>udp</td><td>SIP to the Dinstar trunk — Tailscale ONLY</td><td><strong>no</strong></td><td>N/A — this must never be internet-facing (see §4.4 hard constraint)</td></tr>
+  <tr><td>5038</td><td>tcp</td><td>Asterisk AMI — Docker bridge ACL only</td><td><strong>never</strong></td><td>N/A — internal control channel, never expose it</td></tr>
+  <tr><td>5432</td><td>tcp</td><td>PostgreSQL — loopback publish only</td><td><strong>never</strong></td><td>N/A — database, never expose it</td></tr>
+</table>
+
+<h3>2.3 — Checking what's already using a port on the Windows host</h3>
+<p>Run these in a Windows PowerShell window (right-click Start → "Terminal (Admin)").</p>
+<pre>
+# Is anything already listening on port 443?
+netstat -ano | findstr ":443"
+
+# Same, with more detail (address, state, and the owning process ID):
+Get-NetTCPConnection -LocalPort 443 | Select-Object LocalAddress,State,OwningProcess
+
+# Turn that process ID into a program name:
+Get-Process -Id &lt;PID&gt;
+
+# Windows silently reserves some ports for Hyper-V/WSL - a port can look "free"
+# and still refuse to bind. Check for hidden exclusions:
+netsh interface ipv4 show excludedportrange protocol=tcp
+</pre>
+<div class="warn"><strong>Check your other VM's forwarding rules directly.</strong> This is
+exactly the situation in the screenshot on the cover of this guide — run this from
+PowerShell to list every port <code>ubuntuserver</code> already forwards, so you know for
+certain which host ports are taken before you touch <code>algo_pbx</code>:
+<pre>
+VBoxManage showvminfo "ubuntuserver" --machinereadable | findstr Forwarding</pre>
+In the reference setup this prints three rules claiming host ports <strong>8000, 80, and
+443</strong> — all mapped to <code>ubuntuserver</code>, not <code>algo_pbx</code>.</div>
+
+<h3>2.4 — Checking what's already using a port inside the Ubuntu VM</h3>
+<pre>
+# List every listening port with the program name attached:
+sudo ss -tulpn
+
+# Narrow it to exactly the ports this stack needs:
+sudo ss -tulpn | grep -E ':(80|443|8089|3478|5349|5060|5038|5432)\b'
+
+# Alternative, if ss isn't installed:
+sudo lsof -i :443
+
+# List ports already published by any running Docker containers:
+docker ps --format '{{{{.Names}}}} {{{{.Ports}}}}'
+</pre>
+<p>Common squatters and how to clear them:</p>
+<table>
+  <tr><th>Program</th><th>Port it takes</th><th>Fix</th></tr>
+  <tr><td>Apache2 / Nginx (pre-installed on some Ubuntu images)</td><td>80, 443</td><td><code>sudo systemctl disable --now apache2</code> or <code>nginx</code></td></tr>
+  <tr><td><code>systemd-resolved</code></td><td>53 (not used here, but a classic surprise)</td><td>Not relevant to this stack — ignore unless troubleshooting DNS</td></tr>
+  <tr><td>A leftover Coolify/Traefik install</td><td>80, 443, 8000</td><td><code>docker stop $(docker ps -q)</code> then remove that stack, or dedicate a separate VM (recommended — see Chapter 3)</td></tr>
+</table>
+
+<h3>2.5 — Choosing a free port, if you need to change one</h3>
+<ol>
+  <li>Pick any number in the 1024–65535 range that isn't already listed by the checks in
+  §2.3/§2.4.</li>
+  <li>Avoid anything inside a Windows-excluded range shown by
+  <code>netsh interface ipv4 show excludedportrange protocol=tcp</code>.</li>
+  <li>Verify it's actually free with the same command from §2.4 before committing to it.</li>
+</ol>
+<table>
+  <tr><th>Default</th><th>Suggested alternate</th></tr>
+  <tr><td>443</td><td>8443</td></tr>
+  <tr><td>80</td><td>8081</td></tr>
+  <tr><td>8089</td><td>8090</td></tr>
+  <tr><td>3478</td><td>3478 (leave as-is — STUN/TURN clients expect the standard port)</td></tr>
+</table>
+
+<h3>2.6 — What is movable, and what is not</h3>
+<p><strong>Movable</strong> (only the Caddy web-facing ports, and only if you have a real
+reason to): changing this means editing <strong>all</strong> of the following consistently —
+<code>docker-compose.yml</code>'s <code>caddy.ports</code> section, the site address in
+<code>Caddyfile</code>, <code>AUTH_URL</code> / <code>NEXT_PUBLIC_SIP_WS_SERVER</code> /
+<code>NEXT_PUBLIC_TURN_SERVER</code> in <code>.env</code>, the matching line in
+<code>scripts/setup-firewall.sh</code>, and your router's forwarding rule. A non-443 port
+then has to appear in every URL agents type.</p>
+<div class="warn"><strong>Not movable — leave these exactly as documented:</strong>
+the RTP range (<code>10000–20000/udp</code>) and Coturn relay range
+(<code>20001–30000/udp</code>) because Asterisk and Coturn run in <code>network_mode: host</code>;
+<code>5060/udp</code> because it is reachable only over the Tailscale mesh by design (a hard
+constraint — never put it on a public port, see <code>LLM.md</code> §2); <code>5038</code>
+(AMI) and <code>5432</code> (Postgres) because they are never meant to be reachable from
+outside the Docker host at all.</div>
+
+<h3>2.7 — Symptom → cause → fix</h3>
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr><td><code>bind: address already in use</code> when running <code>docker compose up</code></td><td>Another program (or another container) already holds that port inside the VM</td><td>Run §2.4's checks, stop the conflicting service or change the port per §2.5/§2.6</td></tr>
+  <tr><td>VirtualBox refuses to add a forwarding rule / silently doesn't work</td><td>Another VM (like <code>ubuntuserver</code>) already forwards that exact host port</td><td>Run §2.3's <code>VBoxManage</code> check, pick a different host port, or (recommended) use Bridged networking so no forwarding is needed — Chapter 3</td></tr>
+  <tr><td>Browser shows nothing / times out on <code>https://your-domain</code></td><td>Port 443 not actually reachable — VM firewall, router, or DNS issue</td><td>Confirm <code>sudo ss -tulpn</code> shows Caddy on 443 inside the VM, then work outward: VM firewall (Ch.11) → router forwarding (Ch.7) → DNS record</td></tr>
+  <tr><td>Call connects but there's total silence</td><td>The RTP UDP range (10000–20000) or Coturn relay range isn't actually reaching the VM</td><td>Re-check router forwarding for those UDP ranges (Ch.7) and that nothing rewrites/blocks UDP in between</td></tr>
+</table>
+
+<h2 class="page-break">3. Creating the <code>algo_pbx</code> VM in VirtualBox</h2>
+<ol>
+  <li>VirtualBox Manager → <strong>New</strong>. Name it <code>algo_pbx</code>, type
+  <strong>Linux</strong>, version <strong>Ubuntu (64-bit)</strong>.</li>
+  <li>Memory: <strong>8192 MB</strong>. Processors: <strong>4</strong>.</li>
+  <li>Create a new virtual hard disk, VDI, dynamically allocated, <strong>80 GB</strong>.</li>
+  <li>Before starting it: select <code>algo_pbx</code> → <strong>Settings → Network →
+  Adapter 1</strong>.</li>
+</ol>
+<div class="step"><strong>Set "Attached to:" = Bridged Adapter</strong>, bound to your
+physical network card (Wi-Fi or Ethernet) — <strong>not</strong> NAT. This is the
+recommended and supported setup for this guide.</div>
+<p><strong>Why not NAT with port forwarding, like <code>ubuntuserver</code> uses?</strong>
+NAT forwarding needs one explicit rule per port. The RTP range alone is
+10,000 ports wide, plus another 10,000 for the Coturn relay range — nobody hand-writes
+20,000 forwarding rules, and VirtualBox's NAT engine isn't built for it. In practice a
+NAT-forwarded Algo PBX will let a browser load the UI but every call will connect with no
+audio. Bridged Adapter instead puts <code>algo_pbx</code> directly on your LAN with its own
+IP address, exactly like a physical machine plugged into your router — no forwarding rules
+between the host and the VM at all, and it also means <code>algo_pbx</code> can never collide
+with whatever <code>ubuntuserver</code> already forwards (8000/80/443 in the screenshot on
+the cover).</p>
+<p>If <code>algo_pbx</code> already has NAT port-forwarding rules from a template or clone,
+open <strong>Settings → Network → Adapter 1 → Advanced → Port Forwarding</strong> and delete
+all of them once Bridged Adapter is selected — they do nothing under Bridged mode but are
+worth removing to avoid confusion later.</p>
+<ul>
+  <li>Attach the Ubuntu Server 24.04 LTS ISO under <strong>Settings → Storage</strong>, then
+  <strong>Start</strong> the VM and run through the standard Ubuntu Server installer
+  (defaults are fine; enable OpenSSH server when offered).</li>
+</ul>
+
+<h2 class="page-break">4. First boot — finding and fixing the VM's network address</h2>
+<pre>
+# Inside the VM, once installed and logged in:
+hostname -I
+# or:
+ip -4 addr show
+</pre>
+<p>Note the IP address shown (e.g. <code>192.168.1.50</code>) — that's the VM's address on
+your LAN, reachable from any device on the same network, including your Windows host.</p>
+<div class="step"><strong>Reserve this IP as a static DHCP lease</strong> in your router's
+admin page (look for "DHCP Reservation" or "Static Lease" against the VM's MAC address) so it
+never changes after a reboot — every later step (router forwarding, DNS, certificates)
+depends on this IP staying fixed.</div>
+<pre>
+# From the Windows host, confirm you can reach it:
+ssh youruser@192.168.1.50
+</pre>
+
+<h2>5. Install Docker Engine + Compose</h2>
+<pre>
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Prove it works:
+docker run hello-world
+</pre>
+
+<h2 class="page-break">6. Clone and generate secrets</h2>
+<pre>
+git clone &lt;your-fork-url&gt; algo-pbx
+cd algo-pbx
+cp .env.example .env
+
+# Generate the bootstrap secrets:
+openssl rand -hex 32      # -&gt; SETTINGS_ENCRYPTION_KEY
+openssl rand -base64 33   # -&gt; AUTH_SECRET
+openssl rand -hex 32      # -&gt; COTURN_AUTH_SECRET
+openssl rand -hex 32      # -&gt; AMI_SECRET, CDR_AMI_SECRET, CDR_INGEST_SECRET
+</pre>
+<p>Fill in the <strong>bootstrap</strong> section at the top of <code>.env</code>: Postgres
+credentials, <code>SETTINGS_ENCRYPTION_KEY</code>, <code>AUTH_SECRET</code>/<code>AUTH_URL</code>,
+AMI credentials, <code>VM_PUBLIC_DOMAIN</code>/<code>VM_PUBLIC_IP</code>/<code>VM_PRIVATE_IP</code>
+(use the LAN IP from Chapter 4 for <code>VM_PRIVATE_IP</code>), <code>COTURN_AUTH_SECRET</code>,
+<code>DINSTAR_LAN_IP</code>.</p>
+<div class="warn">Do <strong>not</strong> fill in the RUNTIME SETTINGS section (Resend,
+OpenWA, Meta, Dinstar SMS, Firebase, CRM) unless you want a fully non-interactive deploy —
+all of it is configurable later in the browser at <code>/admin/settings</code> and takes
+effect immediately there.</div>
+
+<h2 class="page-break">7. Router port forwarding</h2>
+<p>Log into your office/home router's admin page and forward the <strong>Public? = yes</strong>
+rows from the §2.2 matrix to the VM's LAN IP (the static reservation from Chapter 4):</p>
+<table>
+  <tr><th>Port</th><th>Protocol</th><th>Forward to</th></tr>
+  <tr><td>80</td><td>tcp</td><td rowspan="5">the VM's LAN IP, e.g. <code>192.168.1.50</code></td></tr>
+  <tr><td>443</td><td>tcp</td></tr>
+  <tr><td>8089</td><td>tcp</td></tr>
+  <tr><td>3478</td><td>tcp+udp</td></tr>
+  <tr><td>5349</td><td>tcp</td></tr>
+  <tr><td>10000–20000</td><td>udp</td></tr>
+  <tr><td>20001–30000</td><td>udp</td></tr>
+</table>
+<div class="warn"><strong>Never forward these:</strong> 5060 (Dinstar SIP — Tailscale only),
+5038 (AMI), 5432 (Postgres). Forwarding any of these to the public internet is a security
+hole regardless of how the port matrix reads elsewhere.</div>
+<p>Your ISP connection must have a real public IP, not CGNAT (Carrier-Grade NAT) — if your
+router's WAN IP differs from what <code>curl ifconfig.me</code> shows from inside the VM,
+you're behind CGNAT and port forwarding will not work; contact your ISP for a public IP or
+use a reverse-tunnel provider instead.</p>
+
+<h2>8. TLS certificates</h2>
+<p>One certificate pair serves everything — Caddy (443), Asterisk WSS (8089), Coturn TLS
+(5349). Place them at <code>pbx_configs/keys/fullchain.pem</code> + <code>privkey.pem</code>.
+Self-signed is fine for a first smoke test but agents' browsers will reject self-signed
+<code>wss://</code>.</p>
+<pre>
+# Recommended once DNS resolves: DNS-01 via Cloudflare API token
+sudo apt install -y certbot python3-certbot-dns-cloudflare
+# put "dns_cloudflare_api_token = ..." in /etc/letsencrypt/cloudflare.ini (chmod 600)
+sudo certbot certonly --dns-cloudflare \
+  --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini -d your-domain.example.com
+sudo cp /etc/letsencrypt/live/your-domain.example.com/fullchain.pem pbx_configs/keys/
+sudo cp /etc/letsencrypt/live/your-domain.example.com/privkey.pem  pbx_configs/keys/
+</pre>
+
+<h2 class="page-break">9. Build and start</h2>
+<pre>
+bash vendor/openwa/prepare.sh    # fetches the pinned OpenWA upstream commit
+
+docker compose build
+docker compose up -d
+docker compose logs -f web       # watch for a clean startup
+</pre>
+<ul>
+  <li>The stack runs seven containers: postgres, coturn, asterisk, web, cdr-listener, openwa, caddy.</li>
+  <li>If Postgres's data volume predates this deploy, create OpenWA's database by hand once:
+  <code>docker compose exec postgres psql -U $POSTGRES_USER -d postgres -f /docker-entrypoint-initdb.d/01-create-openwa-db.sql</code></li>
+  <li>Migrations run automatically when the web container starts.</li>
+</ul>
+<div class="step"><strong>Verify every port actually bound</strong> before moving on:
+<pre>
+sudo ss -tulpn</pre>
+You should see something listening on 80, 443, 8089, 3478, and 5349, plus Asterisk holding
+the RTP range. If any are missing, go back to Chapter 2 — do not proceed to <code>/setup</code>
+with a half-bound stack.</div>
+
+<h2>10. First run — /setup</h2>
+<p>Browse to <code>https://your-domain/setup</code>. The page is reachable only until the
+first ADMIN account exists. It refuses to proceed without
+<code>SETTINGS_ENCRYPTION_KEY</code>, naming the exact fix command. After setup you land on
+<code>/admin/settings</code> — configure each service with its <strong>Test connection</strong>
+button (full detail in Guide 2).</p>
+<img class="screenshot" src="{setup_img}" alt="/setup first-run wizard">
+<div class="caption">Live screenshot: /setup rendering the first-administrator creation form.</div>
+
+<h2 class="page-break">11. Firewall</h2>
+<pre>
+sudo bash scripts/setup-firewall.sh   # applies the port matrix above via ufw
+</pre>
+<p>Check the SSH port inside the script first. 5060 is deliberately NOT opened publicly — the
+Dinstar trunk is reached over the Tailscale interface only. This firewall protects the VM
+itself; the router forwarding from Chapter 7 controls what reaches the VM from the internet
+in the first place — both layers matter. Docker publishes bypass ufw's normal rule chain, so
+the script also installs explicit <code>DOCKER-USER</code> rejects for 5432 and 5038 to make
+that guarantee explicit.</p>
+
+<h2>12. Ongoing operations</h2>
+<table>
+  <tr><th>Task</th><th>How</th></tr>
+  <tr><td>Application update</td><td><code>git pull && docker compose build && docker compose up -d</code> (migrations run automatically)</td></tr>
+  <tr><td>Credential rotation</td><td><code>/admin/settings</code> in the browser — immediate, no restart</td></tr>
+  <tr><td>Telephony config change</td><td>Edit <code>.env</code>/<code>pbx_configs/</code>, then restart the affected container</td></tr>
+  <tr><td>Backups</td><td><code>scripts/backup.sh</code> on cron — dumps both databases plus recordings, voicemail, photos, WhatsApp sessions. Do a restore drill before go-live.</td></tr>
+  <tr><td>Readiness check</td><td><code>/admin/system</code> — live green/red checks for every dependency</td></tr>
+</table>
+
+<h2 class="page-break">Appendix A — Port cheat sheet</h2>
+<p>Every check-command from Chapter 2 in one place — copy-paste this block whenever
+something isn't reachable.</p>
+<pre>
+### On the Windows host (PowerShell, as Admin) ###
+netstat -ano | findstr ":443"
+Get-NetTCPConnection -LocalPort 443 | Select-Object LocalAddress,State,OwningProcess
+Get-Process -Id &lt;PID&gt;
+netsh interface ipv4 show excludedportrange protocol=tcp
+VBoxManage showvminfo "ubuntuserver" --machinereadable | findstr Forwarding
+
+### Inside the algo_pbx Ubuntu VM ###
+sudo ss -tulpn
+sudo ss -tulpn | grep -E ':(80|443|8089|3478|5349|5060|5038|5432)\b'
+sudo lsof -i :443
+docker ps --format '{{{{.Names}}}} {{{{.Ports}}}}'
+</pre>
+
+<div class="page-break"></div>
+<h2>Where next</h2>
+<p>Open <strong>Guide 2 of 2 — Configuring Credentials, Dinstar &amp; Going Live</strong> to
+wire up <code>/admin/settings</code>, connect the physical Dinstar gateway, and cut your
+domain over to Cloudflare with free SSL. Its Appendix B covers the telephony-side ports
+(Dinstar over Tailscale) that build on this chapter's port matrix.</p>
+
+</body>
+</html>
