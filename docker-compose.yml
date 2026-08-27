@@ -172,6 +172,9 @@ services:
       - ./pbx_configs/pjsip_dinstar.conf:/etc/asterisk/pjsip_dinstar.conf
       - ./pbx_configs/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./pbx_configs/extensions.conf:/etc/asterisk/extensions.conf:ro
+      # cdr_manager.so ships "Not Running" without this — it is the module
+      # that emits the `Cdr` AMI event scripts/ami-cdr-listener.ts lives on.
+      - ./pbx_configs/cdr_manager.conf:/etc/asterisk/cdr_manager.conf:ro
       - ./pbx_configs/manager.conf:/etc/asterisk/manager.conf.tmpl:ro
       - ./pbx_configs/queues.conf:/etc/asterisk/queues.conf:ro
       - ./pbx_configs/musiconhold.conf:/etc/asterisk/musiconhold.conf:ro
@@ -298,6 +301,10 @@ services:
       # Dinstar UC2000 SMS HTTP/JSON API (Workstream E) — same box the
       # voice trunk already reaches via Tailscale, see DINSTAR_LAN_IP.
       DINSTAR_LAN_IP: "${DINSTAR_LAN_IP}"
+      # The gateway's own local SIP port — where Asterisk sends outbound
+      # INVITEs. Default 5060; this office's UC2000 is on 5061 (see
+      # settings/schema.ts DINSTAR_SIP_PORT).
+      DINSTAR_SIP_PORT: "${DINSTAR_SIP_PORT:-5060}"
       DINSTAR_SMS_USERNAME: "${DINSTAR_SMS_USERNAME}"
       DINSTAR_SMS_PASSWORD: "${DINSTAR_SMS_PASSWORD}"
       # Meta Cloud API fallback provider (Workstream E) — only exercised

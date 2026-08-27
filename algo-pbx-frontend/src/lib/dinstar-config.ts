@@ -21,13 +21,20 @@ function assertSafe(value: string, field: string): void {
 }
 
 /** `ip` must already be a validated IPv4/hostname — this function does not
- * itself validate shape beyond the injection guard shared with pjsip-config.ts. */
-export function renderDinstarConf(ip: string): string {
+ * itself validate shape beyond the injection guard shared with pjsip-config.ts.
+ *
+ * `sipPort` is the Dinstar's OWN local SIP port (where Asterisk sends
+ * outbound INVITEs). It defaults to 5060 but the UC2000 must be moved off
+ * 5060 if Asterisk's transport-udp also binds 5060 on the same host — the
+ * device refuses a trunk peer whose port equals its own local port. This
+ * office's gateway is on 5061 (DINSTAR_SIP_PORT). */
+export function renderDinstarConf(ip: string, sipPort = 5060): string {
   assertSafe(ip, "ip");
+  const port = Number.isInteger(sipPort) && sipPort >= 1 && sipPort <= 65535 ? sipPort : 5060;
   return `${BANNER}
 [dinstar-aor]
 type=aor
-contact=sip:${ip}:5060
+contact=sip:${ip}:${port}
 
 [dinstar-identify]
 type=identify

@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { getAmiClient } from "@/lib/ami-client";
 import { renderDinstarConf } from "@/lib/dinstar-config";
+import { getSetting } from "@/lib/settings/service";
 
 // Mirrors src/lib/pjsip-provision.ts exactly: render -> write the
 // shared-mount file -> AMI `pjsip reload`. See that file's header for why
@@ -20,7 +21,8 @@ export interface DinstarProvisionResult {
  * is unverified against a live instance — this function is what turns
  * that uncertainty into an honest result instead of a false "success". */
 export async function provisionDinstarConfig(ip: string): Promise<DinstarProvisionResult> {
-  const rendered = renderDinstarConf(ip);
+  const sipPort = Number((await getSetting("DINSTAR_SIP_PORT")) ?? "5060") || 5060;
+  const rendered = renderDinstarConf(ip, sipPort);
   try {
     await writeFile(CONF_PATH, rendered, "utf8");
   } catch (err) {
