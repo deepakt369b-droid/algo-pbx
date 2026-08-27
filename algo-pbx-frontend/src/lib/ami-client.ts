@@ -91,12 +91,27 @@ export class AmiClient extends EventEmitter {
     for (const line of raw.split("\r\n")) {
       const idx = line.indexOf(":");
       if (idx === -1) continue;
-      result[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      // Asterisk 20's `Action: Command` response returns CLI output as
+      // repeated `Output:` lines (AMI 2.x format). A last-write-wins map
+      // would keep only the final line, breaking every read-back
+      // verification (pjsip-provision.ts, dinstar-provision.ts). Join
+      // repeated keys with newlines so `block.Output` is the full text.
+      if (key in result) {
+        result[key] = `${result[key]}\n${value}`;
+      } else {
+        result[key] = value;
+      }
     }
     return result;
   }
 
   private async login(): Promise<void> {
+    // send() now rejects on `Response: Error`, so a bad secret throws
+    // "AMI action failed (Login): Authentication failed" here — caught by
+    // callers the same way. The explicit check stays as a belt-and-braces
+    // guard for any non-Error non-Success response.
     const res = await this.send({
       Action: "Login",
       Username: this.opts.username,
@@ -154,6 +169,17 @@ export class AmiClient extends EventEmitter {
 
       this.once(`response:${actionId}`, (block: AmiEvent) => {
         clearTimeout(timeout);
+        // AMI answers a denied or malformed action with `Response: Error`
+        // (e.g. `Action: Command` without the `command` manager privilege,
+        // an Originate to an unknown channel, a QueueAdd to a missing
+        // queue). This method used to resolve that block as if it were a
+        // success, so `pjsip reload` failures surfaced as "provisioned OK"
+        // and three debugging sessions blamed the Asterisk build. Reject
+        // instead — same contract sendAndCollect() already enforces.
+        if (block.Response === "Error") {
+          reject(new Error(`AMI action failed (${fields.Action}): ${block.Message ?? "unknown error"}`));
+          return;
+        }
         resolve(block);
       });
 
@@ -227,6 +253,38 @@ export class AmiClient extends EventEmitter {
           reject(err);
         }
       });
+    });
+  }
+
+  /**
+   * Observe the next event matching `predicate`, independent of any
+   * specific ActionID — for watching a side effect this client didn't
+   * itself originate (e.g. a SIP-REFER-driven transfer's DialEnd, see
+   * src/lib/escalation.ts). `sendAndCollect()` can't be reused here: it
+   * correlates strictly by the ActionID of an action THIS call issued,
+   * and a REFER leg is never itself an AMI action with an ActionID to
+   * correlate against.
+   *
+   * Resolves `null` on timeout rather than rejecting — for a call-outcome
+   * watch, "nothing happened within the window" is itself a meaningful,
+   * valid result (treated as "no answer" by callers), not an error.
+   */
+  async waitForEvent(predicate: (event: AmiEvent) => boolean, timeoutMs = 20000): Promise<AmiEvent | null> {
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.removeListener("event", onEvent);
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+      const onEvent = (block: AmiEvent) => {
+        if (!predicate(block)) return;
+        cleanup();
+        resolve(block);
+      };
+      this.on("event", onEvent);
     });
   }
 

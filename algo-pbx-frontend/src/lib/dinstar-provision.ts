@@ -30,7 +30,8 @@ export async function provisionDinstarConfig(ip: string): Promise<DinstarProvisi
   const ami = getAmiClient();
   try {
     await ami.connect();
-    await ami.send({ Action: "Command", Command: "pjsip reload" });
+    // See pjsip-provision.ts: this build has no `pjsip reload` command.
+    await ami.send({ Action: "Command", Command: "module reload res_pjsip.so" });
   } catch (err) {
     return { written: true, reloaded: false, verified: false, error: err instanceof Error ? err.message : "AMI reload failed." };
   }

@@ -21,18 +21,30 @@ export async function regeneratePjsipConfigAndReload(): Promise<void> {
 
   const forPjsip: ExtensionForPjsip[] = extensions
     .filter((e) => e.sipSecret && (e.kind === "webrtc" || e.kind === "hardware"))
-    .map((e) => ({ number: e.number, kind: e.kind as "webrtc" | "hardware", sipSecret: e.sipSecret! }));
+    .map((e) => ({ number: e.number, kind: e.kind as "webrtc" | "hardware", sipSecret: e.sipSecret!, dialPermission: e.dialPermission }));
 
   const rendered = renderPjsipConf(forPjsip);
   await writeFile(CONF_PATH, rendered, "utf8");
 
   const ami = getAmiClient();
   await ami.connect();
-  // "pjsip reload" is a CLI command run through AMI's generic Command
-  // action — Asterisk's dedicated `Action: Reload` doesn't take a PJSIP-
-  // specific module reload the same way `pjsip reload` does from the CLI.
-  // ⚠️ Whether Asterisk picks up an #include'd file's changes on a plain
-  // "pjsip reload" without a full module unload/load is UNVERIFIED against
-  // a live instance — flagged in LLM.md.
-  await ami.send({ Action: "Command", Command: "pjsip reload" });
+  // This Asterisk 20 build (from-source) has NO `pjsip reload` CLI command
+  // — only `module reload res_pjsip.so`. `pjsip reload` returns
+  // "No such command", which send() historically swallowed as success:
+  // the actual root cause of three sessions' worth of "reload doesn't
+  // apply" debugging (LLM.md §15/§16). Requires the `command` manager
+  // privilege — see pbx_configs/manager.conf.
+  await ami.send({ Action: "Command", Command: "module reload res_pjsip.so" });
+
+  // Read-back verification — confirm every rendered endpoint actually
+  // exists now; if not, the caller surfaces a warning telling the operator
+  // a full `docker compose restart asterisk` is required.
+  const check = await ami.send({ Action: "Command", Command: "pjsip show endpoints" });
+  const output = String(check.Output ?? check.output ?? "");
+  const missing = forPjsip.map((e) => e.number).filter((n) => !new RegExp(`Endpoint:\\s+${n}\\b`).test(output));
+  if (missing.length > 0) {
+    throw new Error(
+      `pjsip_dynamic.conf was written and 'pjsip reload' returned OK, but ${missing.length} endpoint(s) did not load (${missing.join(", ")}). This Asterisk build sometimes needs a full restart to pick up #included config — run: docker compose restart asterisk`
+    );
+  }
 }

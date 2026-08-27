@@ -130,6 +130,18 @@ export default function UsersPage() {
     }
   };
 
+  const sendReset = async (u: UserRow) => {
+    if (!confirm(`Send a password reset link to ${u.email}? Their current password stays valid until they use it.`)) return;
+    try {
+      const data = await apiFetch<{ warning?: string }>(`/api/admin/users/${u.id}`, { method: "PATCH", body: { sendReset: true } });
+      setMessageKind(data.warning ? "error" : "ok");
+      setMessage(data.warning ?? `Reset link sent to ${u.email}.`);
+    } catch (err) {
+      setMessageKind("error");
+      setMessage(err instanceof ApiError ? err.message : "Could not send a reset link.");
+    }
+  };
+
   const overridePhoneVerification = async (u: UserRow) => {
     if (!confirm(`Mark ${u.phoneE164} as verified for ${u.name}? This bypasses OTP verification.`)) return;
     try {
@@ -138,6 +150,67 @@ export default function UsersPage() {
     } catch (err) {
       setMessageKind("error");
       setMessage(err instanceof ApiError ? err.message : "Could not verify this number.");
+    }
+  };
+
+  // --- Edit an existing account (Loop E1 / objective item #2) ---
+  const [editing, setEditing] = useState<string | null>(null);
+  const [edit, setEdit] = useState<{ name: string; email: string; role: "AGENT" | "SUPERVISOR" | "ADMIN"; password: string; simPort: number | "" | "clear"; extensionNumber: string }>({
+    name: "", email: "", role: "AGENT", password: "", simPort: "", extensionNumber: "",
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const beginEdit = (u: UserRow) => {
+    setEditing(u.id);
+    setMessage(null);
+    setRevealed(null);
+    setEdit({
+      name: u.name,
+      email: u.email,
+      role: u.role as "AGENT" | "SUPERVISOR" | "ADMIN",
+      password: "",
+      simPort: u.waInstance ? u.waInstance.simPort : "",
+      extensionNumber: u.extension?.number ?? "",
+    });
+  };
+
+  const saveEdit = async (u: UserRow) => {
+    const body: Record<string, unknown> = {};
+    if (edit.name.trim() && edit.name !== u.name) body.name = edit.name.trim();
+    if (edit.email.trim() && edit.email !== u.email) body.email = edit.email.trim();
+    if (edit.role !== u.role) body.role = edit.role;
+    if (edit.password) body.password = edit.password;
+    const curPort = u.waInstance?.simPort ?? null;
+    if (edit.simPort === "clear" && curPort !== null) body.simPort = null;
+    else if (typeof edit.simPort === "number" && edit.simPort !== curPort) body.simPort = edit.simPort;
+    const curExt = u.extension?.number ?? "";
+    if (edit.extensionNumber !== curExt) body.extensionNumber = edit.extensionNumber.trim() || null;
+    if (Object.keys(body).length === 0) { setEditing(null); return; }
+    setSavingEdit(true);
+    try {
+      const data = await apiFetch<{ changes?: string[]; warning?: string }>(`/api/admin/users/${u.id}`, { method: "PATCH", body });
+      setMessageKind(data.warning ? "error" : "ok");
+      setMessage(data.warning ?? `Updated ${u.name}: ${(data.changes ?? []).join(", ") || "no change"}.`);
+      setEditing(null);
+      load();
+    } catch (err) {
+      setMessageKind("error");
+      setMessage(err instanceof ApiError ? err.message : "Could not update this account.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteUser = async (u: UserRow) => {
+    if (!confirm(`Delete ${u.name} (${u.email})? The account is revoked, its extension and SIM port are released, and personal details are scrubbed. The audit history is kept. This cannot be undone.`)) return;
+    try {
+      const data = await apiFetch<{ warning?: string }>(`/api/admin/users/${u.id}`, { method: "DELETE" });
+      setMessageKind(data.warning ? "error" : "ok");
+      setMessage(data.warning ?? `${u.name} deleted.`);
+      load();
+    } catch (err) {
+      setMessageKind("error");
+      setMessage(err instanceof ApiError ? err.message : "Could not delete this account.");
     }
   };
 
@@ -308,6 +381,12 @@ export default function UsersPage() {
                     <span className={u.disabled ? "text-slate-500 line-through" : ""}>{u.name}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-slate-500">{u.role}</span>
+                      <button onClick={() => (editing === u.id ? setEditing(null) : beginEdit(u))} className="text-xs text-cyan hover:underline">
+                        {editing === u.id ? "Close" : "Edit"}
+                      </button>
+                      <button onClick={() => sendReset(u)} className="text-xs text-cyan hover:underline">
+                        Send reset
+                      </button>
                       <button
                         onClick={() => toggleDisabled(u)}
                         className={`text-xs ${u.disabled ? "text-green-400 hover:text-green-300" : "text-red-400 hover:text-red-300"}`}
@@ -316,6 +395,70 @@ export default function UsersPage() {
                       </button>
                     </div>
                   </div>
+
+                  {editing === u.id && (
+                    <div className="mt-2 flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">Name</span>
+                        <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                          className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">Email</span>
+                        <input value={edit.email} type="email" onChange={(e) => setEdit({ ...edit, email: e.target.value })}
+                          className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">Role</span>
+                        <select value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value as "AGENT" | "SUPERVISOR" | "ADMIN" })}
+                          className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan">
+                          <option value="AGENT">AGENT</option>
+                          <option value="SUPERVISOR">SUPERVISOR</option>
+                          <option value="ADMIN">ADMIN</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">New password (min 12, leave blank to keep)</span>
+                        <input value={edit.password} type="text" placeholder="unchanged"
+                          onChange={(e) => setEdit({ ...edit, password: e.target.value })}
+                          className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">Linked extension (number, blank to unlink)</span>
+                        <input value={edit.extensionNumber} placeholder="e.g. 1002"
+                          onChange={(e) => setEdit({ ...edit, extensionNumber: e.target.value })}
+                          className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-slate-400">WhatsApp SIM port</span>
+                        <select
+                          value={edit.simPort === "clear" ? "clear" : edit.simPort === "" ? "" : String(edit.simPort)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setEdit({ ...edit, simPort: v === "" ? "" : v === "clear" ? "clear" : Number(v) });
+                          }}
+                          className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan">
+                          <option value="">{u.waInstance ? `SIM ${u.waInstance.simPort} (current)` : "None (current)"}</option>
+                          {u.waInstance && <option value="clear">Clear assignment</option>}
+                          {waInstances
+                            .filter((w) => !w.assignedUser || w.assignedUser.id === u.id)
+                            .map((w) => (
+                              <option key={w.id} value={w.simPort}>SIM {w.simPort} — {w.label}</option>
+                            ))}
+                        </select>
+                      </label>
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => saveEdit(u)} disabled={savingEdit}
+                          className="flex-1 rounded bg-cyan px-2 py-1 font-medium text-background disabled:opacity-50">
+                          {savingEdit ? "Saving…" : "Save changes"}
+                        </button>
+                        <button onClick={() => deleteUser(u)}
+                          className="rounded border border-red-800 px-2 py-1 text-red-400 hover:bg-red-950/40">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex justify-between text-xs text-slate-500">
                     <span>{u.email}</span>
                     <span>{u.extension ? `ext. ${u.extension.number} (${u.extension.status})` : "no extension"}</span>

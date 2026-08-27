@@ -20,8 +20,8 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload — expected a CIDR like 192.168.1.0/24." }, { status: 400 });
 
   try {
-    const hosts = await discoverDinstarHosts(parsed.data.cidr);
-    return NextResponse.json({ hosts });
+    const result = await discoverDinstarHosts(parsed.data.cidr);
+    return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Scan failed." }, { status: 400 });
   }

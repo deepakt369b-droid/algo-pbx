@@ -40,7 +40,12 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
 
   await db.$transaction([
-    db.user.update({ where: { id: invite.userId }, data: { passwordHash } }),
+    // passwordChangedAt stamped unconditionally, not just for Loop C3's
+    // admin-triggered reset path — harmless for a first-ever invite (no
+    // prior session exists to kill) and correct for a reset (this IS the
+    // token that class of link uses too, see
+    // POST /api/admin/users/[id]'s sendReset action).
+    db.user.update({ where: { id: invite.userId }, data: { passwordHash, passwordChangedAt: new Date() } }),
     db.invite.update({ where: { id: invite.id }, data: { consumedAt: new Date() } }),
     db.auditLog.create({
       data: { action: "invite.consume", actorId: invite.userId, targetId: invite.id, metadata: {} },

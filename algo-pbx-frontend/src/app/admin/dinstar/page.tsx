@@ -8,6 +8,33 @@ interface DiscoveredHost {
   fingerprint: "dinstar" | "unknown-http";
   authStyle: "basic" | "query" | "unknown";
 }
+type ProbeFailureReason = "timeout" | "refused" | "no-route" | "unknown";
+interface DiscoveryResult {
+  hosts: DiscoveredHost[];
+  scannedCount: number;
+  reasonCounts: Record<ProbeFailureReason, number>;
+}
+
+// Actionable copy per failure mode, shown when a scan finds nothing —
+// replaces a flat "no devices found" that gave a non-technical operator
+// no way to tell "nothing's there" from "the network is broken".
+function reasonHint(reasonCounts: Record<ProbeFailureReason, number>, scannedCount: number): string | null {
+  if (scannedCount === 0) return null;
+  const dominant = (Object.entries(reasonCounts) as [ProbeFailureReason, number][]).sort((a, b) => b[1] - a[1])[0];
+  if (!dominant || dominant[1] === 0) return null;
+  const [reason, count] = dominant;
+  const frac = `${count}/${scannedCount}`;
+  switch (reason) {
+    case "timeout":
+      return `${frac} hosts timed out — most likely the Tailscale subnet route to the office isn't approved yet, or is approved but not reaching this host. Check "tailscale status" and the route-approval step in DEPLOYMENT.md before assuming there's no gateway here.`;
+    case "no-route":
+      return `${frac} hosts were unreachable (no route) — this host has no network path to that range at all. Check the Tailscale subnet route is up, not just approved.`;
+    case "refused":
+      return `${frac} hosts actively refused the connection — the network path works, but nothing Dinstar-shaped is listening on port 80 at those addresses. Double-check the CIDR.`;
+    default:
+      return `${frac} hosts failed for an unclassified reason — try again, or enter the IP manually.`;
+  }
+}
 interface DinstarPort {
   port: number;
   type: string | null;
@@ -36,10 +63,17 @@ type Step = "find" | "signin" | "confirm" | "link" | "done";
 export default function DinstarWizardPage() {
   const [step, setStep] = useState<Step>("find");
 
-  const [cidr, setCidr] = useState("192.168.1.0/24");
+  // Default matches this office's actual Dinstar segment (192.168.11.0/24,
+  // wired directly to the PBX host for local testing) — a stale
+  // 192.168.1.0/24 default here was the actual root cause of "Dinstar scan
+  // finds nothing" (the gateway was never on that subnet), independent of
+  // the separate Tailscale-route gap. Real deployments with a different
+  // subnet just type over this.
+  const [cidr, setCidr] = useState("192.168.11.0/24");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [hosts, setHosts] = useState<DiscoveredHost[]>([]);
+  const [scanReasonHint, setScanReasonHint] = useState<string | null>(null);
   const [manualHost, setManualHost] = useState(false);
 
   const [host, setHost] = useState("");
@@ -56,10 +90,14 @@ export default function DinstarWizardPage() {
   const scan = async () => {
     setScanning(true);
     setScanError(null);
+    setScanReasonHint(null);
     try {
-      const data = await apiFetch<{ hosts: DiscoveredHost[] }>("/api/admin/dinstar/discover", { method: "POST", body: { cidr } });
+      const data = await apiFetch<DiscoveryResult>("/api/admin/dinstar/discover", { method: "POST", body: { cidr } });
       setHosts(data.hosts);
-      if (data.hosts.length === 0) setManualHost(true);
+      if (data.hosts.length === 0) {
+        setManualHost(true);
+        setScanReasonHint(reasonHint(data.reasonCounts, data.scannedCount));
+      }
     } catch (err) {
       setScanError(err instanceof ApiError ? err.message : "Scan failed.");
       setManualHost(true);
@@ -131,6 +169,7 @@ export default function DinstarWizardPage() {
             {scanning ? "Scanning…" : "Scan network"}
           </button>
           {scanError && <p className="text-xs text-red-400">{scanError}</p>}
+          {!scanError && scanReasonHint && <p className="text-xs text-yellow-500">{scanReasonHint}</p>}
 
           {hosts.length > 0 && (
             <div className="flex flex-col gap-1 border-t border-border pt-3">
@@ -157,7 +196,7 @@ export default function DinstarWizardPage() {
               <input
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                placeholder="192.168.1.50"
+                placeholder="192.168.11.1"
                 className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
               />
               <button

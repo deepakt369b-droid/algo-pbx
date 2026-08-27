@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { setSetting } from "@/lib/settings/service";
-import { probeDinstarCredentials } from "@/lib/dinstar-discovery";
+import { probeDinstarCredentials, assertProbeableHost } from "@/lib/dinstar-discovery";
 import { provisionDinstarConfig } from "@/lib/dinstar-provision";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 const Schema = z.object({
-  host: z.string().min(1),
+  host: z.string().min(1).max(64),
   username: z.string().min(1),
   password: z.string().min(1),
   writeAsteriskConfig: z.boolean().default(false),
@@ -27,7 +27,14 @@ export async function POST(request: NextRequest) {
 
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
-  const { host, username, password, writeAsteriskConfig } = parsed.data;
+  const { username, password, writeAsteriskConfig } = parsed.data;
+
+  let host: string;
+  try {
+    host = assertProbeableHost(parsed.data.host);
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid host" }, { status: 400 });
+  }
 
   const probe = await probeDinstarCredentials(host, username, password);
   if (!probe.authenticated || !probe.authStyle) {

@@ -57,7 +57,14 @@ export async function requireSetting(key: string): Promise<string> {
 }
 
 export async function setSetting(key: string, value: string, updatedById: string): Promise<void> {
-  const valueEncrypted = encryptSetting(value);
+  // Loop E2: trim leading/trailing whitespace. A pasted API token
+  // (Cloudflare, Resend, …) routinely picks up a trailing newline from a
+  // copy, which then goes straight into an `Authorization: Bearer <token>`
+  // header and is rejected by the provider with an opaque 401 — the
+  // reported "Cloudflare rejected this token" with a valid key. Secrets in
+  // this app are all single-token / single-value; none legitimately have
+  // edge whitespace.
+  const valueEncrypted = encryptSetting(value.trim());
   await db.appSetting.upsert({
     where: { key },
     create: { key, valueEncrypted, updatedById },

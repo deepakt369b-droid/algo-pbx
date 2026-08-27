@@ -1,0 +1,20 @@
+# Custom Caddy build with the Cloudflare DNS-01 plugin (Loop C4, domain
+# connect automation). The stock `caddy:2-alpine` image (previously used
+# directly) has no DNS-provider plugins built in — Caddy's DNS challenge
+# support is compile-time, via xcaddy, not a runtime config option.
+#
+# NOT verified in CI or against a live build in this environment — this is
+# the first real build of this image and must happen on the deployment VM
+# before being trusted. If it fails, the manual-certbot path documented in
+# DEPLOYMENT.md is the fallback (revert docker-compose.yml's `caddy`
+# service to `image: caddy:2-alpine` and Caddyfile to its previous
+# `tls /certs/fullchain.pem /certs/privkey.pem` form — both kept in git
+# history for exactly this reason).
+FROM caddy:2-builder-alpine AS builder
+
+RUN xcaddy build \
+    --with github.com/caddy-dns/cloudflare
+
+FROM caddy:2-alpine
+
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

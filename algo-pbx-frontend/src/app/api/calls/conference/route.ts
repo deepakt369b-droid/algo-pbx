@@ -87,9 +87,26 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const targetChannel = INTERNAL_EXTENSION.test(targetNumber)
-      ? `PJSIP/${targetNumber}`
-      : `PJSIP/${targetNumber}@dinstar-trunk`;
+    // SECURITY (Loop B2): an external third party must NOT be Originated
+    // straight at `PJSIP/<n>@dinstar-trunk` — an AMI Originate with an
+    // explicit Channel bypasses the endpoint's `context=` and therefore
+    // every from-agent-* protection: the LOCAL/NATIONAL/INTERNATIONAL dial
+    // tier, the hard-blocked satellite/premium prefixes, the emergency
+    // block, and the mandatory DNC_CHECK(). Route it through a Local
+    // channel executing the agent's own dial-permission context instead,
+    // exactly as /api/crm/click-to-call does — if the dialplan blocks the
+    // number, the Local channel hangs up and never reaches the conference.
+    let targetChannel: string;
+    if (INTERNAL_EXTENSION.test(targetNumber)) {
+      targetChannel = `PJSIP/${targetNumber}`;
+    } else {
+      const record = await db.extension.findUnique({
+        where: { number: agentExtension },
+        select: { dialPermission: true },
+      });
+      const tier = (record?.dialPermission ?? "LOCAL").toLowerCase();
+      targetChannel = `Local/${targetNumber.replace(/^\+/, "")}@from-agent-${tier}/n`;
+    }
 
     await ami.send({
       Action: "Originate",

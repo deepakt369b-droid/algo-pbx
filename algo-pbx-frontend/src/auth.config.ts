@@ -12,6 +12,19 @@ type StaffRole = "AGENT" | "SUPERVISOR" | "ADMIN";
 // src/auth.ts extends this with the real Credentials provider for use in
 // Node.js route handlers / server components, where Prisma + bcrypt are fine.
 export default {
+  // Explicit, not left to Auth.js's AUTH_TRUST_HOST env-var auto-detection:
+  // that heuristic did not reliably pick up the incoming request's real
+  // Host header in this deployment (VirtualBox NAT, no reverse proxy) —
+  // the default redirect callback's `baseUrl` fell back to the library's
+  // hardcoded "http://localhost:3000", so a real credentials sign-in from
+  // http://127.0.0.1:3000 got redirected to a bare http://localhost:3000
+  // (different origin -> browser drops the just-set session cookie ->
+  // immediate bounce back to /login). Confirmed via direct curl against
+  // /api/auth/callback/credentials: Location header was localhost:3000
+  // even with AUTH_URL/AUTH_TRUST_HOST both correctly set in the
+  // container's environment. Setting this explicitly is Auth.js's own
+  // documented fix for exactly this failure mode.
+  trustHost: true,
   session: {
     strategy: "jwt",
     // Was unset, i.e. NextAuth's default of 30 days. Combined with there

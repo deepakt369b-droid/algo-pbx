@@ -17,6 +17,7 @@
 // `read = cdr` class — UNVERIFIED against a live capture, same caveat as
 // src/lib/cdr-mapper.ts carries.
 
+import { writeFileSync } from "node:fs";
 import { AmiClient, type AmiEvent } from "../src/lib/ami-client";
 import { mapCdrEventToIngestPayload } from "../src/lib/cdr-mapper";
 
@@ -27,6 +28,23 @@ const AMI_SECRET = process.env.AMI_SECRET || "";
 const CDR_INGEST_URL = process.env.CDR_INGEST_URL || "http://web:3000/api/cdr";
 const CDR_INGEST_SECRET = process.env.CDR_INGEST_SECRET || "";
 const RECORDING_URL_BASE = "/api/recordings";
+
+// Read by the Dockerfile's HEALTHCHECK (see the `cdr-listener` build
+// stage). Before this, a dead AMI connection here was invisible — no
+// healthcheck existed on this service at all, so a stuck/crashed listener
+// silently stopped ingesting CDRs, producing exactly the "voice recording
+// is missing" symptom with nothing in `docker ps` to suggest why. Touched
+// on every successful connect AND on a steady keepalive interval (not
+// just on Cdr events), so an idle-but-healthy listener between calls
+// isn't mistaken for a dead one.
+const HEARTBEAT_PATH = process.env.CDR_LISTENER_HEARTBEAT_PATH || "/tmp/cdr-listener-heartbeat";
+function touchHeartbeat() {
+  try {
+    writeFileSync(HEARTBEAT_PATH, String(Date.now()));
+  } catch (err) {
+    console.error("ami-cdr-listener: failed to write heartbeat file:", err);
+  }
+}
 
 if (!AMI_SECRET || !CDR_INGEST_SECRET) {
   console.error("ami-cdr-listener: AMI_SECRET and CDR_INGEST_SECRET must both be set. Exiting.");
@@ -85,16 +103,22 @@ async function main() {
       await client.connect();
       console.log("ami-cdr-listener: connected, listening for Cdr events.");
       backoffMs = 1000; // reset backoff after a successful connection
+      touchHeartbeat();
 
       // Block here until the connection drops. AmiClient doesn't currently
       // expose a "disconnected" event, so poll isConnected — cheap, and
       // avoids adding new public surface to ami-client.ts for a single
-      // caller. Revisit if a second consumer needs the same signal.
+      // caller. Revisit if a second consumer needs the same signal. This
+      // same poll also re-touches the heartbeat file every tick while
+      // connected, which is what makes the healthcheck meaningful for an
+      // idle listener, not just a freshly-started one.
       await new Promise<void>((resolve) => {
         const interval = setInterval(() => {
           if (!client.isConnected) {
             clearInterval(interval);
             resolve();
+          } else {
+            touchHeartbeat();
           }
         }, 2000);
       });

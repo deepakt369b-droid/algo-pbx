@@ -3,7 +3,7 @@ import { renderPjsipConf } from "./pjsip-config";
 
 describe("renderPjsipConf", () => {
   it("renders a webrtc extension matching the hand-written template shape", () => {
-    const output = renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s3cr3t" }]);
+    const output = renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s3cr3t" , dialPermission: "LOCAL" }]);
 
     expect(output).toContain("[1002]");
     expect(output).toContain("type=endpoint");
@@ -24,27 +24,27 @@ describe("renderPjsipConf", () => {
     expect(output).toContain("media_encryption=dtls");
     expect(output).toContain("dtls_verify=fingerprint");
     expect(output).toContain("dtls_cert_file=/etc/asterisk/keys/asterisk.crt");
-    expect(output).toContain("dtls_private_key_file=/etc/asterisk/keys/asterisk.key");
+    expect(output).toContain("dtls_private_key=/etc/asterisk/keys/asterisk.key");
     expect(output).toContain("dtls_setup=actpass");
     expect(output).toContain("ice_support=yes");
     expect(output).toContain("media_use_received_transport=yes");
-    expect(output).toContain("auth=1002-auth");
-    expect(output).toContain("aors=1002-aor");
+    expect(output).toContain("auth=1002");
+    expect(output).toContain("aors=1002");
 
-    expect(output).toContain("[1002-auth]");
+    expect(output).toContain("[1002]");
     expect(output).toContain("type=auth");
     expect(output).toContain("auth_type=userpass");
     expect(output).toContain("username=1002");
     expect(output).toContain("password=s3cr3t");
 
-    expect(output).toContain("[1002-aor]");
+    expect(output).toContain("[1002]");
     expect(output).toContain("type=aor");
     expect(output).toContain("max_contacts=2");
     expect(output).toContain("remove_existing=yes");
   });
 
   it("renders a hardware extension matching the hand-written template shape", () => {
-    const output = renderPjsipConf([{ number: "2002", kind: "hardware", sipSecret: "hw-secret" }]);
+    const output = renderPjsipConf([{ number: "2002", kind: "hardware", sipSecret: "hw-secret" , dialPermission: "LOCAL" }]);
 
     expect(output).toContain("[2002]");
     expect(output).toContain("type=endpoint");
@@ -54,14 +54,14 @@ describe("renderPjsipConf", () => {
     expect(output).toContain("context=from-agent");
     expect(output).toContain("disallow=all");
     expect(output).toContain("allow=alaw,ulaw");
-    expect(output).toContain("auth=2002-auth");
-    expect(output).toContain("aors=2002-aor");
+    expect(output).toContain("auth=2002");
+    expect(output).toContain("aors=2002");
 
-    expect(output).toContain("[2002-auth]");
+    expect(output).toContain("[2002]");
     expect(output).toContain("username=2002");
     expect(output).toContain("password=hw-secret");
 
-    expect(output).toContain("[2002-aor]");
+    expect(output).toContain("[2002]");
     expect(output).toContain("max_contacts=1");
 
     // Hardware phones must NOT get WebRTC/DTLS fields — those only make
@@ -72,8 +72,8 @@ describe("renderPjsipConf", () => {
 
   it("renders multiple extensions as independent, non-bleeding blocks in order", () => {
     const output = renderPjsipConf([
-      { number: "1002", kind: "webrtc", sipSecret: "secret-a" },
-      { number: "2002", kind: "hardware", sipSecret: "secret-b" },
+      { number: "1002", kind: "webrtc", sipSecret: "secret-a" , dialPermission: "LOCAL" },
+      { number: "2002", kind: "hardware", sipSecret: "secret-b" , dialPermission: "LOCAL" },
     ]);
 
     const indexOf1002 = output.indexOf("[1002]");
@@ -98,7 +98,7 @@ describe("renderPjsipConf", () => {
   });
 
   it("wraps the output with a DO NOT HAND-EDIT banner", () => {
-    const output = renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s" }]);
+    const output = renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s" , dialPermission: "LOCAL" }]);
     expect(output).toMatch(/generated file/i);
     expect(output).toMatch(/do not hand-edit/i);
     expect(output).toContain("src/lib/pjsip-config.ts");
@@ -106,16 +106,28 @@ describe("renderPjsipConf", () => {
 
   it("throws if a number contains characters that could inject a new stanza", () => {
     expect(() =>
-      renderPjsipConf([{ number: "1002]\n[injected", kind: "webrtc", sipSecret: "s" }])
+      renderPjsipConf([{ number: "1002]\n[injected", kind: "webrtc", sipSecret: "s" , dialPermission: "LOCAL" }])
     ).toThrow();
+  });
+
+  it("picks the outbound context matching each extension's dialPermission (Loop C2)", () => {
+    const local = renderPjsipConf([{ number: "1001", kind: "webrtc", sipSecret: "s", dialPermission: "LOCAL" }]);
+    expect(local).toContain("context=from-agent-local");
+
+    const national = renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s", dialPermission: "NATIONAL" }]);
+    expect(national).toContain("context=from-agent-national");
+    expect(national).not.toContain("context=from-agent-local\n");
+
+    const international = renderPjsipConf([{ number: "1003", kind: "hardware", sipSecret: "s", dialPermission: "INTERNATIONAL" }]);
+    expect(international).toContain("context=from-agent-international");
   });
 
   it("throws if a sipSecret contains a newline or bracket", () => {
     expect(() =>
-      renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s\ninjected=yes" }])
+      renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s\ninjected=yes" , dialPermission: "LOCAL" }])
     ).toThrow();
     expect(() =>
-      renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s]\n[1003]" }])
+      renderPjsipConf([{ number: "1002", kind: "webrtc", sipSecret: "s]\n[1003]" , dialPermission: "LOCAL" }])
     ).toThrow();
   });
 });

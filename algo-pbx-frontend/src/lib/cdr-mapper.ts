@@ -46,14 +46,23 @@ export interface CdrIngestPayload {
 /**
  * Direction is inferred from the destination context's dialplan naming
  * convention already established in pbx_configs/extensions.conf:
- * `from-dinstar` → inbound, `from-agent` → outbound, anything else (internal
- * extension-to-extension dialing) → internal. This mirrors the contexts
- * defined there — if that dialplan is restructured, this mapping must move
- * with it.
+ * `from-dinstar` → inbound, `from-agent-*` → outbound, anything else
+ * (internal extension-to-extension dialing) → internal. This mirrors the
+ * contexts defined there — if that dialplan is restructured, this mapping
+ * must move with it (as it just did for Loop C2's dial-permission split).
+ *
+ * A `startsWith` match, not an exact one, deliberately covers BOTH
+ * possibilities left open by Loop C2's `Goto(from-agent-common,...)`
+ * indirection (see extensions.conf): whether Asterisk's Cdr event reports
+ * the tier context an agent's endpoint actually dialed from
+ * (`from-agent-local`/`-national`/`-international`) or the shared handler
+ * context execution lands in after the Goto (`from-agent-common`) is
+ * unverified against a live capture — same "probable, not proven"
+ * confidence tier as the rest of this file's Cdr field assumptions.
  */
 function inferDirection(sourceContext: string | undefined): "inbound" | "outbound" | "internal" {
   if (sourceContext === "from-dinstar") return "inbound";
-  if (sourceContext === "from-agent") return "outbound";
+  if (sourceContext?.startsWith("from-agent")) return "outbound";
   return "internal";
 }
 

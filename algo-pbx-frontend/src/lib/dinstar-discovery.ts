@@ -71,6 +71,32 @@ export function assertScannableCidr(cidr: string): ParsedCidr {
   return parsed;
 }
 
+/** Loop B4: validate a single `host` (bare IPv4, optionally `:port`) the
+ * same way assertScannableCidr validates a range — the probe route took
+ * `z.string().min(1)` and interpolated it straight into a URL, so `/` or
+ * `?` in the value controlled the request path (SSRF to cloud metadata,
+ * host.docker.internal, etc.). Returns the normalized `ip[:port]`. */
+export function assertProbeableHost(host: string): string {
+  const m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?$/.exec(host.trim());
+  if (!m) {
+    throw new Error(`"${host}" is not a bare IPv4 address (optionally :port). Hostnames, paths and query strings are not allowed.`);
+  }
+  const ip = m[1];
+  const port = m[2] ? Number(m[2]) : undefined;
+  if (port !== undefined && (port < 1 || port > 65535)) {
+    throw new Error(`Invalid port in "${host}".`);
+  }
+  const ipInt = ipToInt(ip); // throws on out-of-range octet
+  const inRange = ALLOWED_RANGES.some((r) => {
+    const rangeMask = r.mask === 0 ? 0 : (0xffffffff << (32 - r.mask)) >>> 0;
+    return (ipInt & rangeMask) >>> 0 === (r.base & rangeMask) >>> 0;
+  });
+  if (!inRange) {
+    throw new Error(`${ip} is outside the allowed ranges (RFC1918 or 100.64.0.0/10). The Dinstar gateway is always on a private/Tailscale network.`);
+  }
+  return port !== undefined ? `${ip}:${port}` : ip;
+}
+
 export function hostsInCidr(cidr: string): string[] {
   const { network, prefixLength, hostCount } = assertScannableCidr(cidr);
   const hostBits = 32 - prefixLength;
@@ -91,49 +117,104 @@ export interface DiscoveredHost {
   authStyle: "basic" | "query" | "unknown";
 }
 
-const CONNECT_TIMEOUT_MS = 800;
+// RFC1918 LAN timeout stays tight (a device on the same subnet answers in
+// single-digit ms); the CGNAT/Tailscale range gets much more headroom
+// since that traffic may cross a WireGuard subnet-router hop and, under
+// NAT failure between peers, fall back to a DERP relay — both add real
+// latency a same-LAN timeout would wrongly read as "no device here".
+const CONNECT_TIMEOUT_MS_LAN = 800;
+const CONNECT_TIMEOUT_MS_TAILSCALE = 3000;
 const CONCURRENCY = 32;
+const TAILSCALE_RANGE = { base: ipToInt("100.64.0.0"), mask: 10 };
 
-async function probeHost(ip: string): Promise<DiscoveredHost | null> {
+function isTailscaleRangeIp(ip: string): boolean {
+  const rangeMask = (0xffffffff << (32 - TAILSCALE_RANGE.mask)) >>> 0;
+  return (ipToInt(ip) & rangeMask) >>> 0 === (TAILSCALE_RANGE.base & rangeMask) >>> 0;
+}
+
+/** Why a host produced no result — kept distinct so the wizard can tell an
+ * operator "254/254 timed out, check the Tailscale route" instead of a
+ * flat, undiagnosable "no devices found". Every failure previously
+ * collapsed into a bare `catch { return null }`, indistinguishable from
+ * "not a Dinstar". */
+export type ProbeFailureReason = "timeout" | "refused" | "no-route" | "unknown";
+
+export function classifyFetchError(err: unknown): ProbeFailureReason {
+  if (err instanceof Error && err.name === "TimeoutError") return "timeout";
+  const code = (err as { cause?: { code?: string } } | undefined)?.cause?.code;
+  if (code === "ECONNREFUSED") return "refused";
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH" || code === "EHOSTDOWN") return "no-route";
+  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return "timeout";
+  return "unknown";
+}
+
+interface ProbeHostResult {
+  found: DiscoveredHost | null;
+  reason: ProbeFailureReason | null;
+}
+
+async function probeHost(ip: string): Promise<ProbeHostResult> {
+  const timeoutMs = isTailscaleRangeIp(ip) ? CONNECT_TIMEOUT_MS_TAILSCALE : CONNECT_TIMEOUT_MS_LAN;
   try {
     const res = await fetch(`http://${ip}/goip_get_status.html`, {
-      signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const authHeader = res.headers.get("www-authenticate") ?? "";
     if (res.status === 401 && /basic/i.test(authHeader)) {
-      return { ip, fingerprint: "dinstar", authStyle: "basic" };
+      return { found: { ip, fingerprint: "dinstar", authStyle: "basic" }, reason: null };
     }
     if (res.ok) {
       const text = await res.text().catch(() => "");
       if (text.includes("\"status\"") || text.includes("gsm_remain_credit")) {
-        return { ip, fingerprint: "dinstar", authStyle: "unknown" };
+        return { found: { ip, fingerprint: "dinstar", authStyle: "unknown" }, reason: null };
       }
-      return { ip, fingerprint: "unknown-http", authStyle: "unknown" };
+      return { found: { ip, fingerprint: "unknown-http", authStyle: "unknown" }, reason: null };
     }
-    return null;
-  } catch {
-    return null;
+    return { found: null, reason: "unknown" };
+  } catch (err) {
+    return { found: null, reason: classifyFetchError(err) };
   }
 }
 
-/** Bounded-concurrency scan of every host in `cidr`, returning only hosts
- * that answered on HTTP with a Dinstar-shaped fingerprint. Runs in ~10-20s
- * for a /24 at CONCURRENCY=32 with an 800ms per-host timeout. */
-export async function discoverDinstarHosts(cidr: string): Promise<DiscoveredHost[]> {
+export interface DiscoveryResult {
+  hosts: DiscoveredHost[];
+  scannedCount: number;
+  /** Count of non-matching hosts by why they didn't match — lets the UI
+   * distinguish "254/254 timed out" (probable network/routing problem)
+   * from "254/254 refused" (network's fine, nothing Dinstar-shaped there)
+   * instead of a single opaque empty result. */
+  reasonCounts: Record<ProbeFailureReason, number>;
+}
+
+/** Bounded-concurrency scan of every host in `cidr`, returning hosts that
+ * answered on HTTP with a Dinstar-shaped fingerprint plus a breakdown of
+ * why every other host didn't match. Runs in ~10-20s for a /24 at
+ * CONCURRENCY=32 on a LAN; longer over a Tailscale-range CIDR per the
+ * wider per-host timeout above. */
+export async function discoverDinstarHosts(cidr: string): Promise<DiscoveryResult> {
   const hosts = hostsInCidr(cidr);
   const found: DiscoveredHost[] = [];
+  const reasonCounts: Record<ProbeFailureReason, number> = { timeout: 0, refused: 0, "no-route": 0, unknown: 0 };
 
   let index = 0;
   async function worker() {
     while (index < hosts.length) {
       const ip = hosts[index++];
       const result = await probeHost(ip);
-      if (result) found.push(result);
+      if (result.found) {
+        found.push(result.found);
+      } else if (result.reason) {
+        reasonCounts[result.reason]++;
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, hosts.length) }, worker));
 
-  return found.sort((a, b) => ipToInt(a.ip) - ipToInt(b.ip));
+  return {
+    hosts: found.sort((a, b) => ipToInt(a.ip) - ipToInt(b.ip)),
+    scannedCount: hosts.length,
+    reasonCounts,
+  };
 }
 
 export interface DinstarPort {

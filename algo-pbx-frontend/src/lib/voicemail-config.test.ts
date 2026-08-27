@@ -37,8 +37,18 @@ describe("renderVoicemailConf", () => {
     expect(output).toMatch(/do not hand-edit/i);
   });
 
-  it("throws if a name or email contains a character that could break the mailbox line", () => {
-    expect(() => renderVoicemailConf([{ number: "1001", pin: "1111", name: "A\n[1002]" }])).toThrow();
+  it("throws if number, pin or email contains a character that could break the mailbox line", () => {
+    expect(() => renderVoicemailConf([{ number: "1001", pin: "11,11", name: "A" }])).toThrow();
     expect(() => renderVoicemailConf([{ number: "1001", pin: "1111", name: "A", email: "x,y@example.com" }])).toThrow();
+  });
+
+  it("sanitizes an agent-supplied name rather than aborting the whole batch (Loop B4)", () => {
+    const output = renderVoicemailConf([
+      { number: "1001", pin: "1111", name: "Smith, John" },
+      { number: "1002", pin: "2222", name: "B\n[evil]" },
+    ]);
+    const lines = output.split("\n").filter((l) => l.startsWith("1001") || l.startsWith("1002"));
+    expect(lines).toEqual(["1001 => 1111,Smith John", "1002 => 2222,B evil"]);
+    expect(output).not.toMatch(/\[evil\]/);
   });
 });

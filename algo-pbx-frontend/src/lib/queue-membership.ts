@@ -15,14 +15,30 @@ import type { AmiClient } from "@/lib/ami-client";
 
 const SUPPORT_QUEUE = "support_queue";
 
+// AmiClient.send() now rejects on `Response: Error`. QueueAdd/QueueRemove
+// answer with an error for the benign idempotent cases ("Unable to add
+// interface: Already there" / "Unable to remove interface: Not there") —
+// swallow only those, so re-running a provision or a disable is safe, but
+// a real failure (auth, missing queue) still propagates.
+function ignoreBenign(re: RegExp) {
+  return (err: unknown) => {
+    if (err instanceof Error && re.test(err.message)) return;
+    throw err;
+  };
+}
+
 export async function addQueueMember(ami: AmiClient, extensionNumber: string, queue = SUPPORT_QUEUE): Promise<void> {
   await ami.connect();
-  await ami.send({ Action: "QueueAdd", Queue: queue, Interface: `PJSIP/${extensionNumber}`, Penalty: "0" });
+  await ami
+    .send({ Action: "QueueAdd", Queue: queue, Interface: `PJSIP/${extensionNumber}`, Penalty: "0" })
+    .then(() => undefined, ignoreBenign(/already there/i));
 }
 
 export async function removeQueueMember(ami: AmiClient, extensionNumber: string, queue = SUPPORT_QUEUE): Promise<void> {
   await ami.connect();
-  await ami.send({ Action: "QueueRemove", Queue: queue, Interface: `PJSIP/${extensionNumber}` });
+  await ami
+    .send({ Action: "QueueRemove", Queue: queue, Interface: `PJSIP/${extensionNumber}` })
+    .then(() => undefined, ignoreBenign(/not there|not currently a member/i));
 }
 
 export async function pauseQueueMember(

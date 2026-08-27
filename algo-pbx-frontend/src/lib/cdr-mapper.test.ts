@@ -41,6 +41,16 @@ describe("mapCdrEventToIngestPayload", () => {
     expect(payload?.direction).toBe("outbound");
   });
 
+  it("infers outbound direction from any Loop C2 from-agent-* tier or shared-handler context", () => {
+    for (const context of ["from-agent-local", "from-agent-national", "from-agent-international", "from-agent-common"]) {
+      const payload = mapCdrEventToIngestPayload(
+        { UniqueID: `1.${context}`, StartTime: "2026-08-24 10:00:00" },
+        { sourceContext: context }
+      );
+      expect(payload?.direction).toBe("outbound");
+    }
+  });
+
   it("defaults to internal direction for an unrecognized context", () => {
     const payload = mapCdrEventToIngestPayload(
       { UniqueID: "1.1", StartTime: "2026-08-24 10:00:00" },

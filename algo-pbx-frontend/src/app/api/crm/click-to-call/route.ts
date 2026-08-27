@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { db } from "@/lib/db";
 import { getAmiClient } from "@/lib/ami-client";
 import { requireApiKey } from "@/lib/api-key-auth";
 import { checkSimpleRateLimit } from "@/lib/rate-limit";
@@ -30,13 +31,23 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
 
   const { extension, destination } = parsed.data;
+
+  // AMI Originate's Context/Exten/Priority bypass the endpoint's own
+  // configured `context=` entirely (unlike a normal Dial()) — it has to
+  // be told explicitly which of the Loop C2 dial-permission tiers to
+  // originate into. Falls back to the most restrictive tier
+  // (from-agent-local) if the extension isn't found, matching
+  // Extension.dialPermission's own DB default — fail closed, not open.
+  const record = await db.extension.findUnique({ where: { number: extension }, select: { dialPermission: true } });
+  const context = `from-agent-${(record?.dialPermission ?? "LOCAL").toLowerCase()}`;
+
   const ami = getAmiClient();
   try {
     await ami.connect();
     const res = await ami.send({
       Action: "Originate",
       Channel: `PJSIP/${extension}`,
-      Context: "from-agent",
+      Context: context,
       Exten: destination.replace(/^\+/, ""),
       Priority: "1",
       Async: "true",

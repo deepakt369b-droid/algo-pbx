@@ -21,6 +21,13 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
+# Next.js's lockfile-integrity check tries to fetch package metadata from
+# the npm registry to auto-patch missing @next/swc-* optional deps; inside
+# this build (no reliable outbound registry access) that fetch never
+# resolves and next build hangs indefinitely instead of failing fast. This
+# is the documented escape hatch — package-lock.json is already correct
+# for this deps stage's install, there is nothing to patch.
+ENV NEXT_IGNORE_INCORRECT_LOCKFILE=1
 RUN npm run build
 
 FROM node:20-alpine AS runner
@@ -30,10 +37,15 @@ ENV NODE_ENV=production
 # no offsetting reason to (no privileged port, no host device access) —
 # unnecessary blast radius for any RCE in this process or a dependency.
 # node:alpine ships a `node` user (uid 1000) out of the box.
-RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001 \
+    # su-exec (alpine's lightweight gosu): the entrypoint runs as root to
+    # chown the bind-mounted generated config files, then drops to nextjs.
+    && apk add --no-cache su-exec
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 # Prisma's generated client + schema/migrations are needed at runtime: the
 # client to talk to Postgres, the schema+migrations so `prisma migrate
 # deploy` (run below at container start) can apply pending migrations —
@@ -48,7 +60,10 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
 RUN chown -R nextjs:nodejs /app
-USER nextjs
+# NOTE: deliberately NOT `USER nextjs` here — docker-entrypoint.sh starts
+# as root to fix bind-mount ownership (Loop A5), then su-exec's down to
+# nextjs for both `prisma migrate deploy` and `node server.js`. The app
+# process itself never runs as root.
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=5s --retries=6 --start-period=15s \
     CMD node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
@@ -70,10 +85,10 @@ ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/prisma/node_modules/@prisma/en
 ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/.prisma/client/libquery_engine-linux-musl-openssl-3.0.x.so.node
 # Not `npx prisma`: this stage never copies node_modules/.bin (only the
 # selective .prisma/@prisma/prisma package dirs above), so npx has no bin
-# entry to resolve and fails with a bare "prisma: not found" — invoking
-# the CLI's own entry file directly with node sidesteps bin resolution
-# entirely and needs nothing else copied.
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]
+# entry to resolve and fails with a bare "prisma: not found" — the
+# entrypoint invokes the CLI's own entry file directly with node, which
+# sidesteps bin resolution entirely.
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
 # Separate target for the CDR listener (docker-compose.yml's `cdr-listener`
 # service). NOT part of the `runner` image above: that image is Next's
@@ -90,4 +105,14 @@ COPY package.json tsconfig.json ./
 COPY scripts ./scripts
 COPY src/lib ./src/lib
 USER nextjs
+# Before this, this service had NO healthcheck at all — a stuck/crashed
+# AMI subscription here was invisible to `docker ps`/orchestration and
+# silently stopped ingesting CDRs, which is the concrete mechanism behind
+# a reported "voice recording is missing" symptom with recording/playback
+# code that was otherwise correctly wired. Reads the heartbeat file the
+# listener touches on connect and on every steady-state poll tick (see
+# ami-cdr-listener.ts) — unhealthy if it goes stale for >90s, well past
+# the listener's own 2s poll interval and worst-case 30s reconnect backoff.
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=20s \
+    CMD node -e "const fs=require('fs');try{const age=Date.now()-Number(fs.readFileSync(process.env.CDR_LISTENER_HEARTBEAT_PATH||'/tmp/cdr-listener-heartbeat','utf8'));process.exit(age<90000?0:1);}catch{process.exit(1);}"
 CMD ["npx", "tsx", "scripts/ami-cdr-listener.ts"]

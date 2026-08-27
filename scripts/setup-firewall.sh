@@ -57,6 +57,23 @@ ufw allow "${COTURN_RELAY_START}:${COTURN_RELAY_END}/udp" comment 'Coturn relay'
 # (SIP 5060 to the Dinstar trunk arrives here via the subnet route).
 ufw allow in on tailscale0 comment 'Tailscale mesh - full trust'
 
+# AMI (5038) and the web app's route to Postgres both cross from a Docker
+# BRIDGE container to a directly-bound HOST socket (asterisk/postgres run
+# outside the bridge or publish to loopback — see manager.conf's own ACL
+# comment for the cdr-listener/web -> AMI direction specifically). That
+# path goes through ufw's normal INPUT chain like any other host-bound
+# connection — it is NOT covered by the DOCKER-USER rules below (those
+# guard the OPPOSITE direction: external traffic reaching a
+# Docker-published port). Real bug found deploying Loop A1 (first time
+# Asterisk ever actually ran): with no rule here, ufw's default-deny-
+# incoming policy silently dropped every AMI connection attempt from
+# cdr-listener/web, surfacing as a slow, opaque ETIMEDOUT — not an
+# obvious "connection refused." 172.16.0.0/12 matches manager.conf's own
+# `permit` ACL range exactly — this is a second, independent layer
+# (network-level) around the same already-narrow (application-level)
+# trust boundary, not a wider one.
+ufw allow from 172.16.0.0/12 to any port 5038 proto tcp comment 'AMI - Docker bridge only'
+
 # Docker publishes ports by writing iptables rules DIRECTLY, bypassing ufw's
 # INPUT chain. Published ports in docker-compose.yml are already safe
 # (5432 bound to 127.0.0.1; web is fronted by Caddy), but this makes the
@@ -64,6 +81,11 @@ ufw allow in on tailscale0 comment 'Tailscale mesh - full trust'
 # DOCKER-USER is evaluated before Docker's own NAT rules.
 iptables -I DOCKER-USER -i eth0 -p tcp --dport 5432 -j REJECT 2>/dev/null || true
 iptables -I DOCKER-USER -i eth0 -p tcp --dport 5038 -j REJECT 2>/dev/null || true
+# Loop B0: belt-and-braces even though docker-compose.yml now binds web to
+# 127.0.0.1 — if a future compose edit drops the bind address, this keeps
+# the raw Next.js app (cleartext, bypasses Caddy/TLS) off the public
+# interface. Port 3000 must only ever be reached via Caddy on 443.
+iptables -I DOCKER-USER -i eth0 -p tcp --dport 3000 -j REJECT 2>/dev/null || true
 
 ufw --force enable
 ufw status verbose

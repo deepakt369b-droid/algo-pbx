@@ -21,6 +21,7 @@ import DashboardIcon from "@mui/icons-material/Dashboard";
 import GroupsIcon from "@mui/icons-material/Groups";
 import ListAltIcon from "@mui/icons-material/ListAlt";
 import DialpadIcon from "@mui/icons-material/Dialpad";
+import GraphicEqIcon from "@mui/icons-material/GraphicEq";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import SmsIcon from "@mui/icons-material/Sms";
@@ -31,6 +32,9 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import MonitorHeartIcon from "@mui/icons-material/MonitorHeart";
 import LoginIcon from "@mui/icons-material/Login";
 import BlockIcon from "@mui/icons-material/Block";
+import SupportAgentIcon from "@mui/icons-material/SupportAgent";
+import FactCheckIcon from "@mui/icons-material/FactCheck";
+import LanguageIcon from "@mui/icons-material/Language";
 import { HealthPill } from "./health-pill";
 import { ThemeToggleButton } from "./theme-toggle-button";
 
@@ -53,6 +57,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/admin", label: "Wallboard", icon: <DashboardIcon fontSize="small" /> },
       { href: "/admin/queues", label: "Queues", icon: <ListAltIcon fontSize="small" /> },
       { href: "/admin/cdr", label: "CDR", icon: <DialpadIcon fontSize="small" /> },
+      { href: "/admin/recordings", label: "Recordings", icon: <GraphicEqIcon fontSize="small" /> },
       { href: "/admin/reports", label: "Reports", icon: <BarChartIcon fontSize="small" /> },
     ],
   },
@@ -69,7 +74,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/admin/extensions", label: "Extensions", icon: <RouterIcon fontSize="small" /> },
       { href: "/admin/users", label: "Users", icon: <PeopleIcon fontSize="small" /> },
+      { href: "/admin/escalations", label: "Manager Escalation", icon: <SupportAgentIcon fontSize="small" /> },
       { href: "/admin/dinstar", label: "Dinstar Gateway", icon: <RouterIcon fontSize="small" /> },
+      { href: "/admin/domain", label: "Connect Domain", icon: <LanguageIcon fontSize="small" /> },
       { href: "/admin/settings", label: "Settings", icon: <SettingsIcon fontSize="small" /> },
       { href: "/admin/system", label: "System", icon: <MonitorHeartIcon fontSize="small" /> },
     ],
@@ -79,6 +86,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/admin/sign-ins", label: "Sign-Ins", icon: <LoginIcon fontSize="small" /> },
       { href: "/admin/dnc", label: "Do Not Call", icon: <BlockIcon fontSize="small" /> },
+      { href: "/admin/audit", label: "Audit Log", icon: <FactCheckIcon fontSize="small" /> },
     ],
   },
 ];

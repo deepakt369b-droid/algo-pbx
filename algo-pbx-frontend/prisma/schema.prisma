@@ -27,6 +27,17 @@ enum AgentStatus {
   OFFLINE
 }
 
+// Loop C2 — toll-fraud guard. Before this, the outbound dialplan
+// ([from-agent] in pbx_configs/extensions.conf) matched a bare `_X.` —
+// ANY number, no restriction — reachable by any agent whose SIP secret
+// (held in browser memory) leaked. Defaults to LOCAL (safe by default);
+// an admin must explicitly widen an extension's reach.
+enum DialPermission {
+  LOCAL
+  NATIONAL
+  INTERNATIONAL
+}
+
 enum Role {
   AGENT
   SUPERVISOR
@@ -43,6 +54,14 @@ model User {
   // completed onboarding; the login path (src/auth.ts) must treat null
   // the same as "credentials can never match", not as an open door.
   passwordHash      String?
+  // Loop C3 — set on every successful password change (self-service
+  // reset via WhatsApp OTP, or an admin-triggered reset-link consumption
+  // — NOT on initial invite consumption, since there's no prior session
+  // to invalidate then). src/auth.ts's jwt callback compares this
+  // against the JWT's own issued-at time, same live-recompute pattern
+  // already used for `disabled` — so a reset kills every other
+  // outstanding session on its very next request, not just future logins.
+  passwordChangedAt DateTime?
   name              String
   role              Role              @default(AGENT)
   // Revocation for a terminated/compromised account. auth.config.ts's jwt
@@ -80,9 +99,16 @@ model User {
   // Per-admin "last viewed the sign-in feed" marker — powers the unread
   // badge on /admin/sign-ins without a separate read-state table.
   signInFeedSeenAt       DateTime?
+  // Same read-state-marker pattern as signInFeedSeenAt above, but for an
+  // agent's own missed-call list (GET /api/me/missed-calls) — no new
+  // table needed since CallDetailRecord.agentExtension/disposition
+  // already carry everything the list needs; this is just "have they
+  // looked" for badge purposes.
+  missedCallsSeenAt      DateTime?
   extension         Extension?
   doNotCallEntries  DoNotCallEntry[]
   hiddenRecordings  Recording[]
+  escalationAttempts EscalationAttempt[]
   auditLogs         AuditLog[]
   invitesCreated    Invite[]          @relation("InviteCreatedBy")
   invite            Invite?
@@ -107,6 +133,10 @@ model User {
 enum OtpPurpose {
   PHONE_VERIFICATION
   LOGIN_2FA
+  // Loop C3 — self-service password reset, reusing the same OtpChallenge
+  // machinery (5/hour send throttle, 5-attempt guess throttle, hashed
+  // codes) rather than inventing a parallel one.
+  PASSWORD_RESET
 }
 
 enum OtpChannel {
@@ -238,6 +268,12 @@ model Extension {
   // login). Generated server-side alongside sipSecret, same one-time-
   // disclosure treatment via GET /api/me/sip-credentials.
   voicemailPin String?
+  // Loop C2 — which of the three chained outbound dialplan contexts
+  // (from-agent-local/-national/-international in extensions.conf) this
+  // endpoint's generated PJSIP stanza points `context=` at. See
+  // DialPermission's own comment for why this exists. Defaults to the
+  // most restrictive tier.
+  dialPermission DialPermission @default(LOCAL)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -386,6 +422,64 @@ model CallQualitySample {
   createdAt         DateTime @default(now())
 
   @@index([callId])
+  @@index([createdAt])
+}
+
+// =========================================
+// MANAGER ESCALATION (Loop C1) — admin-managed named list an agent can
+// transfer/forward a live call to, plus outcome tracking so a busy/
+// unanswered escalation is visible somewhere other than the agent's own
+// screen. The actual transfer is the existing blindTransfer() SIP REFER
+// (src/contexts/sip-context.tsx) — nothing new at the call-control layer.
+// =========================================
+
+enum EscalationOutcome {
+  ANSWERED
+  BUSY
+  NO_ANSWER
+  FAILED
+  UNKNOWN
+}
+
+model EscalationTarget {
+  id          String   @id @default(cuid())
+  name        String
+  // At least one of extension/phoneE164 is required (enforced in the API
+  // route, not the schema — Prisma has no CHECK-constraint DSL) since a
+  // target might be an internal extension, an external number reached
+  // only via the Dinstar trunk, or both.
+  extension   String?
+  phoneE164   String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  attempts    EscalationAttempt[]
+}
+
+model EscalationAttempt {
+  id         String            @id @default(cuid())
+  agentId    String
+  agent      User              @relation(fields: [agentId], references: [id])
+  // Nullable + SET NULL on delete (not RESTRICT): deleting a manager from
+  // the escalation list must not be blocked by, or destroy, past attempt
+  // history — the attempt still happened even if the target is later
+  // removed. denormalized `targetName` below preserves who it was for
+  // display once the relation itself is gone.
+  targetId    String?
+  target      EscalationTarget? @relation(fields: [targetId], references: [id], onDelete: SetNull)
+  targetName  String
+  outcome    EscalationOutcome @default(UNKNOWN)
+  // Whether the WhatsApp busy/no-answer ping to the manager was actually
+  // sent — distinct from `outcome`, since the transfer itself succeeding
+  // or failing is independent of whether the follow-up notification did.
+  waNotified Boolean           @default(false)
+  waError    String?
+  createdAt  DateTime          @default(now())
+  resolvedAt DateTime?
+
+  @@index([agentId])
+  @@index([targetId])
   @@index([createdAt])
 }
 
@@ -712,12 +806,19 @@ model ApiKey {
 // tampered row fails to decrypt rather than silently yielding
 // attacker-chosen plaintext.
 //
-// Deliberately NOT storing telephony settings here (AMI, Coturn,
-// VM_PUBLIC_DOMAIN) — those values are duplicated into
-// pbx_configs/manager.conf and the Asterisk/Coturn container commands,
-// and editing only the DB side would produce a silent mismatch that
-// breaks calls. Making those safely editable needs generating those
-// config files from the database too, which is out of scope here.
+// Deliberately NOT storing most telephony settings here (AMI, Coturn's
+// realm/secret) — those values are duplicated into pbx_configs/manager.conf
+// and the Asterisk/Coturn container commands, and editing only the DB side
+// would produce a silent mismatch that breaks calls. Making those safely
+// editable needs generating those config files from the database too,
+// which is out of scope here.
+//
+// VM_PUBLIC_DOMAIN is the ONE exception (Loop C4, domain-connect
+// automation) — its "generate the dependent config too" work now exists:
+// POST /api/admin/settings/domain/apply writes
+// pbx_configs/generated/caddy.env and the `cert-sync` service (see
+// docker-compose.yml) recreates the `caddy` container so the change
+// actually takes effect, rather than silently only updating this table.
 model AppSetting {
   id             String   @id @default(cuid())
   key            String   @unique

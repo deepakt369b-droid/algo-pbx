@@ -3,6 +3,13 @@
 .env.local
 !.env.example
 
+# Ad-hoc secret dumps (e.g. a session pasting fresh .env values to a scratch
+# file mid-VM-repair) — never meant to be committed, but keep them out of
+# `git add -A`'s reach entirely rather than relying on every session
+# remembering not to stage them.
+secrets*.txt
+*.secrets.txt
+
 # Local Docker overrides (per-machine ports, etc.)
 docker-compose.override.yml
 
@@ -15,10 +22,20 @@ agent-photos/*
 !agent-photos/README.md
 pbx_configs/keys/*
 !pbx_configs/keys/README.md
+pbx_configs/generated/*
+!pbx_configs/generated/README.md
 
 # Music-on-hold audio — licensing is an operator concern, don't commit media
 moh/default/*
 !moh/default/README.md
+
+# Same reasoning — inbound-call ringtone (see public/sounds/README.md)
+algo-pbx-frontend/public/sounds/*
+!algo-pbx-frontend/public/sounds/README.md
+
+# Same reasoning — custom Asterisk prompts (see pbx_configs/sounds/README.md)
+pbx_configs/sounds/*
+!pbx_configs/sounds/README.md
 
 # Postgres/docker volumes (bind-mounted, not tracked)
 postgres_data/

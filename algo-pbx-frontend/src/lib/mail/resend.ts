@@ -51,6 +51,29 @@ export async function sendInviteEmail(to: string, name: string, inviteUrl: strin
   });
 }
 
+// Loop C3 — admin-triggered password reset. Reuses the exact same
+// Invite/tokenHash mechanism and consumption route (POST /api/invite,
+// src/app/invite/[token]/page.tsx) as onboarding — a password reset IS
+// "set your password once via a single-use link," the same operation the
+// invite flow already performs, just triggered later in an account's
+// life instead of at creation. Only the email copy differs.
+export async function sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
+  const from = (await getSetting("INVITE_FROM_EMAIL")) || "invites@algopbx.local";
+  const resend = await getClient();
+  await resend.emails.send({
+    from,
+    to,
+    subject: "Reset your Algo PBX password",
+    html: `
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>An administrator has requested a password reset for your Algo PBX account. Set a new password here:</p>
+      <p><a href="${resetUrl}">${resetUrl}</a></p>
+      <p>This link is single-use and expires in 24 hours. If you didn't expect this, contact an administrator —
+      your current password still works until you use this link.</p>
+    `,
+  });
+}
+
 // Minimal HTML-escaping for the one interpolated field (name) that isn't
 // already a validated URL — this is an email body, not a browser DOM, but
 // there's no reason to skip the discipline.

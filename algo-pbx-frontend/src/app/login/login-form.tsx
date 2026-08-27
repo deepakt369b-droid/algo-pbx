@@ -63,9 +63,9 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "Invalid email or password.");
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        setError(data?.error ?? "Something went wrong. Please try again.");
         return;
       }
       roleRef.current = data.role ?? null;
@@ -75,6 +75,8 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
       } else {
         await finishSignIn();
       }
+    } catch {
+      setError("Something went wrong. Please try again.");
     } finally {
       setPending(false);
     }
@@ -90,12 +92,14 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "Incorrect code.");
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        setError(data?.error ?? "Something went wrong. Please try again.");
         return;
       }
       await finishSignIn();
+    } catch {
+      setError("Something went wrong. Please try again.");
     } finally {
       setPending(false);
     }
@@ -158,6 +162,9 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
       >
         {pending ? "Signing in…" : "Sign in"}
       </button>
+      <a href="/forgot-password" className="text-center text-xs text-slate-500 hover:text-slate-300">
+        Forgot your password?
+      </a>
     </form>
   );
 }

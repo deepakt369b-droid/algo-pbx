@@ -20,7 +20,11 @@ export const dynamic = "force-dynamic";
 // otherwise collide with the byte-serving `/api/recordings/[uniqueid]`
 // route (a different identifier entirely: CDR uniqueId, not Recording.id).
 // Caught by `next build` failing outright, not a style preference.
-const HideSchema = z.object({ id: z.string() });
+// `hidden` defaults true (the agent "Hide" action). Staff can pass
+// `hidden: false` to un-hide from the new /admin/recordings page — an
+// agent can only ever hide, never reveal (canAccessRecording() denies
+// them a hidden recording, so they can't target it to un-hide anyway).
+const HideSchema = z.object({ id: z.string(), hidden: z.boolean().default(true) });
 
 export async function POST(req: NextRequest) {
   const guard = await requireSession();
@@ -41,24 +45,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Recording not found" }, { status: 404 });
   }
 
-  const allowed = canAccessRecording({
-    role: session.user.role,
-    callerExtension: session.user.extension,
-    cdrAgentExtension: recording.cdr.agentExtension,
-    hiddenFromAgentAt: recording.hiddenFromAgentAt,
-  });
-  if (!allowed) {
+  const isStaff = session.user.role === "ADMIN" || session.user.role === "SUPERVISOR";
+
+  // Un-hide is staff-only. An agent can only ever hide.
+  if (parsed.data.hidden === false && !isStaff) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (parsed.data.hidden) {
+    const allowed = canAccessRecording({
+      role: session.user.role,
+      callerExtension: session.user.extension,
+      cdrAgentExtension: recording.cdr.agentExtension,
+      hiddenFromAgentAt: recording.hiddenFromAgentAt,
+    });
+    if (!allowed) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const updated = await db.recording.update({
     where: { id: parsed.data.id },
-    data: { hiddenFromAgentAt: new Date(), hiddenByUserId: session.user.id },
+    data: parsed.data.hidden
+      ? { hiddenFromAgentAt: new Date(), hiddenByUserId: session.user.id }
+      : { hiddenFromAgentAt: null, hiddenByUserId: null },
   });
 
   await db.auditLog.create({
     data: {
-      action: "recording.hide",
+      action: parsed.data.hidden ? "recording.hide" : "recording.unhide",
       actorId: session.user.id,
       targetId: recording.id,
     },

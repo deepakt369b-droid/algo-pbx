@@ -1,0 +1,166 @@
+# Algo PBX — Asterisk 20, built from source (Loop A1).
+#
+# Closes the split-brain flagged repeatedly across LLM.md/handoff.md:
+# docker-compose.yml's `asterisk` service pointed at `tiredofit/asterisk:
+# 20-latest`, an image that has never existed (confirmed:
+# github.com/tiredofit/docker-asterisk 404s) — every deploy instead fell
+# back to a hand-compiled NATIVE Asterisk on the VM, running `make
+# samples` defaults, NOT this repo's real pbx_configs/. This Dockerfile
+# mirrors that native build's actual, working recipe (recovered from the
+# VM's own asterisk-source/menuselect.makeopts and shell history — not
+# guessed) with one deliberate fix, below.
+#
+# THE ODBC GAP, ROOT-CAUSED: `pbx_configs/odbc.ini`'s header comment and
+# LLM.md §7 have carried "unverified whether this Asterisk image even has
+# ODBC support" since Phase C. The native build's own
+# menuselect.makeopts answers this directly:
+#   MENUSELECT_DEPSFAILED=MENUSELECT_RES=res_odbc
+#   MENUSELECT_DEPSFAILED=MENUSELECT_FUNCS=func_odbc
+# — both failed their dependency check and were silently excluded,
+# because the native build's shell history shows `unixodbc-dev` was never
+# apt-installed before `./configure` ran. func_odbc.conf's DNC_CHECK()
+# (the mandatory dialplan-layer compliance control, Phase C) has never
+# been buildable, let alone working. Fixed below by installing
+# unixodbc-dev (build) + unixodbc + odbc-postgresql (runtime) — the ONLY
+# deliberate deviation from the native build's recipe.
+#
+# NOT verified in CI or by an actual build in this session (no Docker on
+# this Windows dev machine) — this is written directly against the VM's
+# own confirmed-working configure/menuselect state, but the actual first
+# build must happen on the VM. A full source build is slow (the VM was
+# already found to soft-lock under sustained compile load at 2 vCPUs,
+# fixed by dropping to 1 — expect this to take a while single-threaded).
+
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Package list recovered from the native build's own shell history
+# (~/.bash_history on the VM) — the precise set that got `./configure`
+# to succeed there, not a generic "Asterisk build deps" list assembled
+# from documentation. Two deviations, both because this stage starts
+# from a MINIMAL ubuntu:24.04 base rather than a full Ubuntu Server ISO
+# install (which carries a much larger default package set): unixodbc-dev
+# (deliberate, see header comment) and pkg-config (confirmed missing —
+# first build attempt failed at `./configure` with "pkg-config not
+# found"; the native build never explicitly installed it either, so it
+# was evidently already present on that ISO's base install).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates git wget subversion pkg-config \
+    libnewt-dev libncurses5-dev libssl-dev libxml2-dev \
+    libsqlite3-dev uuid-dev libjansson-dev libedit-dev \
+    unixodbc-dev \
+    libsrtp2-dev \
+    && rm -rf /var/lib/apt/lists/*
+# libsrtp2-dev is the SECOND deliberate deviation from the native recipe
+# (after unixodbc-dev). ROOT CAUSE, found live 2026-08-27: the native
+# build's menuselect.makeopts carries
+#   MENUSELECT_DEPSFAILED=MENUSELECT_RES=res_srtp
+# — res_srtp failed its dependency check (libsrtp not installed before
+# ./configure) and was silently excluded. Every generated WebRTC endpoint
+# has `media_encryption=dtls`, which REQUIRES res_srtp; without it Asterisk
+# rejects the ENTIRE endpoint stanza at config-load time with no logged
+# error (auths and AORs still load, so `pjsip show auths` looked fine
+# while `pjsip show endpoints` was empty). This is why no WebRTC agent has
+# ever registered in this project's history — deeper than the missing-DTLS-
+# cert-files issue LLM.md §16 found and fixed. menuselect.makeopts is
+# patched in the same commit to drop res_srtp + ENABLE_SRTP_AES_* from the
+# exclusion list.
+
+WORKDIR /usr/src
+# Branch 20, not a specific tag — CLAUDE.md/LLM.md's hard constraint is
+# "Asterisk 20", and the native build's own AC_INIT string read
+# "asterisk"/"master" with no recoverable exact commit (no .git, no
+# tarball_version file survived on the VM) — this is the closest
+# deterministic equivalent, not a guess at an arbitrary commit.
+RUN git clone --branch 20 --depth 1 https://github.com/asterisk/asterisk.git
+
+WORKDIR /usr/src/asterisk
+# Let menuselect generate a fresh, dependency-checked baseline
+# (`make menuselect.makeopts` is non-interactive — it only runs the
+# dependency scan and writes the file), then flip exactly the modules
+# this deployment needs on/off with the non-interactive `menuselect`
+# CLI. This replaces an earlier approach that froze a hand-copied
+# menuselect.makeopts from the VM's native build — that file's frozen
+# DEPSFAILED set diverged from what a clean scan produces on this base
+# image (res_pjsip_config_sangoma, among others), breaking the build.
+#
+# --enable res_srtp:  REQUIRED for every WebRTC endpoint (media_encryption
+#                     =dtls). Its absence silently rejected every generated
+#                     agent endpoint — the invisible wall this whole
+#                     project hit. libsrtp2-dev (installed above) satisfies
+#                     the dependency scan.
+# --enable res_odbc / func_odbc: the Phase C DNC dialplan control — needs
+#                     unixodbc-dev (installed above).
+RUN ./configure --with-jansson-bundled \
+    && make menuselect.makeopts \
+    && menuselect/menuselect \
+        --enable res_srtp \
+        --enable res_odbc \
+        --enable func_odbc \
+        --enable chan_pjsip \
+        --enable res_pjsip \
+        menuselect.makeopts \
+    && make -j"$(nproc)" \
+    && make install
+
+# Runtime directories docker-compose.yml's volume mounts expect to exist
+# under — `make install` alone doesn't create these (that's normally
+# `make samples`', which this image deliberately skips: this repo's real
+# pbx_configs/ is bind-mounted over /etc/asterisk at runtime, sample
+# configs would just be dead weight).
+RUN mkdir -p /etc/asterisk /var/log/asterisk /var/spool/asterisk/monitor \
+    /var/spool/asterisk/voicemail /var/lib/asterisk/moh/default \
+    /var/lib/asterisk/sounds/en/custom /run/asterisk
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Runtime shared-library equivalents of the builder stage's -dev packages,
+# plus odbc-postgresql (the actual PostgreSQL ODBC driver res_odbc.conf's
+# odbc.ini/odbcinst.ini need at runtime — unixodbc-dev alone only
+# satisfies the BUILD-time header check, see this file's header comment).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnewt0.52 libncurses6 libssl3 libxml2 libsqlite3-0 libuuid1 \
+    libjansson4 libedit2 unixodbc odbc-postgresql ca-certificates \
+    libsrtp2-1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --home /var/lib/asterisk --shell /usr/sbin/nologin asterisk
+
+COPY --from=builder /usr/sbin/asterisk* /usr/sbin/
+COPY --from=builder /usr/lib/asterisk /usr/lib/asterisk
+# libasteriskssl.so*/libasteriskpj.so* (Asterisk's own bundled-pjproject
+# and SSL-wrapper shared libs `make install` produces) land in plain
+# /usr/lib, NOT /usr/lib/asterisk — missing this line was a real bug
+# found deploying this: the binary above needs both to even start
+# ("error while loading shared libraries: libasteriskssl.so.1: cannot
+# open shared object file"), confirmed by inspecting the builder stage
+# directly rather than guessing a second time.
+COPY --from=builder /usr/lib/libasterisk*.so* /usr/lib/
+COPY --from=builder /var/lib/asterisk /var/lib/asterisk
+COPY --from=builder /etc/asterisk /etc/asterisk
+COPY --from=builder /var/log/asterisk /var/log/asterisk
+COPY --from=builder /var/spool/asterisk /var/spool/asterisk
+COPY --from=builder /run/asterisk /run/asterisk
+
+RUN chown -R asterisk:asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk /run/asterisk /etc/asterisk \
+    # The COPY above bypasses apt's own post-install ldconfig trigger —
+    # run it explicitly so the dynamic linker's cache actually picks up
+    # the two libasterisk*.so files just placed in /usr/lib.
+    && ldconfig
+
+# Runs as root, not the `asterisk` user created above — asterisk.conf's
+# highpriority=yes (see that file's own comment) needs CAP_SYS_NICE
+# (granted via docker-compose.yml's cap_add), and this repo's existing
+# convention for this specific container already accepts that tradeoff
+# (network_mode: host for direct RTP handling is a much larger blast
+# radius than the scheduling-priority capability, and both are already
+# accepted for this one service). Revisit if a more locked-down setup is
+# ever required.
+COPY pbx_configs/asterisk-entrypoint.sh /usr/local/bin/asterisk-entrypoint.sh
+RUN chmod +x /usr/local/bin/asterisk-entrypoint.sh
+# Loop B3b: the entrypoint renders manager.conf / odbc.ini from .env
+# (mounted read-only at *.tmpl), then execs asterisk. Templating these in
+# the repo is what a full re-sync kept reverting.
+ENTRYPOINT ["/usr/local/bin/asterisk-entrypoint.sh"]

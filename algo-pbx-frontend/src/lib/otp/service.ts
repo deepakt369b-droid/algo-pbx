@@ -87,7 +87,7 @@ async function resolveOpenWaSessionId(): Promise<string> {
 export async function sendOtp(params: {
   userId: string;
   phoneE164: string;
-  purpose: "PHONE_VERIFICATION" | "LOGIN_2FA";
+  purpose: "PHONE_VERIFICATION" | "LOGIN_2FA" | "PASSWORD_RESET";
 }): Promise<OtpSendResult> {
   const windowStart = new Date(Date.now() - SEND_WINDOW_MS);
   const recentCount = await db.otpChallenge.count({
@@ -177,7 +177,7 @@ export interface OtpVerifyResult {
  */
 export async function verifyOtp(params: {
   userId: string;
-  purpose: "PHONE_VERIFICATION" | "LOGIN_2FA";
+  purpose: "PHONE_VERIFICATION" | "LOGIN_2FA" | "PASSWORD_RESET";
   code: string;
 }): Promise<OtpVerifyResult> {
   const challenge = await db.otpChallenge.findFirst({

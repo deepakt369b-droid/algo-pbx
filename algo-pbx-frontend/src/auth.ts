@@ -5,7 +5,7 @@ import { z } from "zod";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
 import { db } from "@/lib/db";
 import authConfig from "@/auth.config";
-import { checkLoginRateLimit, clearLoginAttempts, recordLoginFailure } from "@/lib/rate-limit";
+import { checkLoginRateLimit, clearLoginAttempts, recordLoginFailure, getClientIp } from "@/lib/rate-limit";
 import { isProfileComplete } from "@/lib/registration";
 import { OTP_VERIFIED_COOKIE, verifyOtpVerifiedToken } from "@/lib/two-factor";
 
@@ -60,10 +60,21 @@ const CredentialsSchema = z.object({
 // next/constants.
 if (
   process.env.NODE_ENV === "production" &&
-  process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD &&
-  !process.env.AUTH_SECRET
+  process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD
 ) {
-  throw new Error("AUTH_SECRET is not set. Generate one with `openssl rand -base64 33` and set it before starting in production.");
+  const secret = process.env.AUTH_SECRET ?? "";
+  // Loop B1c: a *presence* check alone let the literal `change-me` from the
+  // committed .env.example through — booting with a publicly-known JWT
+  // signing key, from which any authenticated user can forge an ADMIN
+  // session (compounded by the jwt callback not re-reading `role`, now
+  // fixed below). Reject the known placeholder and anything with too little
+  // entropy. `openssl rand -base64 33` yields 44 chars.
+  const PLACEHOLDERS = new Set(["change-me", "changeme", "secret", "REPLACE_ME", "your-secret-here"]);
+  if (!secret || PLACEHOLDERS.has(secret) || secret.length < 32) {
+    throw new Error(
+      "AUTH_SECRET is missing, a known placeholder, or too short (need >=32 random chars). Generate one with `openssl rand -base64 33`."
+    );
+  }
 }
 
 // A fixed, valid bcrypt hash with no corresponding plaintext — compared
@@ -89,15 +100,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!parsed.success) return null;
         const { email, password } = parsed.data;
 
-        // Best-effort client IP for the rate-limit bucket key — behind the
-        // Nginx reverse proxy this app is deployed behind (see
-        // .env.example's AUTH_TRUST_HOST comment), the real client address
-        // arrives in X-Forwarded-For. Falls back to a fixed bucket if
-        // neither header is present rather than throwing — a login attempt
-        // should never 500 because of a missing header, it should just
-        // rate-limit more coarsely.
-        const forwardedFor = request?.headers?.get?.("x-forwarded-for");
-        const ip = forwardedFor?.split(",")[0]?.trim() || "unknown";
+        // Loop B1: take the proxy-appended (last) X-Forwarded-For entry,
+        // not the client-controlled first one. Plus recordLoginFailure now
+        // also maintains an email-only aggregate bucket a forged header
+        // cannot evade.
+        const ip = getClientIp(request?.headers);
 
         const rateLimit = await checkLoginRateLimit(email, ip);
         if (!rateLimit.allowed) {
@@ -225,13 +232,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (token.sub) {
         const dbUser = await db.user.findUnique({
           where: { id: token.sub },
-          select: { disabled: true, name: true, address: true, phoneE164: true, phoneVerifiedAt: true },
+          select: {
+            disabled: true, name: true, address: true, phoneE164: true,
+            phoneVerifiedAt: true, passwordChangedAt: true,
+            // Loop B2b: re-read role/extension live, same as `disabled`.
+            // Without this a demotion (SUPERVISOR -> AGENT) or an extension
+            // reassignment did not take effect until the JWT expired (up to
+            // 8h) — the demoted user kept minting SIP secrets and creating
+            // accounts, and the old extension holder kept passing
+            // canAccessRecording()/canAccessMailbox() for the new owner.
+            role: true,
+            extension: { select: { number: true } },
+          },
         });
         // A deleted user (dbUser === null) is treated the same as
         // disabled — there is no user-delete route today (only disable),
         // but this fails safe if one is ever added without updating this
         // check.
-        token.disabled = dbUser?.disabled ?? true;
+        //
+        // Loop C3 — a password reset (self-service or admin-triggered)
+        // must kill every OTHER outstanding session on its next request,
+        // not just future logins (the whole point of a reset after a
+        // suspected compromise). Reuses the exact same `disabled`
+        // enforcement path every guard already checks (auth-guard.ts,
+        // middleware.ts) rather than adding a second live-check
+        // everywhere: a token issued BEFORE the most recent
+        // passwordChangedAt is treated as disabled, same as a real
+        // account revocation. next-auth stamps `iat` (unix seconds) on
+        // every JWT automatically.
+        const passwordChangedAfterToken =
+          dbUser?.passwordChangedAt != null && typeof token.iat === "number" && dbUser.passwordChangedAt.getTime() > token.iat * 1000;
+        token.disabled = (dbUser?.disabled ?? true) || passwordChangedAfterToken;
+        if (dbUser) {
+          token.role = dbUser.role;
+          token.extension = dbUser.extension?.number ?? null;
+        }
         // Recomputed live on every request, same as `disabled` — an
         // agent who completes registration mid-session (or has it
         // overridden by an admin) sees the gate lift on their very next

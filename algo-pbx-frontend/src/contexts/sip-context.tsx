@@ -120,6 +120,16 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   // available by the time any effect that reads audioElementRef.current
   // runs.
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  // Separate element from audioElementRef (remote call audio) — before
+  // this, an inbound call played NO sound at all anywhere in this app (no
+  // `new Audio`/ringtone/Notification existed in the whole codebase), so
+  // an agent not looking at the screen simply never knew a call arrived.
+  // Kept as its own <audio loop> element rather than reusing
+  // audioElementRef because the two need independent play/pause
+  // lifecycles: the ringtone plays BEFORE a session exists to attach as
+  // srcObject, and must stop the instant the call is answered/declined/
+  // cancelled, none of which should touch the separate remote-audio path.
+  const ringtoneElementRef = useRef<HTMLAudioElement | null>(null);
 
   const [credentials, setCredentials] = useState<SipCredentials | null>(null);
   const [turnCredentials, setTurnCredentials] = useState<TurnCredentials | null>(null);
@@ -243,7 +253,20 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       sampleRate: 48000,
     };
 
-    const manager = new Web.SessionManager(sipWsServer, {
+    if (!sipWsServer || !/^wss?:\/\//i.test(sipWsServer)) {
+      // Defensive: a bad/empty WS URL used to throw synchronously inside
+      // the sip.js Transport constructor and take the whole app down via
+      // the React error boundary (white screen on every page, including
+      // /login). Fail soft — the agent sees a disconnected softphone, not
+      // a dead app.
+      console.error("SIP: refusing to start — invalid WS server URL", sipWsServer);
+      setIsConnected(false);
+      return;
+    }
+
+    let manager: Web.SessionManager;
+    try {
+      manager = new Web.SessionManager(sipWsServer, {
       aor: `sip:${extension}@${sipDomain}`,
       media: {
         // SessionManagerMediaConstraints.audio/video are plain booleans —
@@ -274,6 +297,15 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         authorizationUsername: extension,
         authorizationPassword: secret,
         transportOptions: {
+          // CRITICAL: `server` MUST be repeated here. sip.js's
+          // SessionManager only falls back to its `server` constructor
+          // arg when `userAgentOptions.transportOptions` is UNSET — as
+          // soon as this object exists (for keepAliveInterval below),
+          // the constructor arg is ignored and the transport gets "",
+          // throwing "Invalid WebSocket Server URL" and crashing the
+          // whole app via the React error boundary. This is why the
+          // agent softphone never connected.
+          server: sipWsServer,
           // WebSocket keepalive — without this, some intermediate
           // proxies/NAT devices silently drop an idle WSS connection long
           // before either end notices, which is functionally identical to
@@ -404,7 +436,12 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
           }
         },
       },
-    });
+      });
+    } catch (err) {
+      console.error("SIP: SessionManager construction failed", err);
+      setIsConnected(false);
+      return;
+    }
 
     sessionManagerRef.current = manager;
 
@@ -447,6 +484,45 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     // SessionManager, which sip.js does not support post-construction.
     // patchServerStatus is a stable useCallback([]).
   }, [credentials, turnCredentials, runtimeConfig, patchServerStatus]);
+
+  // Inbound-call ringtone + browser notification. Fires only on the
+  // "ringing" transition (not on every callState change) so it plays
+  // exactly once per incoming call and stops the instant the state moves
+  // on — answered, declined, or the caller hung up before pickup.
+  //
+  // Autoplay note: unlike onCallAnswered's remote-audio play() (which has
+  // a user gesture on record for an outbound call, or rides the incoming
+  // INVITE's own event for inbound), a ringtone starting from a delegate
+  // callback with no preceding click can still be blocked by the
+  // browser's autoplay policy on some configurations — swallowed here
+  // deliberately (silence-instead-of-a-console-error is the safe
+  // fallback) since the browser Notification below is the redundant path
+  // for exactly that case.
+  useEffect(() => {
+    const el = ringtoneElementRef.current;
+    if (!el) return;
+    if (callState === "ringing") {
+      el.currentTime = 0;
+      el.play().catch(() => undefined);
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+        try {
+          const n = new Notification("Incoming call", { body: incomingCallerId ?? "Unknown caller", tag: "algopbx-incoming-call" });
+          n.onclick = () => window.focus();
+        } catch {
+          // Notification construction can throw in some embedded/insecure
+          // contexts — never let a notification failure affect the call.
+        }
+      }
+    } else {
+      el.pause();
+      el.currentTime = 0;
+    }
+    // incomingCallerId intentionally omitted: it's set in the same
+    // onCallReceived delegate that transitions callState to "ringing", so
+    // reading it here (rather than depending on it) avoids re-firing this
+    // effect — and re-notifying — on an unrelated caller-id update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callState]);
 
   // WebRTC quality telemetry (src/lib/webrtc-stats.ts) — previously there
   // was no visibility anywhere into jitter/loss/RTT for a live call, so an
@@ -732,6 +808,12 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     >
       {children}
       <audio id="remote-audio" ref={audioElementRef} autoPlay playsInline />
+      {/* ringtone.wav supplied by the operator (2026-08-27) — see
+          public/sounds/README.md for provenance. Gitignored, not in git
+          history; a missing/404 src fails play() silently (caught above)
+          rather than crashing, which is what happened before this file
+          existed. */}
+      <audio id="ringtone" ref={ringtoneElementRef} loop preload="auto" src="/sounds/ringtone.wav" />
     </SIPContext.Provider>
   );
 };

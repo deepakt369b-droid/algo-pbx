@@ -10,6 +10,8 @@ import {
   TRUSTED_DEVICE_COOKIE,
   TRUSTED_DEVICE_MAX_AGE_SECONDS,
 } from "@/lib/two-factor";
+import { withApiErrorHandler } from "@/lib/api-handler";
+import { getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +25,7 @@ export const dynamic = "force-dynamic";
 // below for the attempt-budget reasoning.
 const Schema = z.object({ email: z.string().email(), code: z.string().regex(/^\d{6}$/) });
 
-export async function POST(request: NextRequest) {
+export const POST = withApiErrorHandler(async (request: NextRequest) => {
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
@@ -38,8 +40,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: result.error ?? "Incorrect code." }, { status: 400 });
   }
 
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const ip = forwardedFor?.split(",")[0]?.trim() || "unknown";
+  const ip = getClientIp(request.headers);
   const userAgent = request.headers.get("user-agent") ?? "unknown device";
   const deviceToken = await rememberDevice(user.id, userAgent.slice(0, 200), ip);
 
@@ -59,4 +60,4 @@ export async function POST(request: NextRequest) {
     path: "/",
   });
   return response;
-}
+});

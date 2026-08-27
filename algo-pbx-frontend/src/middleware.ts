@@ -20,6 +20,24 @@ import authConfig from "@/auth.config";
 // and bcryptjs (see auth.config.ts's comment / edge-compatibility.mdx).
 const { auth } = NextAuth(authConfig);
 
+// Builds an absolute URL from the REAL incoming request instead of
+// `req.nextUrl.origin` — see this file's header comment above for why:
+// Next.js's compiled Edge runtime can "seal" a request's own `nextUrl` to
+// a hardcoded `localhost:3000` for certain requests (confirmed via direct
+// curl against POST /api/auth/callback/credentials, see handoff.md
+// 2026-08-26), and this bug hits `/api/auth/[...nextauth]/route.ts`'s own
+// redirect Location header the same way. Since that class of bug lives in
+// `nextUrl` specifically, reading the actual `x-forwarded-host`/`host`
+// header (set by the reverse proxy — Caddy in production, or the browser
+// directly in dev) sidesteps it entirely rather than hoping a `dynamic`/
+// `trustHost` fix upstream also happens to cover middleware's own copy of
+// the same object.
+function absoluteUrl(path: string, req: Parameters<Parameters<typeof auth>[0]>[0]): URL {
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? req.nextUrl.host;
+  const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
+  return new URL(path, `${proto}://${host}`);
+}
+
 export default auth((req) => {
   const { pathname } = req.nextUrl;
   const session = req.auth;
@@ -32,14 +50,27 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
+  // TEMP DIAGNOSTIC — remove once the AGENT-login bounce (handoff.md
+  // 2026-08-26) is confirmed fixed on a real deploy. If req.nextUrl.origin
+  // ever disagrees with the real Host header below, that's independent
+  // confirmation the sealed-NextURL bug reaches middleware too.
   if (!session?.user) {
-    const loginUrl = new URL("/login", req.nextUrl.origin);
+    console.log("[middleware:auth-diag]", {
+      pathname,
+      nextUrlOrigin: req.nextUrl.origin,
+      hostHeader: req.headers.get("host"),
+      xForwardedHost: req.headers.get("x-forwarded-host"),
+    });
+  }
+
+  if (!session?.user) {
+    const loginUrl = absoluteUrl("/login", req);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
   if (isAdminRoute && session.user.role !== "ADMIN" && session.user.role !== "SUPERVISOR") {
-    return NextResponse.redirect(new URL("/agent", req.nextUrl.origin));
+    return NextResponse.redirect(absoluteUrl("/agent", req));
   }
 
   // Agent registration hard gate. ONLY AGENT is gated — the bootstrap
@@ -58,13 +89,13 @@ export default auth((req) => {
   // softphone cannot register and the agent cannot take calls regardless
   // of what page loads.
   if (isAgentRoute && session.user.role === "AGENT" && !session.user.profileComplete) {
-    return NextResponse.redirect(new URL("/register", req.nextUrl.origin));
+    return NextResponse.redirect(absoluteUrl("/register", req));
   }
 
   // Once complete, /register itself redirects away — no reason for a
   // fully registered agent to land back on the form.
   if (isRegisterRoute && (session.user.role !== "AGENT" || session.user.profileComplete)) {
-    return NextResponse.redirect(new URL("/agent", req.nextUrl.origin));
+    return NextResponse.redirect(absoluteUrl("/agent", req));
   }
 
   return NextResponse.next();

@@ -7,6 +7,7 @@ import { statsOverview } from "@/lib/messaging/openwa-client";
 import { probeDinstarCredentials } from "@/lib/dinstar-discovery";
 import { verifyFirebasePhoneToken } from "@/lib/firebase/admin";
 import { sendInviteEmail } from "@/lib/mail/resend";
+import { verifyCloudflareToken, findZoneForDomain } from "@/lib/domain/cloudflare";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 // is evidence the credential authenticates, not a guarantee message
 // delivery will succeed for every recipient.
 const Schema = z.object({
-  section: z.enum(["email", "whatsapp_openwa", "whatsapp_meta", "sms_dinstar", "firebase"]),
+  section: z.enum(["email", "whatsapp_openwa", "whatsapp_meta", "sms_dinstar", "firebase", "domain_tls"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -93,6 +94,21 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ ok: true, message: "Firebase service account is valid and Admin SDK initialized." });
         }
         throw new Error("Unexpected success verifying a deliberately invalid token.");
+      }
+
+      case "domain_tls": {
+        const token = await requireSetting("CLOUDFLARE_API_TOKEN");
+        const domain = await requireSetting("VM_PUBLIC_DOMAIN");
+        // verifyCloudflareToken confirms the token is valid at all;
+        // findZoneForDomain additionally confirms it can actually see the
+        // zone Caddy's DNS-01 challenge will need to write a TXT record
+        // into — a token that's valid but scoped to the wrong zone would
+        // otherwise only fail later, mid-renewal, with much less context
+        // than this test can give upfront. Shared with /admin/domain's
+        // status checks so there is one implementation, not two.
+        await verifyCloudflareToken(token);
+        const zone = await findZoneForDomain(token, domain);
+        return NextResponse.json({ ok: true, message: `Cloudflare token valid, zone "${zone.name}" covers ${domain}.` });
       }
     }
   } catch (err) {

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Mic, MicOff, Pause, Play, PhoneOff, PhoneForwarded, PhoneIncoming, Users, VolumeX } from "lucide-react";
 import { useSIP } from "@/contexts/sip-context";
+import { EscalationPicker } from "@/components/escalation-picker";
 
 export function CallControls() {
   const {
@@ -224,6 +225,8 @@ export function CallControls() {
           </div>
         </div>
       )}
+
+      {consultState === "idle" && !showTransfer && <EscalationPicker />}
     </div>
   );
 }

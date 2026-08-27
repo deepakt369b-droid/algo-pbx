@@ -1,3 +1,4 @@
+import { statfs } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
@@ -6,20 +7,10 @@ import { encryptSetting, decryptSetting, SettingsEncryptionError } from "@/lib/s
 import { getAmiClient } from "@/lib/ami-client";
 import { statsOverview } from "@/lib/messaging/openwa-client";
 import { basicAuthHeader } from "@/lib/messaging/http";
+import { classifyFetchError } from "@/lib/dinstar-discovery";
+import { type HealthCheck, overallStatus } from "@/lib/health-check";
 
 export const dynamic = "force-dynamic";
-
-type CheckStatus = "ok" | "warn" | "fail" | "unknown";
-
-interface HealthCheck {
-  id: string;
-  label: string;
-  status: CheckStatus;
-  detail: string;
-  hint?: string;
-  docsHref?: string;
-  checkedAt: string;
-}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -193,6 +184,92 @@ export async function GET() {
       }
     })(),
 
+    // dinstar_route — a lower-level preflight than the "dinstar" check
+    // above: raw, UNAUTHENTICATED reachability to the configured LAN IP
+    // (or the office's default gateway subnet if nothing's configured
+    // yet), so an operator running the setup wizard's scan can tell
+    // "the network path itself is broken" apart from "credentials are
+    // wrong" or "nothing's there" — the exact ambiguity that made the
+    // Dinstar scan undiagnosable before dinstar-discovery.ts's error
+    // classification existed. Deliberately does not require auth to
+    // succeed; a 401/timeout/refused all count as "reached the host"
+    // differently and are reported distinctly.
+    (async (): Promise<HealthCheck> => {
+      const ip = await getSetting("DINSTAR_LAN_IP");
+      if (!ip) {
+        return {
+          id: "dinstar_route",
+          label: "Dinstar Network Route",
+          status: "unknown",
+          detail: "No gateway IP configured yet — nothing to test a route to.",
+          hint: "Run the Dinstar setup wizard's scan first, or set the IP manually in Settings.",
+          docsHref: "/admin/dinstar",
+          checkedAt: now(),
+        };
+      }
+      const origin = /^https?:\/\//.test(ip) ? new URL(ip).origin : `http://${ip}`;
+      try {
+        await withTimeout(fetch(`${origin}/goip_get_status.html`, { signal: AbortSignal.timeout(5000) }), 5500);
+        return { id: "dinstar_route", label: "Dinstar Network Route", status: "ok", detail: `Host at ${ip} responded.`, checkedAt: now() };
+      } catch (err) {
+        const reason = classifyFetchError(err);
+        const hints: Record<string, string> = {
+          timeout: "The host didn't respond in time — check the Tailscale subnet route is approved AND actually up (tailscale status), not just configured.",
+          refused: "The host actively refused the connection — it's reachable, but nothing is listening on port 80 there. Double-check the IP.",
+          "no-route": "This host has no network path to that address at all — the Tailscale route is very likely down or unapproved.",
+          unknown: "Could not reach the host for an unclassified reason.",
+        };
+        return {
+          id: "dinstar_route",
+          label: "Dinstar Network Route",
+          status: "fail",
+          detail: `Could not reach ${ip} (${reason}).`,
+          hint: hints[reason],
+          docsHref: "/admin/dinstar",
+          checkedAt: now(),
+        };
+      }
+    })(),
+
+    // disk_space (Loop D2) — recordings/voicemail have no cap on how much
+    // they can grow (the prune job bounds long-term growth, but doesn't
+    // help if the disk is ALREADY nearly full today) and a full disk takes
+    // down the whole stack, Postgres included, since everything shares
+    // one volume-backed filesystem. Warns before it's fatal rather than
+    // the operator finding out when Postgres itself starts refusing
+    // writes.
+    (async (): Promise<HealthCheck> => {
+      try {
+        const stats = await statfs(process.env.RECORDINGS_DIR || "/recordings");
+        const freeBytes = stats.bavail * stats.bsize;
+        const totalBytes = stats.blocks * stats.bsize;
+        const freePercent = totalBytes > 0 ? (freeBytes / totalBytes) * 100 : 100;
+        const freeGb = (freeBytes / 1024 ** 3).toFixed(1);
+        if (freePercent < 10) {
+          return {
+            id: "disk_space",
+            label: "Disk Space",
+            status: "fail",
+            detail: `Only ${freeGb} GB free (${freePercent.toFixed(1)}%).`,
+            hint: "Run the retention prune job now (POST /api/admin/maintenance/prune) or free space manually — a full disk takes down the entire stack, including Postgres.",
+            checkedAt: now(),
+          };
+        }
+        if (freePercent < 25) {
+          return { id: "disk_space", label: "Disk Space", status: "warn", detail: `${freeGb} GB free (${freePercent.toFixed(1)}%).`, checkedAt: now() };
+        }
+        return { id: "disk_space", label: "Disk Space", status: "ok", detail: `${freeGb} GB free (${freePercent.toFixed(1)}%).`, checkedAt: now() };
+      } catch (err) {
+        return {
+          id: "disk_space",
+          label: "Disk Space",
+          status: "unknown",
+          detail: err instanceof Error ? err.message : "Could not check.",
+          checkedAt: now(),
+        };
+      }
+    })(),
+
     // queue_members
     (async (): Promise<HealthCheck> => {
       const provisioned = await db.extension.findMany({ where: { sipSecret: { not: null } }, select: { number: true } });
@@ -295,13 +372,5 @@ export async function GET() {
     else checks.push({ id: "unknown", label: "Unknown check", status: "unknown", detail: String(r.reason), checkedAt: now() });
   }
 
-  const overall: CheckStatus = checks.some((c) => c.status === "fail")
-    ? "fail"
-    : checks.some((c) => c.status === "warn")
-      ? "warn"
-      : checks.some((c) => c.status === "unknown")
-        ? "unknown"
-        : "ok";
-
-  return NextResponse.json({ checks, overall });
+  return NextResponse.json({ checks, overall: overallStatus(checks) });
 }

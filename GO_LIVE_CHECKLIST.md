@@ -113,3 +113,19 @@ Nothing below Gate 1 matters until one call works end to end.
 - [ ] Admin runbook handed over: `/setup` locked (first admin exists),
       invite flow tested, disabled-user toggle kills sessions within one
       request, `/admin/system` understood by whoever is on call.
+- [ ] **Emergency-call policy communicated to every agent**: this PBX
+      cannot correctly route a real emergency call — agents dial from
+      India, the only trunk is a UAE GSM SIM, so a PBX-dialed "emergency"
+      number reaches UAE responders regardless of the agent's real
+      location. `pbx_configs/extensions.conf` hard-blocks the obvious
+      numbers (999/998/997 UAE, 112/911, 100/101/102/108 India) as a
+      misdial guard, not a substitute for this — agents must be told
+      explicitly to use their own mobile for any real emergency.
+- [ ] **Four-GSM-port capacity ceiling understood**: this system's hard
+      concurrent-call limit is the Dinstar gateway's four SIM ports, no
+      matter how the queue/VM is sized — communicated to whoever staffs
+      the queue and reflected in `queues.conf`'s `maxlen` once set for
+      real (Loop D1, not yet done — see this session's plan file).
+- [ ] Per-agent dial permissions reviewed: every extension's tier
+      (`/admin/extensions`) matches what that agent actually needs —
+      default is LOCAL (UAE only); widen deliberately, not by habit.

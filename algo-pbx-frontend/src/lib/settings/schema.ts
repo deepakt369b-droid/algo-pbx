@@ -18,7 +18,9 @@ export type SettingSection =
   | "sms_dinstar"
   | "otp"
   | "firebase"
-  | "crm";
+  | "crm"
+  | "domain_tls"
+  | "retention";
 
 export interface SettingDef {
   key: string;
@@ -228,6 +230,49 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
         return false;
       }
     }, "Must be valid JSON"),
+  },
+
+  // --- Domain & TLS (Loop C4) ---
+  // Previously deliberately excluded from this registry (see LLM.md §10:
+  // "duplicated into pbx_configs/manager.conf and container commands;
+  // making them safely editable needs generating those files from the DB
+  // too, out of scope here") — that generation now exists
+  // (pbx_configs/generated/caddy.env, written by
+  // POST /api/admin/settings/domain/apply, consumed by the `caddy`
+  // service's env_file and picked up via a `cert-sync`-triggered
+  // container recreate), so this gap is closed, not silently reopened.
+  {
+    key: "VM_PUBLIC_DOMAIN",
+    section: "domain_tls",
+    label: "Public Domain",
+    help: "The domain agents' browsers and this VM's Caddy/Asterisk/Coturn all present themselves as. Changing this alone does nothing to the running containers — use the \"Connect domain\" action below, not just Save.",
+    secret: false,
+    envFallback: "VM_PUBLIC_DOMAIN",
+    validator: z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i, "Must look like a domain name, e.g. pbx.example.com"),
+  },
+  {
+    key: "CLOUDFLARE_API_TOKEN",
+    section: "domain_tls",
+    label: "Cloudflare API Token",
+    help: "A scoped token with BOTH Zone:DNS:Edit AND Zone:Zone:Read on the zone covering the domain above (the \"Edit zone DNS\" template scoped to that one zone gives both). Create it at Cloudflare → My Profile → API Tokens. Used for the Let's Encrypt DNS-01 challenge and the A-record write, never sent anywhere else.",
+    secret: true,
+    // Loop B4/E2: Cloudflare API tokens are 40 URL-safe base64 chars. This
+    // rejects the whitespace/newline that made a valid token 401, and
+    // blocks the env-file line-injection into caddy.env (the token is
+    // written raw into pbx_configs/generated/caddy.env, consumed by the
+    // TLS-terminating container).
+    validator: z.string().regex(/^[A-Za-z0-9_-]{20,120}$/, "Looks wrong — a Cloudflare API token is ~40 letters/digits/-/_ with no spaces. Don't paste the Global API Key or the token's name/ID."),
+  },
+
+  // --- Retention (Loop D2) ---
+  {
+    key: "RECORDING_RETENTION_DAYS",
+    section: "retention",
+    label: "Recording & Voicemail Retention (days)",
+    help: "Call recordings and voicemail older than this are permanently deleted by the nightly prune job (POST /api/admin/maintenance/prune, cron-driven — see DEPLOYMENT.md). Bounds disk growth and is a data-minimization control; 0 disables pruning entirely.",
+    secret: false,
+    default: "90",
+    validator: z.string().regex(/^\d+$/, "Must be a whole number of days"),
   },
 
   // --- CRM ---

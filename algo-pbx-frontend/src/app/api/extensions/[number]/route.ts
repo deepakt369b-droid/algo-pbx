@@ -1,7 +1,11 @@
+import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireSession, requireStaffSession } from "@/lib/auth-guard";
+import { requireAdminSession, requireSession, requireStaffSession } from "@/lib/auth-guard";
+import { regeneratePjsipConfigAndReload } from "@/lib/pjsip-provision";
+import { getAmiClient } from "@/lib/ami-client";
+import { removeQueueMember } from "@/lib/queue-membership";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +16,13 @@ const PatchSchema = z.union([
   // no way to link the two after creation — only the nested create inside
   // POST /api/admin/users ever set Extension.userId.
   z.object({ userId: z.string().min(1).nullable() }),
+  // Staff-only (Loop C2) — which outbound dial-permission tier this
+  // extension's generated PJSIP context= points at.
+  z.object({ dialPermission: z.enum(["LOCAL", "NATIONAL", "INTERNATIONAL"]) }),
+  // Staff-only (Loop C3) — offboarding gap: before this, revoking a SIP
+  // secret required a DB-admin action, no in-product path existed. Same
+  // one-time-disclosure treatment as creation (POST /api/extensions).
+  z.object({ rotateSecret: z.literal(true) }),
 ]);
 
 // PATCH /api/extensions/1001 { status } — agent status persistence, OR
@@ -36,8 +47,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
   }
 
   if ("userId" in parsed.data) {
-    const staffGuard = await requireStaffSession();
-    if ("response" in staffGuard) return staffGuard.response;
+    // Loop B3: ADMIN, not just staff. Re-linking an extension to yourself
+    // then reading GET /api/me/sip-credentials is a silent way for a
+    // SUPERVISOR to harvest any other user's plaintext SIP secret + voicemail
+    // PIN (including an ADMIN's). Now ADMIN-only and audit-logged.
+    const adminGuard = await requireAdminSession();
+    if ("response" in adminGuard) return adminGuard.response;
 
     if (parsed.data.userId) {
       const user = await db.user.findUnique({ where: { id: parsed.data.userId } });
@@ -52,7 +67,66 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
       where: { number: params.number },
       data: { userId: parsed.data.userId },
     });
+    await db.auditLog.create({
+      data: {
+        action: parsed.data.userId ? "extension.link" : "extension.unlink",
+        actorId: adminGuard.session.user.id,
+        targetId: extension.id,
+        metadata: { number: extension.number, userId: parsed.data.userId, previousUserId: extension.userId },
+      },
+    });
     return NextResponse.json({ extension: updated });
+  }
+
+  if ("dialPermission" in parsed.data) {
+    const staffGuard = await requireStaffSession();
+    if ("response" in staffGuard) return staffGuard.response;
+
+    const updated = await db.extension.update({
+      where: { number: params.number },
+      data: { dialPermission: parsed.data.dialPermission },
+    });
+
+    try {
+      await regeneratePjsipConfigAndReload();
+    } catch (err) {
+      // Same pattern as POST /api/extensions: the DB row is updated but
+      // Asterisk hasn't been told yet — surface this rather than claim
+      // the new permission is already in effect.
+      return NextResponse.json({
+        extension: updated,
+        warning: `Saved, but reloading Asterisk failed: ${err instanceof Error ? err.message : "unknown error"}. The old dial permission stays in effect until this is retried.`,
+      });
+    }
+
+    return NextResponse.json({ extension: updated });
+  }
+
+  if ("rotateSecret" in parsed.data) {
+    // Loop B3: ADMIN-only + audited, same reasoning as the userId branch —
+    // the noisier variant of the same secret-harvest (the new secret is
+    // returned in the response body).
+    const adminGuard = await requireAdminSession();
+    if ("response" in adminGuard) return adminGuard.response;
+
+    const sipSecret = randomBytes(24).toString("hex");
+    const updated = await db.extension.update({ where: { number: params.number }, data: { sipSecret } });
+    await db.auditLog.create({
+      data: { action: "extension.rotate_secret", actorId: adminGuard.session.user.id, targetId: extension.id, metadata: { number: extension.number } },
+    });
+
+    try {
+      await regeneratePjsipConfigAndReload();
+    } catch (err) {
+      return NextResponse.json({
+        extension: { ...updated, sipSecret: undefined },
+        sipSecret,
+        warning: `Secret rotated in the database, but reloading Asterisk failed: ${err instanceof Error ? err.message : "unknown error"}. The OLD secret stays in effect on the running Asterisk until this is retried — the softphone will need it again to reconnect.`,
+      });
+    }
+
+    // One-time disclosure — same as creation, never returned by any GET.
+    return NextResponse.json({ extension: { ...updated, sipSecret: undefined }, sipSecret });
   }
 
   const isOwnExtension = session.user.extension === params.number;
@@ -67,4 +141,38 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
   });
 
   return NextResponse.json({ extension: updated });
+}
+
+// DELETE /api/extensions/1001 — real hard delete (Loop C3 offboarding
+// gap: before this, revoking a departed agent's access depended entirely
+// on `User.disabled`, with no way to actually remove the extension/SIP
+// credentials from the system at all). ADMIN-only, not SUPERVISOR — same
+// tier as the recording hard-delete route (requireAdminSession), since
+// this is the one truly destructive action in extension management.
+export async function DELETE(_req: NextRequest, { params }: { params: { number: string } }) {
+  const guard = await requireAdminSession();
+  if ("response" in guard) return guard.response;
+
+  const extension = await db.extension.findUnique({ where: { number: params.number } });
+  if (!extension) return NextResponse.json({ error: "Extension not found" }, { status: 404 });
+
+  // Best-effort — an AMI hiccup here must not block the actual deletion;
+  // a stale queue-membership entry for a number that no longer exists is
+  // a cosmetic cleanup issue, not a security one.
+  await removeQueueMember(getAmiClient(), extension.number).catch(() => undefined);
+
+  await db.extension.delete({ where: { number: params.number } });
+
+  let reloadWarning: string | undefined;
+  try {
+    await regeneratePjsipConfigAndReload();
+  } catch (err) {
+    reloadWarning = `Extension deleted from the database, but reloading Asterisk failed: ${err instanceof Error ? err.message : "unknown error"}. The endpoint may still be able to register on the running Asterisk until this is retried.`;
+  }
+
+  await db.auditLog.create({
+    data: { action: "extension.delete", actorId: guard.session.user.id, targetId: extension.id, metadata: { number: extension.number } },
+  });
+
+  return NextResponse.json({ ok: true, warning: reloadWarning });
 }

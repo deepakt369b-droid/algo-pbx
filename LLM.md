@@ -101,7 +101,7 @@ Mirrors the 4 phases in the master prompt (`ALGO_PBX_MASTER_DOC.md` §1). Check 
 - [x] **Phase 1 — Docker infrastructure (scaffolded, not yet run)**
   - [x] `docker-compose.yml` created at repo root (env-var driven, not hardcoded secrets)
   - [x] `pbx_configs/pjsip.conf`, `rtp.conf`, `extensions.conf`, `manager.conf` created
-  - [ ] Postgres, Coturn, Asterisk containers start cleanly (`docker compose up postgres coturn asterisk web`) — **not yet verified, no Docker on this dev machine; must be tested on the Ubuntu cloud VM**
+  - [x] Postgres, Coturn, Asterisk containers start cleanly — **verified 2026-08-27 on the live VM: all 8 services (postgres, coturn, asterisk, web, cdr-listener, cert-sync, openwa, caddy) report healthy via `docker compose ps`. See §15.**
   - [ ] Secrets/placeholders (`YOUR_VM_PUBLIC_DOMAIN`, `REPLACE_ME_*` in `pbx_configs/*.conf`) replaced with real values before deployment — **never commit real secrets**. `.env.example` added; copy to `.env` (gitignored) and fill in.
   - [x] `web` service build context `algo-pbx-frontend/` now exists
 - [x] **Phase 2 — Next.js WebRTC softphone (scaffolded + builds clean, not run against live Asterisk)**
@@ -919,6 +919,726 @@ and fresher PDF screenshots (the embedded ones predate the MUI shell).
   (`/admin/whatsapp` present), both PDFs regenerate via headless Edge
   (pdf2 grew to ~382 KB with the new §3).
 
+## 14. Production-readiness re-audit + manager escalation + domain automation (2026-08-27)
+
+Prompted by a user admin-panel walkthrough reporting Dinstar scanning
+broken, voice recording "missing," no agent sign-out, and no manager-
+escalation concept — plus an explicit request to connect a real domain
+(GoDaddy → Cloudflare) from the admin panel. Three parallel Explore agents
+plus a Plan agent traced every report to a concrete root cause before any
+code was written; a re-audit pass (requested by the user specifically to
+find gaps in the first plan) then surfaced a second, larger class of
+day-one production risks — no log rotation, silent MOH, unbounded queues,
+toll-fraud-open dialplan, no password reset, zero call/voicemail/WhatsApp
+notifications anywhere in the agent UI — none of which the first pass had
+caught. Full findings and the loop-by-loop plan live in this session's
+plan file; this is the terse changelog. Everything below is `tsc`/`vitest`/
+`eslint`/`next build` clean; **nothing has been run against live
+Asterisk/Docker/a VM in this session** (none available) — treat every item
+below the same as every other AMI/Docker-runtime claim already flagged
+throughout this file: compiles and typechecks, not confirmed working.
+
+**Security housekeeping:** `secrets_temp.txt` (untracked, held real fresh
+secrets from the prior VM-repair session) deleted; `.gitignore` gained
+`secrets*.txt`. Treat every value that file held as burned once a new
+`.env` is pushed.
+
+**AGENT-login bounce** (`handoff.md`'s standing blocker, 2026-08-26):
+`src/middleware.ts` rewritten so every redirect it issues is built from
+the real `x-forwarded-host`/`host` request headers via a new
+`absoluteUrl()` helper, not `req.nextUrl.origin` — the same "sealed
+NextURL defaults to localhost:3000" failure class already fixed in the
+NextAuth route handler, now closed in middleware's own copy of the same
+object too. A temporary diagnostic `console.log` is included, explicitly
+flagged for removal once one real AGENT login is confirmed working on the
+VM.
+
+**Dinstar scan** (`src/lib/dinstar-discovery.ts`): `probeHost()` no longer
+collapses every failure into an undifferentiated `null` — `classifyFetchError()`
+distinguishes timeout/refused/no-route/unknown via `err.cause.code`;
+`discoverDinstarHosts()` now returns `{hosts, scannedCount, reasonCounts}`;
+per-host timeout raised to 3s (from 800ms) for CGNAT/Tailscale-range CIDRs,
+since a WireGuard hop (possibly via DERP relay) is slower than LAN. New
+`dinstar_route` check in `/admin/system`'s health route (credential-free
+preflight probe). `/admin/dinstar` renders the reason breakdown as
+actionable copy instead of a flat "no devices found." `DEPLOYMENT.md`
+gained a pre-scan Tailscale-route-approval checklist.
+
+**Voice recording:** confirmed NOT missing — `MixMonitor()`, the volume
+mounts, the byte-serving route, and the CDR table's `<audio>` player are
+all genuinely wired. The likely break is a silently-dead `cdr-listener`
+(zero healthcheck existed on it before this session) producing exactly
+the reported symptom. Fixed: the listener now touches a heartbeat file on
+connect and every steady-state poll tick; `Dockerfile`'s `cdr-listener`
+build stage gained a matching `HEALTHCHECK` reading it. Live diagnosis
+(does ingestion actually work against a real Asterisk `Cdr` event) is
+still open — needs the VM.
+
+**Agent workspace shell** (`src/app/agent/layout.tsx` + new
+`src/components/agent-shell/agent-shell.tsx`, mirroring
+`admin/layout.tsx`'s server-action sign-out pattern): sign-out button and
+a live SIP connection-status pill — `/agent` previously inherited zero
+page chrome from anywhere. Confirmed hold/blind/attended-transfer were
+already correctly implemented and wired; no changes needed there.
+
+**Agent notifications** (previously a complete absence — a repo-wide grep
+for `new Audio`/`ringtone`/`Notification(`/`document.title` returned zero
+hits before this session): `sip-context.tsx` gained a looping ringtone
+`<audio>` element wired to `callState === "ringing"` plus a browser
+`Notification` on the same transition (both fail silently if blocked/
+denied — never blocks the call). `agent-shell.tsx` requests notification
+permission once on mount and sets a tab-title badge. New, fully derived
+from existing data (no new call-log table): `GET/POST /api/me/missed-calls`
+(`User.missedCallsSeenAt`, new migration `20260827000000_add_missed_calls_seen_at`,
+same seen-marker pattern as `signInFeedSeenAt`) + `agent-missed-calls.tsx`
+with one-click callback. Voicemail/WhatsApp/missed-call aggregate badges
+render in the shell header, each independently polled off already-existing
+endpoints (`GET /api/voicemail`'s `messages.length` IS the unread count,
+since that route only ever lists `INBOX/`, not `Old/`). **Ringtone/MOH
+audio files are not shipped** — same licensing-needs-a-human reasoning as
+the pre-existing `moh/default/README.md`, now mirrored at
+`public/sounds/README.md`; downloading an actual audio asset from the web
+needs the user's explicit go-ahead per this session's action-permission
+rules, not something an agent silently fetches.
+
+**Manager escalation** (Loop C1 — new): admin-managed named list
+(`EscalationTarget`: name + extension/phoneE164 + active) an agent picks
+from a dropdown (`escalation-picker.tsx`, rendered in `call-controls.tsx`)
+to feed the EXISTING `blindTransfer()` — no new call-control primitive.
+Outcome detection is a parallel AMI observation (`AmiClient.waitForEvent()`,
+new — same listener pattern as `sendAndCollect()` minus the ActionID
+coupling, resolves `null` on timeout since "no answer" is itself a valid
+result) watching for the target extension's `DialEnd`/`DialStatus`
+(`src/lib/escalation.ts`'s `classifyDialEnd()`, 5/5 tests, same
+"probable not proven against live Asterisk" confidence tier as every
+other AMI field mapping in this repo). On busy/no-answer/failed: a
+WhatsApp ping via the existing OpenWA registry (fails soft — never blocks
+logging the attempt) plus a persistent `EscalationAttempt` row, visible at
+new `/admin/escalations` (target CRUD + attempt log). New migration
+`20260827000100_add_escalation`.
+
+**Domain connect automation** (Loop C4 — new, the highest-blast-radius
+item in this pass, land/test this one first on a non-production VM):
+`caddy` now builds from new `Dockerfile.caddy` (`xcaddy` + the
+`caddy-dns/cloudflare` plugin) instead of pulling `caddy:2-alpine`
+directly, and issues its own Let's Encrypt cert via DNS-01 — `Caddyfile`
+dropped `auto_https off` and the static `tls /certs/...` block for
+`tls { dns cloudflare {env.CLOUDFLARE_API_TOKEN} }`. Caddy's own ACME
+storage isn't the flat `fullchain.pem`/`privkey.pem` path Asterisk WSS/
+Coturn TLS read, so a new `cert-sync` service bridges the two: polls
+Caddy's issued cert, copies it into `pbx_configs/keys/` on change,
+restarts `asterisk`+`coturn`. **`cert-sync` is the only container in this
+entire stack granted the Docker socket** — a deliberate, explicitly-
+flagged tradeoff for "no manual restart step," not a free win (it can
+control any container on the host). It also recreates `caddy` (via
+`docker compose up -d --no-deps caddy` against the HOST's real project
+path, self-discovered through `docker inspect` on its own container —
+NOT the read-only `/workspace` bind-mount inside itself, which the Docker
+daemon on the host can't resolve — see `scripts/cert-sync.sh`'s header
+comment for the full explanation of this Docker-socket subtlety) when
+`/admin/settings`' new "Domain & TLS" section (`VM_PUBLIC_DOMAIN` +
+`CLOUDFLARE_API_TOKEN`, added to `SETTINGS_REGISTRY` — the one telephony
+setting deliberately let back into `AppSetting` since the "generate the
+dependent config too" work this needed now exists, closing the gap
+`prisma/schema.prisma`'s comment flagged) writes a new
+`pbx_configs/generated/caddy.env` via `POST /api/admin/settings/domain/apply`.
+New `scripts/render-caddy-env.sh` seeds that file from `.env`'s existing
+`VM_PUBLIC_DOMAIN` once, before first bring-up, so a fresh deploy still
+boots with zero admin-panel action required (`web`'s port 3000 stays
+independently reachable throughout, exactly as `/setup` already assumes).
+`domain_tls`'s "Test connection" validates the Cloudflare token via its
+verify endpoint + a zone lookup confirming it actually covers the
+configured domain. `DEPLOYMENT.md`'s TLS section rewritten around this
+flow; manual certbot kept fully documented as fallback, explicitly not
+deleted, until one full automated renewal cycle is observed live.
+
+**Per-agent dial permissions / toll-fraud guard** (Loop C2 — new): the
+outbound dialplan was a bare `_X.` — any number, no restriction, reachable
+by any compromised agent session (SIP secret lives in browser memory).
+New `Extension.dialPermission` (`LOCAL|NATIONAL|INTERNATIONAL`, default
+`LOCAL`, migration `20260827000200_add_dial_permission`) selects which of
+three chained `extensions.conf` contexts (`from-agent-local` →
+`-national` → `-international`, `include =>`-cascaded so a wider tier is
+a strict superset) a generated PJSIP endpoint's `context=` points at
+(`pjsip-config.ts`'s `renderPjsipConf()`, 3 new tests). A hard-blocked
+satellite/premium-rate prefix list AND an exact-match emergency-number
+block (999/998/997 UAE, 112/911, 100/101/102/108 India — CLAUDE.md's own
+India-agents/UAE-trunk mismatch means this PBX cannot correctly route a
+real emergency call at all, so misdials are blocked rather than silently
+reaching the wrong country's responders) are declared once in the base
+tier using MORE SPECIFIC patterns than any allow-rule, so Asterisk's
+best-match resolution makes them unbypassable regardless of which tier
+an extension has — not merely "checked first." **Confidence: MEDIUM** on
+the exact UAE/India prefix patterns (real conventions, not independently
+re-verified against a live trunk) — same honesty tier as `func_odbc.conf`'s
+already-flagged DNC normalization gap, and inherits that exact
+limitation (EXTEN is whatever was dialed as-is, not E.164-normalized).
+Also fixed in the same pass: `CALLERID(num)=AlgoCallCenter)` was setting
+a non-numeric string into the NUMERIC caller-id field (malformed SIP
+`From` toward the GSM trunk) — moved to `CALLERID(name)`, since the
+Dinstar gateway presents the inserted SIM's own real number regardless of
+what Asterisk sets; and the outbound `Dial()`'s trailing `T` flag (grants
+the EXTERNAL party transfer rights on the channel) was dropped. Admin UI:
+`/admin/extensions` gained a dial-permission dropdown on create and a
+live-editable one per existing row (`PATCH /api/extensions/[number]`,
+staff-only, regenerates+reloads PJSIP). `POST /api/crm/click-to-call` and
+`cdr-mapper.ts`'s `inferDirection()` both updated for the context rename
+(the latter via `startsWith("from-agent")`, deliberately covering both the
+tier-context and the new `from-agent-common` shared-handler names since
+which one Asterisk's `Cdr` event actually reports post-`Goto()` is itself
+unverified against a live capture).
+
+**Account lifecycle** (Loop C3 — new): before this, there was NO password
+reset path of any kind — an agent who forgot their password was
+permanently locked out. Both paths landed: self-service
+(`/forgot-password` → `POST /api/auth/forgot-password` →
+`POST /api/auth/reset-password`, reusing the existing `OtpChallenge`
+machinery via a new `PASSWORD_RESET` `OtpPurpose`, both routes
+enumeration-safe — same generic-response discipline `src/auth.ts`'s
+`authorize()` already applies, with a documented, accepted timing-oracle
+gap rather than either ignoring it or over-engineering a fix) and
+admin-triggered (`/admin/users`' new "Send reset" button →
+`PATCH /api/admin/users/[id] {sendReset:true}`, reusing the EXISTING
+`Invite`/`tokenHash` mechanism and its consumption page — a password
+reset link IS "set your password once via a single-use link," the same
+operation onboarding already performs, just triggered later; `db.invite.upsert`
+since `Invite.userId` is `@unique`). New `User.passwordChangedAt`
+(migration `20260827000300_add_password_reset`, also adds the
+`PASSWORD_RESET` enum value) is checked in `auth.ts`'s `jwt` callback
+against the JWT's own `iat` — a reset now kills every OTHER outstanding
+session on its very next request by reusing the exact same `disabled`
+enforcement path every guard already checks, not a second parallel
+mechanism. Also closed: `sipSecret` rotation (`PATCH /api/extensions/[number]
+{rotateSecret:true}`, staff-only, one-time disclosure like creation) and
+real extension hard-delete (`DELETE /api/extensions/[number]`,
+ADMIN-only like the recording hard-delete precedent, best-effort queue-membership
+cleanup + PJSIP reload) — previously an admin had no in-product way to
+actually revoke a departed agent's access beyond `User.disabled`. New
+`/admin/audit` + `GET /api/admin/audit` (staff-only, filter by
+action/actor) — `AuditLog` rows have been written since Phase D but
+nothing ever surfaced them; exactly the gap `LLM.md` §7 flagged.
+
+**Disk safety + queue capacity** (Loop D1/D2 — new): `pbx_configs/logger.conf`
+added (was entirely absent) — deliberately does NOT define a verbose file
+target, since adding one without logrotate (which doesn't exist inside
+this still-not-really-containerized Asterisk, see Phase A) would just
+recreate the exact unbounded-growth problem this loop exists to close;
+Docker's own already-rotated stdout capture is the durable log instead.
+Only a low-volume `security` events file target is defined. New
+`RECORDING_RETENTION_DAYS` setting (default 90, `0` disables) +
+`POST /api/admin/maintenance/prune` (same cron-or-admin-session bearer
+pattern as the SMS poller, new `PRUNE_SECRET`) prunes both expired
+`Recording` rows+files and voicemail `.txt`/`.wav` pairs across every
+mailbox — previously neither had ANY pruning, an unbounded-disk-growth
+risk and a PDPL data-minimization gap. Decision logic extracted as
+`src/lib/retention.ts`'s `isExpired()`, TDD'd (4/4 tests). **Real bug
+caught before it shipped, not after:** the prune route's cron path
+initially tried to write `AuditLog.actorId: "cron"` — that column is a
+real, enforced Postgres foreign key to `User`, not a free-text field, so
+that would have thrown on every single automated run. Fixed by
+attributing cron-triggered audit rows to the earliest-created ADMIN
+account instead (no schema change, no fake "system user" invented).
+`/admin/system` health gained a `disk_space` check (`fs.promises.statfs`,
+warns under 25% free, fails under 10%) — previously zero visibility into
+whether the disk backing recordings/voicemail (and, since everything
+shares one volume, Postgres) was close to full. `queues.conf`: `joinempty`
+flipped `yes→no` and `leaveempty` `no→yes` (both were explicitly flagged
+in-file at the time as "DEVELOPMENT-FRIENDLY — REVISIT FOR PRODUCTION"),
+`maxlen` `0→4` (matching the Dinstar gateway's real hard concurrency
+ceiling — four GSM ports, no matter how anything else is sized). New
+static mailbox `9000` in `voicemail.conf` ("Office Overflow", numeric so
+it stays compatible with `GET /api/voicemail`'s existing
+`SAFE_MAILBOX` validation) is where `extensions.conf`'s `[from-dinstar]`
+now routes a caller on ANY non-answered `Queue()` outcome
+(`${QUEUESTATUS}` empty = answered and completed normally; anything else
+= full/empty/kicked) — previously every one of those outcomes was a bare
+`Hangup()`, silence then a drop, with no voicemail, no announcement,
+nothing.
+
+**Business-hours routing — asked, deliberately deferred, not an
+oversight:** offered to implement `GotoIfTime` against either a proposed
+Mon–Sat 9am–9pm GST schedule or custom hours; the user chose to skip for
+now rather than have real hours guessed at — getting this wrong risks
+silently rejecting real revenue calls. `[from-dinstar]` stays open 24/7
+until real hours are specified.
+
+**Also done, smaller items:** Docker `logging:` (json-file, 10m/3-file cap)
+applied to all 8 services via a shared `x-logging` YAML anchor — previously
+none of them had any rotation at all; healthchecks added to `coturn`
+(`pidof turnserver` — no HTTP endpoint to probe) and `caddy` (`wget`
+--spider against the plain-HTTP vhost) — previously neither existed.
+
+**Not done in this pass** (hold-music AND ringtone audio files — both
+blocked on the user's explicit go-ahead to fetch a specific CC0 source,
+not a technical gap; business-hours routing — asked, deferred, see above;
+the DNC-blocked/permission-blocked dialplan prompts are still placeholder
+names, same audio-asset blocker; containerizing Asterisk for real; VM
+networking/capacity; backup cron scheduling and a restore drill —
+`scripts/backup.sh` already exists per an earlier session but has never
+actually been scheduled or run; image digest-pinning) — all need either
+a live VM (none available in this session) or a user decision already
+flagged; pick up in this session's plan file next.
+
 - 2026-08-25 — Rewrote Guide 1 (`docs/pdf1-template.html` / `1-Deploying-Algo-PBX-on-a-Linux-VM.pdf`) into a full VirtualBox-aware, non-technical install guide, prompted by a screenshot of the actual deployment environment: Oracle VirtualBox on Windows, an existing `ubuntuserver` VM already NAT-forwarding host ports 8000/80/443 (Coolify), and a second powered-off `algo_pbx` VM — the real target. New Chapter 2 is a first-class ports chapter (what a port is, the full matrix with a "what breaks if blocked" column, checking Windows-host vs Ubuntu-guest occupancy including `VBoxManage showvminfo ... | findstr Forwarding` for other-VM NAT rules, choosing a free port, what's movable vs not, symptom→cause→fix table); new Chapter 3 has the user create `algo_pbx` with **Bridged Adapter** (not NAT) with an explicit "why not NAT" box (20,000-port-wide RTP+relay ranges can't be per-rule forwarded, and it can't collide with `ubuntuserver`'s claimed ports); Chapters 4–12 restructured around that (static LAN IP reservation, Docker install, router port-forwarding as its own chapter, a post-`up -d` `ss -tulpn` verification step); new Appendix A is a port-check cheat sheet. Guide 2 (`docs/pdf2-template.html`) gained "Appendix B — Ports on the telephony side" (5060/udp Tailscale-only path, `ss -ulpn`/`pjsip show endpoints` verification, "silence = RTP range not signaling" diagnosis, never-expose list) and its checklist's old unlabeled Appendix was renamed "Appendix A" to make room. `DEPLOYMENT.md` §1 gained matching §1.1 "Running on VirtualBox" and §1.2 "Port conflicts" so the repo (source of truth per `CLAUDE.md`) doesn't fall out of sync with the PDFs. These two user decisions were confirmed via AskUserQuestion before writing: Bridged Adapter as the recommended/documented default (not NAT-with-forwarding), and that the VirtualBox VM is the real production deployment, not a rehearsal.
   - **Verified:** `python scripts/build-docs.py` — both HTML sources rewritten, zero `WARNING: no <img> block found` (proves the `{setup_img}`/`{settings_img}`/`{whatsapp_img}` placeholder blocks survived the rewrite intact); grepped the rendered `docs/pdf{1,2}-source.html` for leftover `{placeholder}` text — none found; confirmed the doubled-brace CSS/Docker-format-string escaping (`{{`/`}}` → literal `{`/`}` after `str.format()`) rendered correctly, e.g. `docker ps --format '{{.Names}} {{.Ports}}'`. `powershell -File scripts/render-pdfs.ps1` regenerated both PDFs via headless Edge (pdf1 261,655 bytes, pdf2 393,179 bytes). Docs-only change — no frontend code touched, so `npm run typecheck`/`test`/`build` were not re-run.
   - **Not verified:** the PDFs were not visually paged through by a human in this session (no PDF viewer used) — only structural/text checks (grep, byte counts, build-docs.py's own warning system) confirm correctness; a human pass to check page-break placement and table wrapping is still worthwhile before relying on this for a live install.
+
+## 15. Live-VM verification: full redeploy, real bugs found and fixed, Dinstar/domain diagnosis (2026-08-27, same-day follow-up to §14)
+
+Direct continuation of §14 — the user granted live SSH access and asked for a
+full redeploy of everything built that day. This section is the first time
+this repo's `docker-compose.yml` has ever been brought up in full on real
+infrastructure; several real bugs surfaced that no amount of `tsc`/`vitest`
+could have caught, matching this file's own repeated caveat about
+AMI/Docker-runtime claims being unconfirmed until run live.
+
+**Loop A1 (containerized Asterisk) — done, real config confirmed live:**
+new `Dockerfile.asterisk` builds Asterisk 20 from source
+(`ubuntu:24.04`, module set fixed via `pbx_configs/asterisk-menuselect.makeopts`)
+instead of the nonexistent `tiredofit/asterisk:20-latest` this repo's
+compose file referenced since Phase 1. Three build-time/runtime bugs found
+and fixed, in order: missing `pkg-config`/`app_osplookup`/`chan_alsa`
+build deps (minimal Ubuntu base vs. the full-ISO native install this was
+ported from); Asterisk's own shared libs (`libasteriskssl.so*` etc.) land
+in plain `/usr/lib`, not `/usr/lib/asterisk` — only the latter was being
+copied into the runtime image, so the binary failed to start with a
+missing-`.so` error; and a silent `exit 1` with zero log output, root-caused
+by testing with no config mounted at all (bypassing compose), which
+revealed `modules.conf` was missing entirely — this repo never had one
+because every prior deploy relied on `make samples` to generate it
+implicitly, and `Dockerfile.asterisk` deliberately skips that step. New
+`pbx_configs/modules.conf` (`autoload=yes`) fixes it. `pjsip show endpoints`
+now lists this repo's real generated extensions (`2001`, `dinstar-trunk`),
+not sample defaults — closes the "split-brain" state `handoff.md` flagged.
+`odbc show` confirms 1 active connection — the Phase C "ODBC support
+unverified" question is now answered: it works, `unixodbc-dev` was simply
+never installed before `./configure` ran on every prior native attempt.
+
+**`cdr-listener` unhealthy → root-caused, two real bugs, not one:**
+1. `docker compose up -d --force-recreate` was needed first — a plain
+   `docker restart` does NOT refresh `host.docker.internal`'s `/etc/hosts`
+   entry, which was stale (`172.17.0.1`, an old bridge gateway) vs. the
+   container's actual current one (`172.18.0.1`).
+2. After recreation, the connection still hung with no error — traced to
+   `ufw`'s `default deny incoming` policy silently dropping AMI (5038/tcp)
+   connections from the Docker bridge subnet. `scripts/setup-firewall.sh`
+   correctly keeps 5038 off the *public* allow list (matches the hard
+   constraint that AMI must never be internet-facing) but never had a
+   rule permitting the *internal* Docker-bridge → host path `cdr-listener`
+   (and `web`'s own AMI calls) actually need — a real, previously-untested
+   gap, since Asterisk had never run live before this session. Fixed with
+   a new, narrowly-scoped `ufw allow from 172.16.0.0/12 to any port 5038
+   proto tcp` rule (matches `manager.conf`'s own `permit` ACL range
+   exactly — a second, independent layer around the same already-narrow
+   trust boundary, not a wider one), added to `setup-firewall.sh` and
+   applied live.
+3. Even with both fixed, `cdr-listener` (and `algopbx-app`) kept failing
+   AMI login with `InvalidPassword` — `pbx_configs/manager.conf` still had
+   its literal `REPLACE_ME_*` placeholders: the day's full-repo redeploy
+   had overwritten an earlier session's live-templated copy with this
+   repo's committed placeholder template (correct that the repo itself
+   never carries real secrets — the gap is that the deploy process has no
+   re-templating step of its own yet). Re-templated from `.env` via `sed`
+   on the VM (values never printed). **Then a fourth, genuinely surprising
+   bug:** `asterisk -rx 'manager reload'` reported success and
+   `manager show users` listed both accounts correctly, but AMI logins
+   kept failing with the *old* (pre-fix) credentials regardless — this
+   build's `manager reload` does not actually re-read secrets, only the
+   user list. Only a full `docker compose restart asterisk` (fresh process
+   load) actually applied the corrected `manager.conf`. `cdr-listener` is
+   now genuinely healthy and connected.
+
+**Music on hold — silent, not missing (Loop D1):** the CC0 track the user
+provided (converted to 8kHz mono WAV, `moh/default/music-box.wav`) was
+correctly mounted and `musiconhold.conf`'s `[default]` stanza was
+syntactically valid, but `moh show classes` came back **empty** — no
+parse error, no warning, across `module reload`/`module unload`+`load`/
+`core reload`, all silently no-ops for this. Isolated by testing a
+differently-named class (ruled out a `[default]`-name conflict) and an
+absolute vs. relative `directory=` value (the actual cause): this
+from-source Asterisk 20 build (`git --branch 20 --depth 1`, i.e. the live
+tip of the branch, not a fixed release tag) does not resolve a relative
+`directory=` value against `$ASTDATADIR/moh/` the way upstream docs
+describe — only an absolute path (`/var/lib/asterisk/moh/default`)
+actually registers the class. Same "reload doesn't actually reload"
+pattern as the manager.conf bug above; a full container restart was
+required either way. Fixed permanently in `pbx_configs/musiconhold.conf`.
+**Not yet fixed:** `moh show files` also lists the directory's
+`README.md` as a playable file (Asterisk enumerates every file in
+`directory=`, not just recognized audio ones) — harmless today since
+`.wav` sorts before `README`, but worth moving `README.md` out of
+`moh/default/` (a sibling `moh/README.md`, one level up) before adding a
+second track.
+
+**Dinstar scan/connection — diagnosed, one half fixed, one half needs the
+UAE office:** the Tailscale binary was **not installed at all** on the
+cloud VM — `scripts/setup-tailscale-cloud.sh` has always assumed it's
+present. Installed via the official apt repo (`pkgs.tailscale.com`,
+GPG-keyring method — the curl-pipe-to-sudo one-liner Tailscale's own docs
+lead with was correctly blocked by this session's own safety tooling as
+an unreviewable download-and-execute pattern) and `tailscaled` enabled.
+`tailscale up --accept-routes` is running in the background on the VM
+with a pending device-auth link — **this needs the user to open it in a
+browser while logged into the office Tailscale account and approve it**;
+Claude cannot complete an account-linking OAuth-style flow on the user's
+behalf. Separately, and out of reach entirely from this session: the UAE
+office side (`scripts/setup-tailscale-uae-office.sh`, run on a PC on the
+Dinstar's LAN, then the advertised route approved in the Tailscale admin
+console) has never been run — no access to that machine exists from here.
+**Both halves must complete before Dinstar scanning/calls can work at
+all**, regardless of anything else in this repo.
+
+**Domain connect — build path verified, cannot go further without user
+input:** `algo-caddy` is already running from the new `Dockerfile.caddy`
+(`xcaddy` + `caddy-dns/cloudflare`) — `caddy list-modules` confirms
+`dns.providers.cloudflare` is loaded, `caddy version` reports `v2.11.4`.
+This was Loop C4's single biggest identified risk ("untested, first build
+must happen on the VM") and it is now resolved: the automation code is
+real and working. It cannot be switched on further, though:
+`VM_PUBLIC_DOMAIN` is still the literal placeholder `127.0.0.1` and
+`CLOUDFLARE_API_TOKEN` is empty in the VM's `.env` — needs the user's
+actual GoDaddy-purchased domain name (pointed at Cloudflare nameservers)
+and a Cloudflare API token scoped to DNS edit on that zone before
+`/admin/settings`'s "Domain & TLS" section can be applied for real.
+
+**VM networking — still the blocker for real audio, including any test
+from India:** `ip -4 addr show`/`ip route` on the VM confirm it is still
+on VirtualBox **NAT** (`10.0.2.15`, gateway `10.0.2.2` — VirtualBox's
+default NAT range), not the Bridged Adapter the earlier plan (Loop A2)
+called for. `VBoxManage showvminfo algo_pbx --machinereadable` (run from
+the Windows host, which this session also has shell access to) confirms
+`nic1="nat"`. This matters more than it might look: `handoff.md` already
+diagnosed that NAT cannot forward Asterisk's 10000–20000 RTP range or
+Coturn's 20001–30000 relay range, so **even once the domain/TLS work
+lands, a real inbound test call — from India or anywhere outside the
+VM's own LAN — will connect but carry no audio.** Deliberately NOT
+attempted this session: `handoff.md` also records that Bridged Adapter
+was tried once before and failed with an unresolved connection timeout,
+and switching a running VM's NIC type is a hard-to-reverse action that
+risks cutting off the only SSH path back into it — exactly the class of
+action this session's own safety rules require flagging and confirming
+rather than just doing. **This is the top blocker to resolve next**,
+ahead of the domain work, since domain automation alone cannot fix it.
+
+**Backups — verified for real, not just present:** `scripts/backup.sh`
+(existed, never run) was executed once manually — captured both Postgres
+databases, recordings/voicemail/agent-photos, the OpenWA session volume,
+and `.env`. Ran a full restore drill: restored `algopbx_db.sql.gz` into a
+disposable scratch `postgres:16-alpine` container (not the live DB),
+confirmed every table recreated correctly and real data landed (2 `User`
+rows), then tore the scratch container down. This is the first time this
+repo's backup path has been proven to actually work end to end, not just
+exist. **Update from §16: cron scheduling was done in the follow-up
+session** — see below; this line is left for the historical record of
+what §15 itself shipped.
+
+**Also confirmed still-open, unchanged from §14:** business-hours routing
+(deferred by user choice), DNC-blocked/permission-blocked dialplan
+prompts (still placeholder names, blocked on a real recorded announcement),
+image digest-pinning (low priority — the 3 pulled images left,
+`postgres:16-alpine`/`coturn/coturn:4.17-alpine`/`docker:27-cli`, are
+already tag-pinned, not `:latest`).
+
+## 16. Dinstar SIM live, real domain issuing real certs, deploy pipeline itself was broken (2026-08-27, second same-day follow-up to §15)
+
+Cron scheduling (backup + 14-day cleanup, prune, SMS-poll) landed exactly
+as designed in §15. Bridged networking got fixed too, but not the way
+originally planned: `handoff.md`'s Loop 1.3 called for a bridged adapter
+on a wired NIC, on the theory that Wi-Fi bridging was the failure mode.
+The wired NIC was already in use — attached directly to the Dinstar
+gateway's own management interface (192.168.11.0/24), not a general LAN.
+Bridging onto it worked once **`Protocol ARP Offload` was disabled** on
+that adapter (a known VirtualBox/NIC-firmware conflict: the NIC
+intercepts ARP below the bridge driver) — Windows→VM traffic worked
+immediately after, but VM→outbound stayed broken until the VM was fully
+power-cycled (not just the NIC link bounced), confirming the bridge
+doesn't cleanly rebind to a reset physical adapter without a full VM
+restart. `192.168.1.50`/`192.168.1.0/24` were hardcoded as Dinstar
+defaults throughout the repo (the `/admin/dinstar` scan CIDR, the
+`pjsip_dynamic.conf`-style dinstar seed, `.env.example`) — genuinely
+wrong for this office's real wiring (`192.168.11.1`), independent of the
+separately-diagnosed Tailscale gap; fixed in
+`src/app/admin/dinstar/page.tsx`, `pbx_configs/pjsip_dinstar.conf`, and
+`.env.example`.
+
+**Dinstar trunk + SIM, done and verified against the real device UI:**
+the SIP Trunk entry pointed at `192.168.11.10:5080` (this Windows PC, the
+wrong port) — a stale leftover, fixed to `192.168.11.20:5060`. Setting it
+to `5060` silently failed to persist every time with zero error, isolated
+via extensive bisection (arbitrary ports saved fine; only `5060`
+specifically reverted) to the Dinstar refusing a trunk peer port equal to
+its **own** local SIP port, which also defaults to `5060` — fixed by
+moving the device's own local port to `5061` under
+`Call Configuration → SIP Configuration`, which both requires and
+triggers a device restart. That restart incidentally also fixed a
+separate problem: the inserted SIM showed "No SIM Card" on every check
+until then, consistent with this GSM hardware only reading SIM presence
+at module power-on, not on hot-insertion. Port 0 now shows
+`Mobile Registered` with a real UAE IMSI (`4240...`) and strong signal.
+Both `IP->Tel Routing` (`SIP Server → Port Group-0`) and `Tel->IP Routing`
+(`Port Group-0 → Trunk-0`) were already correctly pre-configured from an
+earlier session. One real inbound test call (external phone → the SIM)
+rang through to the point of prompting for an extension — the GSM→Asterisk
+leg works. The reverse direction (agent extension → `+971544887712`
+through the trunk) was set up (extensions provisioned) but never actually
+placed before the session ended — see §16.9 "Immediate next steps".
+
+**Domain (`saharatechs.com`) connected for real** — a genuine Let's
+Encrypt certificate confirmed issued via Cloudflare DNS-01
+(`"certificate obtained successfully"` in Caddy's own log). Getting there
+surfaced four distinct, real bugs in the deploy/automation mechanism
+itself, all now understood and three of four fixed in code:
+
+1. **The `web` container's runtime UID doesn't match the on-disk owner of
+   any generated config file.** Every file `src/lib/pjsip-config.ts`,
+   `src/lib/dinstar-config.ts`, or the domain-apply route regenerates
+   (`pjsip_dynamic.conf`, `pjsip_dinstar.conf`, `voicemail_dynamic.conf`,
+   `pbx_configs/generated/{Caddyfile,caddy.env}`) is created on the host
+   owned by the SSH deploy user at mode `644`; the `web` container
+   actually runs as a *different* uid (`nextjs`, 1001). Every single
+   admin-panel action that regenerates one of these files — provisioning
+   an extension or user, connecting the Dinstar trunk, connecting the
+   domain — failed with `EACCES: permission denied`. This had never
+   surfaced before because nothing had ever been provisioned through the
+   live app until this session. **Worked around**, not fixed: `chmod
+   666`/`777` on the affected files/directory. **Still needs a real
+   fix** — matching UIDs, or a deploy-time `chown` step — since a future
+   full repo re-sync resets these permissions back to `644` (confirmed:
+   it happened mid-session when the repo was re-synced to pick up other
+   fixes, and had to be re-applied).
+2. `cert-sync` (the sole container with Docker-socket access, tasked
+   with recreating `caddy` on domain-setting changes) discovers its own
+   host project directory correctly via `docker inspect $HOSTNAME`, but
+   was then handing that host-only path straight to `docker compose -f`
+   — which reads the compose file's bytes **locally**, from cert-sync's
+   own container filesystem, before ever talking to the daemon over the
+   socket. Always failed with `open .../docker-compose.yml: no such file
+   or directory`. **Fixed** in `scripts/cert-sync.sh`: symlink the
+   discovered host path to `/workspace` (the read-only bind-mount of the
+   same repo root cert-sync already has) inside its own writable
+   filesystem, satisfying every path Compose might need under
+   `--project-directory` — including `.env`, which `docker compose up`
+   (unlike `config`) independently re-resolves against that same path for
+   its own bookkeeping, a second instance of the identical bug that
+   needed the same fix.
+3. Even with that fixed, `docker compose up -d --no-deps caddy` silently
+   no-op'd — Compose's own idempotency model correctly saw that the
+   **service definition** hadn't changed (only a bind-mounted file's
+   *content* had) and left the existing Caddy process running against its
+   stale, already-open read of the old config, indefinitely, across
+   several marker-triggered "recreate" cycles that all reported success.
+   **Fixed** by adding `--force-recreate` to the `docker compose up`
+   invocation in `recreate_service()`.
+4. `cert-sync`'s own `VM_PUBLIC_DOMAIN` (baked in from `.env` at
+   container-create time, per its `environment:` block in
+   `docker-compose.yml`) still held the placeholder `127.0.0.1` — the
+   *real* domain, entered through `/admin/settings`, only ever gets
+   written to `AppSetting` in Postgres and to Caddy's own generated
+   `caddy.env`, never back to the static `.env` file `cert-sync` reads.
+   **Fixed operationally** by updating `.env` directly and recreating
+   `cert-sync` — **not fixed in code**, and flagged as a real design gap:
+   there are now two independent sources of truth for the public domain
+   (`AppSetting` vs. `.env`), and nothing keeps them in sync going
+   forward. A durable fix would have `cert-sync` read the domain from
+   `caddy.env` (which the apply route already writes correctly) instead
+   of its own separately-sourced env var.
+
+Not yet confirmed at session end: whether `cert-sync`'s `sync_cert()`
+function has actually copied the newly-issued cert into
+`pbx_configs/keys/fullchain.pem`/`privkey.pem` and restarted
+Asterisk/Coturn to pick it up (the WSS-signaling half of TLS, distinct
+from the DTLS media cert below) — the check was in progress when the
+session ended.
+
+**The expensive lesson this session:** the overwhelming majority of "why
+doesn't this take effect" mysteries chased tonight — for newly-provisioned
+extensions, for the domain-apply route's own `Caddyfile` write, for
+Dinstar credentials — eventually traced back to **the deployed `web`
+image being stale relative to the actual repo source**, not to any bug in
+the source. `docker compose restart web`, used constantly all session,
+restarts the *existing* image; it does not rebuild. Confirmed concretely:
+`/admin/domain` (built earlier this same day) didn't exist on the VM at
+all, and the domain-apply route's own success message text differed
+between the stale and freshly-rebuilt versions. A large amount of
+debugging time went into filesystem-level theories (bind-mount staleness,
+UTF-8 in comments, field-by-field PJSIP bisection) that were actually
+explained entirely by testing against old compiled code. **Going forward,
+deploy any code change to this VM with `docker compose up -d --build
+<service>`, never a plain `restart`.**
+
+**A second, independent unreliability pattern, confirmed repeatedly and
+distinct from the stale-image issue above:** this specific Asterisk
+build's `module reload <x>.so` and `manager reload` CLI commands report
+success — and can even show *partially* correct state on inspection —
+without actually applying the change. Confirmed for `manager.conf` AMI
+secrets (login kept failing with old credentials after a "successful"
+`manager reload`), `musiconhold.conf` classes (`moh show classes` stayed
+empty through `module reload`/`unload+load`/`core reload`, for content
+later proven entirely valid), and PJSIP endpoint definitions (a
+freshly-appended test endpoint appeared to load via `module reload
+res_pjsip.so`, but a genuine full restart proved that misleading — the
+same file's `[2001]`/`[2002]` endpoints, byte-identical in every test,
+never actually loaded until the real blocker — missing DTLS certs, next
+paragraph — was found). **Treat any `reload`-style command's own
+"success" report in this build as unproven until independently confirmed
+with a full `docker compose restart`.**
+
+**A real, separate bug found mid-investigation of the above:**
+`/etc/asterisk/keys/` (bind-mounted from `pbx_configs/keys/`) had never
+been populated at all — only its own README existed. Every WebRTC PJSIP
+endpoint `src/lib/pjsip-config.ts` generates references
+`dtls_cert_file`/`dtls_private_key_file` paths there, which is enough to
+block that endpoint from loading (silently, no logged error, consistent
+with the reload-unreliability pattern above). Fixed per that directory's
+own README: `openssl req -x509 -newkey rsa:2048 -nodes -days 3650
+-keyout pbx_configs/keys/asterisk.key -out pbx_configs/keys/asterisk.crt
+-subj '/CN=algopbx.local'` — deliberately self-signed, which the README
+confirms is correct here since `dtls_verify=fingerprint` validates the
+SDP fingerprint exchanged in signaling, not the certificate's chain of
+trust. **Not yet independently re-confirmed** whether this alone explains
+extensions 2001/2002 failing to load, separate from the stale-image issue
+— both were being untangled at once when the domain-debugging thread took
+over; needs a clean re-test now that both are fixed.
+
+**Housekeeping done along the way:** a full `git ls-files` +
+untracked-non-ignored resync of the whole repo to the VM (to pick up this
+same-day's Phase 4 domain-wizard code, which had never been synced) had
+a real side effect worth remembering — it reset `manager.conf`'s and
+`odbc.ini`'s live-templated secrets/credentials back to their committed
+`REPLACE_ME_*` placeholders, since those files are legitimately tracked
+with placeholder content (real secrets are never committed) and the sync
+doesn't know to preserve a prior live templating pass. Re-templated both
+from `.env` immediately after. **Any future full resync of this repo to
+this VM must re-run that templating step afterward** — it is not
+automatic.
+
+**Passwords set for testing, must be rotated before real use:**
+`admin@algopbx.local` / `agent@algopbx.local` → `TestPass123!`;
+`agent2@algopbx.local` → `TestPass123!Agent`. Set directly via DB since
+original credentials weren't available and the self-service/admin reset
+flows (built in §14) need a working email/WhatsApp path this session
+didn't have set up for a throwaway test account.
+
+**Immediate next steps, in priority order:**
+1. Confirm `cert-sync` copied the real cert into `pbx_configs/keys/` and
+   restarted Asterisk/Coturn (`docker logs algo-cert-sync` for a "new
+   certificate detected" line; check `fullchain.pem`/`privkey.pem`
+   timestamps).
+2. Re-verify extensions `2001`/`2002` load
+   (`docker compose restart asterisk` then `pjsip show endpoints`) now
+   that DTLS certs exist and the image is fresh.
+3. Place the one test this session never got to: an agent WebRTC
+   softphone dialing `+971544887712` through the Dinstar trunk.
+4. Fix the UID-vs-file-owner mismatch properly, not just with `chmod`.
+5. Decide how `VM_PUBLIC_DOMAIN` stays in sync between `.env` and the
+   database, or point `cert-sync` at `caddy.env` instead.
+6. Rotate the temporary passwords above.
+7. Adopt `docker compose up -d --build` as the standard deploy step for
+   this VM from now on.
+
+## 17. THE call-path root cause found and fixed — `res_srtp` was never built; AMI `command` privilege + reload chain (2026-08-27, third follow-up)
+
+Prompted by the user's assessment ("so many stale functions, not a real
+working PBX") and confirmation that **even local extension-to-extension
+calls fail**. A `security-audit`-skill pass (3 hunters) + a
+`systematic-debugging` Loop A1 evidence sweep across every component
+boundary of the call path. The multi-session "reload is unreliable in
+this Asterisk build" mystery is now fully explained — it was never one
+bug, it was three stacked, each masking the next:
+
+1. **`pbx_configs/manager.conf` — the AMI account had no `command` write
+   class.** Every `Action: Command` (`pjsip reload` etc. from
+   `pjsip-provision.ts` / `voicemail-provision.ts` / `dinstar-provision.ts`)
+   was answered `Response: Error / Permission denied`. Fixed: added
+   `command` to `[algopbx-app]`'s `write =` (NOT to `[algopbx-cdr-listener]`).
+2. **`src/lib/ami-client.ts` — `send()` never checked `Response: Error`.**
+   It resolved the error block as success (only `sendAndCollect()`
+   checked). So the denied reload above surfaced to the route as
+   "provisioned OK". Fixed: `send()` now rejects on `Response: Error`;
+   `parseBlock()` also now joins repeated `Output:` lines (AMI 2.x Command
+   response format) so read-back verification can see the full CLI text.
+   New tests in `ami-client.test.ts`.
+3. **This from-source Asterisk 20 build has NO `pjsip reload` command** —
+   only `module reload res_pjsip.so`. `pjsip reload` returned "No such
+   command", swallowed by #2. Fixed: all three provision files now issue
+   `module reload res_pjsip.so`. `pjsip-provision.ts` also does a
+   read-back (`pjsip show endpoints`) and throws a clear "run
+   docker compose restart asterisk" error if an endpoint didn't load.
+
+**THE deepest one, found by Loop A1 and NOT previously known:**
+4. **`res_srtp` was never compiled into the Asterisk image.**
+   `pbx_configs/asterisk-menuselect.makeopts` carried
+   `MENUSELECT_DEPSFAILED=MENUSELECT_RES=res_srtp` — the from-source build
+   never installed `libsrtp2-dev` before `./configure`, so `res_srtp`
+   failed its dependency check and was silently dropped. **Every
+   generated WebRTC endpoint has `media_encryption=dtls`, which requires
+   `res_srtp`; without it Asterisk rejects the entire `type=endpoint`
+   stanza at config-load with no logged error** — `pjsip show auths` and
+   `pjsip show aors` showed 1001/2001/2002 fine, while `pjsip show
+   endpoints` was empty but for `dinstar-trunk`. This is why no WebRTC
+   agent has ever registered in this repo's history — one layer deeper
+   than the missing-DTLS-cert-files issue §16 found. Fixed:
+   `Dockerfile.asterisk` now installs `libsrtp2-dev` (build) +
+   `libsrtp2-1` (runtime), and runs `make menuselect.makeopts` +
+   `menuselect --enable res_srtp res_odbc func_odbc ...` for a clean
+   dependency-checked selection instead of freezing the hand-copied
+   makeopts (whose frozen DEPSFAILED set — `res_pjsip_config_sangoma`
+   etc. — diverged from a clean scan and broke the build).
+
+**Security fixes landed this session (from the `security-audit` skill —
+full findings in the plan file):** B0 `web` bound to `127.0.0.1:3000` +
+`DOCKER-USER` REJECT for :3000 (was cleartext on every interface,
+bypassing Caddy/TLS); B1 login lockout keyed on the client-controlled
+`X-Forwarded-For[0]` → forgeable → unauthenticated ADMIN takeover (setup
+admin has no phone so skips 2FA) — now takes the proxy-appended last XFF
+entry + a per-email aggregate bucket a rotating header can't evade; B1c
+`AUTH_SECRET` was presence-checked only, `.env.example` ships `change-me`
+— now rejects known placeholders + <32 chars; B2/B2 (2 hunters) any AGENT
+could toll-fraud via `POST /api/calls/conference` originating straight at
+the trunk, bypassing dial tiers + DNC + emergency block — now routes
+through a `Local/…@from-agent-<tier>` channel like click-to-call; B2b jwt
+callback never re-read `role`/`extension` (demotion took ≤8h) — now live;
+B3 SUPERVISOR could silently harvest any extension's plaintext SIP
+secret/PIN via the un-audited `{userId}`/`{rotateSecret}` branches — now
+ADMIN-only + audited; B4 comma in an agent's own name permanently broke
+voicemail regen org-wide (throw-whole-batch) — now sanitized per-entry;
+B4 SSRF via `POST /api/admin/dinstar/probe` (`host` interpolated raw into
+a URL) — now `assertProbeableHost` (bare private IPv4 + range check);
+B4/E2 `CLOUDFLARE_API_TOKEN` accepted newlines (401 + caddy.env line
+injection) — now regex-validated + `setSetting` trims all secrets.
+
+**E1 (objective #2): admin can now edit agent accounts** — `PATCH
+/api/admin/users/[id]` extended with name/email/role/password/simPort/
+extensionNumber; new `DELETE` (ADMIN-only, revoke + release resources +
+scrub PII, keep audit history); edit drawer in `/admin/users`.
+
+**E2 (objective #5): Cloudflare "token rejected"** — surfaces the real CF
+error/code instead of a hardcoded string; queries `/zones?name=` per
+apex candidate instead of un-paginated `per_page=50`; scope help text
+now says `Zone:DNS:Edit` + `Zone:Zone:Read`.
+
+**Verified live this session:** AMI now authenticates + `module reload
+res_pjsip.so` succeeds from the `web` container; provisioning extension
+1001 through `/admin/extensions` writes a real secret AND the read-back
+verification correctly reports the endpoints don't hot-load (honest
+error, was a silent false success before). Local `npm run
+typecheck`/`test` (230)/`lint` all clean. **Asterisk image rebuilding
+with `res_srtp` at session pause** — the WebRTC-endpoint load + first
+local call (A6) is the immediate next verification once it finishes.
+
+**Immediate next steps:**
+1. Finish `docker compose build asterisk` (res_srtp), `up -d`, confirm
+   `pjsip show endpoints` lists 1001/2001/2002 and `module show like
+   srtp` shows `res_srtp.so` Running.
+2. Rebuild `web` (`docker compose build web`) to pick up all the
+   Track A/B/E1/E2 source changes, `up -d --build web`.
+3. Two browser profiles → register two agents → **first local A↔B call
+   with two-way audio** (Gate 1). RTP: `VM_PUBLIC_IP` in `.env` is still
+   `127.0.0.1` — set it + `docker compose up -d coturn` for non-local
+   media.
+4. Dinstar inbound IVR fix is a GATEWAY-side config (two-stage dial off,
+   fixed destination) — see plan Track C; then harden `[from-dinstar]`
+   with `exten => _[+0-9].,1,Goto(s,1)`.
+5. B3b: render `manager.conf`/`odbc.ini` from `.env` at startup (still
+   hand-templated; a resync reverts them).
+6. Rotate all credentials (plan Track B5).

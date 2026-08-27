@@ -26,6 +26,7 @@ export const GET = withApiErrorHandler(async function GET() {
       number: true,
       kind: true,
       status: true,
+      dialPermission: true,
       lastSeenAt: true,
       createdAt: true,
       updatedAt: true,
@@ -44,6 +45,9 @@ export const GET = withApiErrorHandler(async function GET() {
 const CreateExtensionSchema = z.object({
   number: z.string().regex(/^\d{3,6}$/),
   kind: z.enum(["webrtc", "hardware"]).default("webrtc"),
+  // Loop C2 — defaults to the Prisma column's own default (LOCAL) when
+  // omitted, matching Zod's own optional-with-default semantics.
+  dialPermission: z.enum(["LOCAL", "NATIONAL", "INTERNATIONAL"]).default("LOCAL"),
 });
 
 export const POST = withApiErrorHandler(async function POST(req: NextRequest) {

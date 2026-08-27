@@ -73,6 +73,33 @@ describe("AmiClient CRLF injection protection", () => {
   });
 });
 
+describe("AmiClient send() error handling", () => {
+  it("rejects when the response block is Response: Error (e.g. Command without the command privilege)", async () => {
+    const { client, socket } = await createConnectedClient();
+    const pending = client.send({ Action: "Command", Command: "pjsip reload" });
+    socket.emit(
+      "data",
+      Buffer.from('Response: Error\r\nActionID: 2\r\nMessage: Permission denied\r\n\r\n')
+    );
+    await expect(pending).rejects.toThrow(/Permission denied/);
+  });
+
+  it("joins repeated Output: lines so Command read-back sees the full CLI text", async () => {
+    const { client, socket } = await createConnectedClient();
+    const pending = client.send({ Action: "Command", Command: "pjsip show endpoints" });
+    socket.emit(
+      "data",
+      Buffer.from(
+        "Response: Success\r\nActionID: 2\r\nMessage: Command output follows\r\n" +
+          "Output: Endpoint:  1001\r\nOutput: Endpoint:  2001\r\n\r\n"
+      )
+    );
+    const res = await pending;
+    expect(res.Output).toContain("Endpoint:  1001");
+    expect(res.Output).toContain("Endpoint:  2001");
+  });
+});
+
 describe("AmiClient.sendAndCollect", () => {
   it("collects all events sharing the ActionID up to the terminator, inclusive", async () => {
     const { client, socket } = await createConnectedClient();

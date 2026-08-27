@@ -1,3 +1,4 @@
+import { AgentMissedCalls } from "@/components/agent-missed-calls";
 import { AgentRecordings } from "@/components/agent-recordings";
 import { AgentStatusSelector } from "@/components/agent-status-selector";
 import { AgentVoicemail } from "@/components/agent-voicemail";
@@ -14,7 +15,7 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 // a call is the more time-critical action on a small screen.
 export default function AgentWorkspace() {
   return (
-    <main className="min-h-screen bg-background p-8">
+    <main className="p-8">
       <h1 className="mb-6 text-center text-xl font-semibold text-slate-100 lg:text-left">Agent Workspace</h1>
       <div className="mx-auto flex max-w-7xl flex-col gap-8 lg:flex-row lg:items-start">
         <div className="flex flex-col items-center gap-6 lg:w-[26rem] lg:flex-shrink-0">
@@ -23,6 +24,7 @@ export default function AgentWorkspace() {
             <Dialpad />
             <CallControls />
           </div>
+          <AgentMissedCalls />
           <AgentVoicemail />
           <AgentRecordings />
         </div>

@@ -1,9 +1,23 @@
+# Before this, none of the seven services below set a logging driver, so
+# Docker's default json-file driver kept every line of every container's
+# stdout/stderr forever with no size cap — on a long-running PBX with
+# Asterisk's own verbose logging, this is a guaranteed eventual disk-fill
+# that takes the whole stack down (Postgres included, since it shares the
+# same volume-backed disk). Applied identically to every service via this
+# YAML anchor rather than seven copies of the same three lines.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # 1. PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: algo-postgres
     restart: always
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -46,7 +60,20 @@ services:
     image: coturn/coturn:4.17-alpine
     container_name: algo-coturn
     restart: always
+    logging: *default-logging
     network_mode: host
+    # Process-liveness only (this image has no curl and coturn exposes no
+    # HTTP endpoint to probe) — but it's still a real improvement over the
+    # previous total absence: before this, a crashed/hung turnserver
+    # process was invisible to `docker ps` and orchestration, and every
+    # symptom pointed at "WebRTC NAT traversal" long before anyone thought
+    # to check whether the TURN process was even alive.
+    healthcheck:
+      test: ["CMD-SHELL", "pidof turnserver || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     volumes:
       # Same real, CA-issued cert http.conf uses for WSS (see
       # pbx_configs/keys/README.md) — needed for the turns: (TLS) listener,
@@ -83,11 +110,21 @@ services:
       - "--no-cli"
       - "--stale-nonce=600"
 
-  # 3. Asterisk 20 PBX (host network mode for direct RTP handling)
+  # 3. Asterisk 20 PBX (host network mode for direct RTP handling).
+  # Builds from Dockerfile.asterisk (Loop A1) — was `image:
+  # tiredofit/asterisk:20-latest`, which does not exist
+  # (github.com/tiredofit/docker-asterisk 404s; every prior deploy
+  # silently fell back to a hand-compiled native Asterisk running
+  # `make samples` defaults instead of this repo's real pbx_configs/,
+  # see handoff.md). See Dockerfile.asterisk's header comment for the
+  # full recovery story, including the ODBC gap it also closes.
   asterisk:
-    image: tiredofit/asterisk:20-latest
+    build:
+      context: .
+      dockerfile: Dockerfile.asterisk
     container_name: algo-asterisk
     restart: always
+    logging: *default-logging
     network_mode: host
     # Grants the elevated scheduling priority pbx_configs/asterisk.conf's
     # highpriority=yes requests — without this capability that setting
@@ -111,6 +148,8 @@ services:
       - ./pbx_configs/pjsip.conf:/etc/asterisk/pjsip.conf:ro
       - ./pbx_configs/pjsip-base.conf:/etc/asterisk/pjsip-base.conf:ro
       - ./pbx_configs/asterisk.conf:/etc/asterisk/asterisk.conf:ro
+      - ./pbx_configs/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./pbx_configs/logger.conf:/etc/asterisk/logger.conf:ro
       # Serves the WSS (8089) transport pjsip-base.conf's [transport-wss]
       # points at — without this file nothing listens on that port at all
       # (see http.conf's own header comment for why the PJSIP bind= line
@@ -133,15 +172,21 @@ services:
       - ./pbx_configs/pjsip_dinstar.conf:/etc/asterisk/pjsip_dinstar.conf
       - ./pbx_configs/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./pbx_configs/extensions.conf:/etc/asterisk/extensions.conf:ro
-      - ./pbx_configs/manager.conf:/etc/asterisk/manager.conf:ro
+      - ./pbx_configs/manager.conf:/etc/asterisk/manager.conf.tmpl:ro
       - ./pbx_configs/queues.conf:/etc/asterisk/queues.conf:ro
       - ./pbx_configs/musiconhold.conf:/etc/asterisk/musiconhold.conf:ro
       - ./moh/default:/var/lib/asterisk/moh/default:ro
+      # Custom prompts (Loop D1 follow-up) — Playback()/queues.conf
+      # periodic-announce reference these as "custom/<name>" (no
+      # extension; Asterisk resolves the format itself), matching the
+      # standard convention of a `custom/` subdirectory under the main
+      # sounds search path.
+      - ./pbx_configs/sounds:/var/lib/asterisk/sounds/en/custom:ro
       # Do Not Call dialplan enforcement (Phase C) — see func_odbc.conf's
       # and odbc.ini's file-header comments for the unverified-image caveat.
       - ./pbx_configs/res_odbc.conf:/etc/asterisk/res_odbc.conf:ro
       - ./pbx_configs/func_odbc.conf:/etc/asterisk/func_odbc.conf:ro
-      - ./pbx_configs/odbc.ini:/etc/odbc.ini:ro
+      - ./pbx_configs/odbc.ini:/etc/odbc.ini.tmpl:ro
       - ./pbx_configs/odbcinst.ini:/etc/odbcinst.ini:ro
       - ./recordings:/var/spool/asterisk/monitor
       - ./pbx_configs/voicemail.conf:/etc/asterisk/voicemail.conf:ro
@@ -164,6 +209,7 @@ services:
       target: runner
     container_name: algo-web
     restart: always
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -176,6 +222,16 @@ services:
       retries: 6
       start_period: 15s
     environment:
+      # Next.js standalone output's generated server.js binds to
+      # process.env.HOSTNAME if set, falling back to 0.0.0.0 otherwise.
+      # Docker auto-sets HOSTNAME to the container's own hostname (which
+      # resolves only to its bridge-network IP, not loopback) — left
+      # unset, the app silently never listens on 127.0.0.1/::1 at all,
+      # so this healthcheck's own `fetch('http://localhost:3000/...')`
+      # gets ECONNREFUSED forever even though the app is up and the
+      # externally-published port works fine (Docker's port-publish NATs
+      # straight to the container's real IP, not through its loopback).
+      HOSTNAME: "0.0.0.0"
       DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
       NEXT_PUBLIC_SIP_WS_SERVER: "wss://${VM_PUBLIC_DOMAIN}:8089/ws"
       NEXT_PUBLIC_TURN_SERVER: "turn:${VM_PUBLIC_DOMAIN}:3478"
@@ -194,11 +250,19 @@ services:
       # Unattended cron auth for POST /api/admin/messaging/sms/poll — see
       # .env.example's crontab line.
       SMS_POLL_SECRET: "${SMS_POLL_SECRET}"
+      # Loop D2 — unattended cron pruning of expired recordings/voicemail
+      # (POST /api/admin/maintenance/prune), same bearer pattern as
+      # SMS_POLL_SECRET above.
+      PRUNE_SECRET: "${PRUNE_SECRET}"
       # Encrypts every runtime setting stored via /admin/settings or the
       # first-run /setup wizard (src/lib/settings/crypto.ts) — required
       # before either can be used; POST /api/setup refuses without it.
       SETTINGS_ENCRYPTION_KEY: "${SETTINGS_ENCRYPTION_KEY}"
       RECORDINGS_DIR: /recordings
+      # Loop C4 — where POST /api/admin/settings/domain/apply writes
+      # caddy.env + the cert-sync restart marker (see the volume mount
+      # above and pbx_configs/generated/README.md).
+      GENERATED_CONFIG_DIR: /generated
       PJSIP_DYNAMIC_CONF_PATH: /pjsip_dynamic.conf
       PJSIP_DINSTAR_CONF_PATH: /pjsip_dinstar.conf
       VOICEMAIL_DYNAMIC_CONF_PATH: /voicemail_dynamic.conf
@@ -279,8 +343,18 @@ services:
       # /api/register/photo). Read-write: the same container both writes
       # (on upload/replace) and serves (GET /api/me/photo/[id]) these.
       - ./agent-photos:/agent-photos
+      # Read-write (Loop C4): POST /api/admin/settings/domain/apply writes
+      # caddy.env and the restart-request marker here; `cert-sync` (its
+      # own service below) reads both from the same host path.
+      - ./pbx_configs/generated:/generated
     ports:
-      - "3000:3000"
+      # Loop B0: bind to loopback only. Docker-published ports bypass ufw's
+      # INPUT chain entirely, so `"3000:3000"` exposed the whole Next.js app
+      # — /api/setup, the login endpoints, invite-token consumption — in
+      # CLEARTEXT on every interface, sidestepping Caddy's TLS. All external
+      # traffic must go through Caddy on 80/443. Local access for the SSH
+      # tunnel / a same-host healthcheck still works via 127.0.0.1.
+      - "127.0.0.1:3000:3000"
     networks:
       - algo-net
     depends_on:
@@ -301,6 +375,7 @@ services:
       target: cdr-listener
     container_name: algo-cdr-listener
     restart: always
+    logging: *default-logging
     environment:
       AMI_HOST: "${AMI_HOST:-host.docker.internal}"
       AMI_PORT: "${AMI_PORT:-5038}"
@@ -340,6 +415,7 @@ services:
       context: ./vendor/openwa/upstream
     container_name: algo-openwa
     restart: always
+    logging: *default-logging
     environment:
       NODE_ENV: production
       # >= 32 chars in production — OpenWA refuses to boot otherwise. Must
@@ -397,25 +473,54 @@ services:
         condition: service_healthy
 
   # 7. Caddy reverse proxy — terminates HTTPS for the web app on 443 and
-  # redirects port 80. Uses the SAME certificate pair as Asterisk WSS and
-  # Coturn TLS (pbx_configs/keys/, mounted read-only) — one certbot
-  # issuance serves all three; the renewal deploy-hook must restart this
-  # service too or it keeps serving the expired cert from memory (see
-  # DEPLOYMENT.md §2). Certificates are supplied manually, so Caddy's own
-  # ACME/auto-HTTPS is disabled in the Caddyfile.
+  # redirects port 80. Loop C4: builds from Dockerfile.caddy (adds the
+  # Cloudflare DNS-01 plugin) instead of pulling caddy:2-alpine directly,
+  # and issues its OWN Let's Encrypt certificate — see Caddyfile's header
+  # comment for the full design and why `cert-sync` (below) still exists
+  # even though Caddy is now self-sufficient for its own TLS (Asterisk/
+  # Coturn need the same cert copied into pbx_configs/keys/, and can't
+  # read Caddy's own ACME storage directly).
   caddy:
-    image: caddy:2-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
     container_name: algo-caddy
     restart: always
+    logging: *default-logging
+    # Before this, a crashed/misconfigured Caddy was invisible — the whole
+    # app is unreachable the moment this container is down (it's the only
+    # thing serving 443), yet nothing surfaced that state. Busybox wget
+    # (bundled in caddy:2-alpine) spidering the plain-HTTP redirect vhost
+    # is enough to confirm the process is actually accepting connections,
+    # without needing a trusted cert for a HEALTHCHECK running inside the
+    # container's own network namespace.
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp" # HTTP/3
-    environment:
-      VM_PUBLIC_DOMAIN: "${VM_PUBLIC_DOMAIN}"
+    # NOT a static `environment:` block for VM_PUBLIC_DOMAIN/
+    # CLOUDFLARE_API_TOKEN — see pbx_configs/generated/README.md for why
+    # these specifically need to live in an env_file (admin-editable via
+    # /admin/settings, then a container recreate by `cert-sync` — Docker
+    # only reads env_file at container-CREATE time). `required: false` so
+    # Compose doesn't refuse to start before scripts/render-caddy-env.sh
+    # has ever run.
+    env_file:
+      - path: ./pbx_configs/generated/caddy.env
+        required: false
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./pbx_configs/keys:/certs:ro
+      # NOT ./Caddyfile (the repo-root one is a safe template/fallback
+      # only, see its own header comment for why after a real crash-loop
+      # bug) — the generated one is what render-caddy-env.sh seeds on
+      # first bring-up and POST /api/admin/settings/domain/apply rewrites
+      # once a real domain is configured.
+      - ./pbx_configs/generated/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:
@@ -423,6 +528,44 @@ services:
     depends_on:
       web:
         condition: service_healthy
+
+  # 8. cert-sync — copies Caddy's Let's Encrypt cert into the shared
+  # pbx_configs/keys/ path Asterisk WSS and Coturn TLS read, and recreates
+  # `caddy` when /admin/settings' "Domain & TLS" section rewrites
+  # pbx_configs/generated/caddy.env. THE ONLY CONTAINER IN THIS STACK
+  # GRANTED THE DOCKER SOCKET — a deliberate, narrow tradeoff for "no
+  # manual restart step" full domain automation (Loop C4), not a free
+  # win: this container can control any container on the host. Scoped as
+  # tightly as the job allows: read-only access to Caddy's cert storage,
+  # write access only to pbx_configs/keys/, and the socket only to run
+  # `docker compose up -d --no-deps <service>` for the three services it
+  # actually needs to recreate (see scripts/cert-sync.sh).
+  cert-sync:
+    image: docker:27-cli
+    container_name: algo-cert-sync
+    restart: always
+    logging: *default-logging
+    entrypoint: ["/bin/sh", "/scripts/cert-sync.sh"]
+    environment:
+      VM_PUBLIC_DOMAIN: "${VM_PUBLIC_DOMAIN}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only, and NOT used as `docker compose`'s project directory —
+      # see scripts/cert-sync.sh's header comment for why a bind-mounted
+      # path inside THIS container is meaningless to the Docker daemon
+      # (the daemon runs on the host, reached via the socket above; any
+      # `docker compose` invocation from in here must reference a path
+      # the HOST can resolve, which this container discovers about
+      # itself via `docker inspect`, not from this mount). Kept only so
+      # the script can read docker-compose.yml's own content if needed.
+      - .:/workspace:ro
+      - caddy_data:/caddy_data:ro
+      - ./pbx_configs/keys:/keys
+      - ./pbx_configs/generated:/generated
+      - ./scripts/cert-sync.sh:/scripts/cert-sync.sh:ro
+    depends_on:
+      caddy:
+        condition: service_started
 
 volumes:
   postgres_data:

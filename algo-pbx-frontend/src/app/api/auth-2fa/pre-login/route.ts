@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { checkLoginRateLimit, recordLoginFailure } from "@/lib/rate-limit";
+import { checkLoginRateLimit, recordLoginFailure, getClientIp } from "@/lib/rate-limit";
 import { sendOtp } from "@/lib/otp/service";
 import { isTrustedDevice, signOtpVerifiedToken, TRUSTED_DEVICE_COOKIE, OTP_VERIFIED_COOKIE, OTP_VERIFIED_MAX_AGE_SECONDS } from "@/lib/two-factor";
+import { withApiErrorHandler } from "@/lib/api-handler";
 
 export const dynamic = "force-dynamic";
 
@@ -27,13 +28,12 @@ const Schema = z.object({ email: z.string().email(), password: z.string().min(8)
 
 const DUMMY_HASH = "$2a$12$CwTycUXWue0Thq9StjUM0uJ8Q9E3JJ7bTf2BzJhLmyxwaMH.87UbG";
 
-export async function POST(request: NextRequest) {
+export const POST = withApiErrorHandler(async (request: NextRequest) => {
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid credentials." }, { status: 400 });
   const { email, password } = parsed.data;
 
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const ip = forwardedFor?.split(",")[0]?.trim() || "unknown";
+  const ip = getClientIp(request.headers);
 
   const rateLimit = await checkLoginRateLimit(email, ip);
   if (!rateLimit.allowed) {
@@ -112,4 +112,4 @@ export async function POST(request: NextRequest) {
   // No userId exposed to the client — verify-2fa re-derives the user
   // from `email` instead, matching the OTP challenge internally.
   return NextResponse.json({ needs2fa: true, maskedPhone: masked, role });
-}
+});

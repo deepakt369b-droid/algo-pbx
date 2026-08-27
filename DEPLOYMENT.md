@@ -105,12 +105,49 @@ restart when set there.
 ### TLS certificates (required before any call or HTTPS works)
 
 One certificate pair serves everything: Caddy (443), Asterisk WSS (8089),
-and Coturn TLS (5349). Place them at `pbx_configs/keys/fullchain.pem` +
-`privkey.pem` (see `pbx_configs/keys/README.md`; self-signed is fine for a
-first smoke test but agents' browsers will reject it for `wss://`).
+and Coturn TLS (5349) — via `pbx_configs/keys/fullchain.pem` + `privkey.pem`
+(see `pbx_configs/keys/README.md`).
 
-Recommended issuance once DNS resolves to the VM — **DNS-01 via the
-Cloudflare API token** (no ports to stop, renewal never touches the stack):
+**Default path (Loop C4) — Caddy issues and renews this itself**, no
+certbot, no manual copy/restart cron:
+
+1. Point your domain at this VM in Cloudflare (an A record — GoDaddy →
+   Cloudflare nameservers, then the A record lives in Cloudflare).
+2. Before the first `docker compose up`, seed the generated config from
+   `.env`'s `VM_PUBLIC_DOMAIN` (this is what lets a fresh deploy boot
+   without any admin-panel action first):
+   ```bash
+   bash scripts/render-caddy-env.sh
+   ```
+3. `docker compose up -d --build` (the `caddy` service now builds from
+   `Dockerfile.caddy`, adding the Cloudflare DNS-01 plugin — first build
+   only, cached after).
+4. Sign in to `/admin` (reachable directly on `http://<vm-ip>:3000` even
+   before Caddy has a real cert — `web`'s port is published independently)
+   and open **Settings → Domain & TLS**. Enter the domain again if it
+   isn't already shown, and a Cloudflare API token scoped to
+   `Zone:DNS:Edit` + `Zone:Zone:Read` on that domain's zone (create one at
+   Cloudflare dashboard → My Profile → API Tokens). **Save**, then
+   **Test connection** to confirm the token can see the right zone, then
+   **Connect domain**.
+5. `cert-sync` (a new service — see docker-compose.yml's comment on it for
+   why it's the one container in this stack with Docker-socket access)
+   picks up the change within ~30s, recreates `caddy` with the new
+   env, and once Caddy obtains the certificate, copies it into
+   `pbx_configs/keys/` and restarts `asterisk`/`coturn` so their WSS/TURN
+   TLS use the same real, publicly-trusted cert automatically — not a
+   self-signed one, and not the old certbot-issued one either.
+
+Watch it happen: `docker logs -f algo-caddy` (look for "certificate
+obtained successfully") and `docker logs -f algo-cert-sync`.
+
+**Fallback — manual certbot**, if the automated path fails or you'd rather
+not grant a container Docker-socket access at all: revert
+`docker-compose.yml`'s `caddy` service to `image: caddy:2-alpine` (drop the
+`build:`/`env_file:` lines) and `Caddyfile` to its pre-Loop-C4 form (`git
+log Caddyfile` has it — `auto_https off` +
+`tls /certs/fullchain.pem /certs/privkey.pem`), remove the `cert-sync`
+service, then:
 
 ```bash
 sudo apt install -y certbot python3-certbot-dns-cloudflare
@@ -125,17 +162,9 @@ sudo cp /etc/letsencrypt/live/your-domain.example.com/fullchain.pem pbx_configs/
 sudo cp /etc/letsencrypt/live/your-domain.example.com/privkey.pem  pbx_configs/keys/
 ```
 
-Fallback: HTTP-01 standalone (stop Caddy first, not `web`):
-
-```bash
-sudo docker compose stop caddy
-sudo certbot certonly --standalone -d your-domain.example.com
-sudo docker compose start caddy
-```
-
-Renewal (certs expire every 90 days) — the deploy hook must restart the
-three services that hold the cert files in memory, or they keep serving
-the expired one:
+Renewal cron for the manual path (certs expire every 90 days) — the
+deploy hook must restart the three services that hold the cert files in
+memory, or they keep serving the expired one:
 
 ```bash
 0 3 * * 1 certbot renew --quiet --deploy-hook \
@@ -194,18 +223,45 @@ plan to use:
 - **WhatsApp — Meta Cloud / Firebase** — optional; only needed if you
   switch `OTP_CHANNEL` away from `OPENWA` under the OTP section.
 
-`/admin/system` gives you a live readiness page (9 checks) — green every
+`/admin/system` gives you a live readiness page (10 checks) — green every
 line before trusting the deployment.
+
+### Before you run the Dinstar setup wizard's network scan
+
+`/admin/dinstar`'s "Scan network" step sends real HTTP probes from this
+VM to every host in the CIDR you give it (default `192.168.1.0/24`, the
+UAE office's LAN). If it finds nothing, **check these in order before
+assuming the gateway isn't there** — the wizard's own result will now
+tell you which of these is most likely (see the reason breakdown it
+shows), but confirm on the host directly too:
+
+1. `tailscale status` on this VM — the office subnet route must show as
+   **approved**, not just advertised. An unapproved route looks identical
+   to "no device" from the scanner's point of view.
+2. `ip route` on this VM — confirm the office subnet actually appears in
+   the routing table (approval in the Tailscale admin console and the
+   route landing in the kernel routing table are two different things).
+3. Only once both of those are confirmed does an empty scan mean "check
+   the CIDR" or "the gateway's admin HTTP interface is disabled" rather
+   than a networking problem.
+
+`/admin/system`'s "Dinstar Network Route" check gives you a lower-level,
+credential-free version of this same probe on demand, without running the
+full wizard.
 
 ## 5. Ongoing
 
 Application updates: `git pull`, `docker compose build`, `docker compose up -d`
 — migrations run automatically. Credential rotation: change it in
-`/admin/settings`, no redeploy needed. Telephony config (AMI, Coturn,
-`VM_PUBLIC_DOMAIN`) is **not** in the settings UI — those live in `.env`
-and `pbx_configs/` and require a restart, by design (see
-`prisma/schema.prisma`'s `AppSetting` model comment for why they were
-kept out of the runtime-configurable set).
+`/admin/settings`, no redeploy needed. Most telephony config (AMI,
+Coturn's realm/secret) is still **not** in the settings UI — those live in
+`.env`/`pbx_configs/` and require a restart, by design (see
+`prisma/schema.prisma`'s `AppSetting` model comment for why they were kept
+out of the runtime-configurable set). **`VM_PUBLIC_DOMAIN` is the one
+exception (Loop C4)** — it, plus `CLOUDFLARE_API_TOKEN`, live in
+`/admin/settings`' "Domain & TLS" section; see this doc's TLS section
+above for the full "Save" vs. "Connect domain" distinction (Save alone
+does not touch any running container).
 
 Backups: run `scripts/backup.sh` on a cron (it dumps both databases and
 tars recordings/voicemail/photos/the OpenWA session volume). Restore steps
