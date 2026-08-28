@@ -111,6 +111,7 @@ Mirrors the 4 phases in the master prompt (`ALGO_PBX_MASTER_DOC.md` §1). Check 
   - [x] Agent status selector (Available/Busy/Break/Offline) — UI + context state only; not yet persisted server-side (needs auth first, see §6)
   - [x] `npx tsc --noEmit` clean; `npm run build` (Next production build) succeeds
   - [ ] Never run against a real Asterisk WSS endpoint — no cloud VM available in this session
+  - [x] **(2026-08-28, §20)** Hold/attended-transfer no longer collapse the call window to "No active call" on a failed re-INVITE/REFER while the far end is still up; agent-visible callError added; MOH class selection pinned explicitly (moh_suggest/moh_passthrough) instead of relying on PJSIP's implicit default — see §20 for full detail. Still not run against live Asterisk/Dinstar.
 - [x] **Phase 3 — Manager/Admin dashboard (scaffolded, data flows untested end-to-end)**
   - [x] Live wallboard (`/admin`, `GET /api/wallboard`) — active calls via AMI `CoreShowChannels`, agents online via Postgres
   - [x] Eavesdrop/Whisper/Barge controls (`InterventionControls` → `POST /api/intervention` → AMI `Originate` + `ChanSpy`) — **channel picker now backed by `GET /api/channels`** (Foundation phase), no more manual CLI lookup, with graceful fallback to manual text entry if AMI is unreachable
@@ -2081,3 +2082,158 @@ Verified post-deploy: all 8 containers healthy (`caddy`'s known
 false-alarm aside), `/admin/contacts` and `/admin/dinstar` both return
 `307` (redirect to login — proof the routes exist and are correctly
 gated, not 404).
+
+
+## 20. Hold/transfer call-window collapse fixed; agent navbar wired to real routes; MOH hardened; inbound-voice diagnosis corrected (2026-08-28, follow-up to §19)
+
+Entry point was a user report bundling four symptoms: the agent navbar's
+Voicemail/Missed/Chat items do nothing, pressing Hold (or starting a
+Transfer) makes the active-call card collapse to "No active call" while
+the call is still live on the far end, no music plays on hold, and a
+pasted third-party diagnostic brief for the Dinstar inbound/SMS/Tailscale
+path. Root-caused all four by reading the actual code (`sip-context.tsx`,
+the installed `sip.js` in `node_modules`, `call-controls.tsx`,
+`agent-shell.tsx`, the PJSIP/MOH configs) rather than trusting the pasted
+brief, which turned out to be wrong or already-solved on several specific
+claims — see the corrections recorded in the approved plan file
+(`~/.claude/plans/the-navbar-voicemail-missed-chat-cheeky-pinwheel.md`).
+
+**Root cause of the call-window collapse (two independent causes, both
+confirmed against `node_modules/sip.js`, not assumed):**
+
+- **Hold**: `toggleHold` had no try/catch and `call-controls.tsx`'s onClick
+  had no `.catch` — a hold/unhold rejection was an unhandled promise
+  rejection with zero UI feedback. Worse, sip.js's own
+  `SessionManager.setHold` → `Session.invite()` (the hold re-INVITE)
+  **terminates the session itself** from inside `session.js` when Asterisk
+  2xxs the re-INVITE with an answer SDP the browser can't apply
+  (`ackAndBye(488, "Bad Media Description")`) — and reports that through
+  the **same** `onCallHangup` delegate as an ordinary hangup. The app then
+  unconditionally reset to `"idle"`, which is what "No active call"
+  renders — while the far end (Asterisk, and whoever it's bridged to)
+  stays up. Confirmed a rejected re-INVITE *cannot* do this (the Web
+  SessionDescriptionHandler has no `rollbackDescription`, so sip.js's
+  rollback path is a no-op) — the live failure has to be an *accepted*
+  re-INVITE whose answer SDP fails locally.
+- **Attended transfer**: `completeAttendedTransfer` awaited
+  `manager.transfer(...)` and reset both sessions unconditionally on
+  resolution. But `Session.refer()`/`_refer()` resolves as soon as the
+  REFER hits the transport — never on the 202, and never on the
+  transfer-result NOTIFY that actually says whether the far end accepted
+  it. A REFER later rejected (4xx/5xx/6xx — precisely the single-port
+  Dinstar 503 case behind the `9292e92` transfer-guard commit) still
+  collapsed the UI to idle with **both** sip.js sessions alive and
+  orphaned: `hangupCall` early-returns on the now-null ref, a later
+  far-end BYE fails the identity check in `onCallHangup`, and
+  `onCallReceived` believes the agent is free while two real calls are
+  still up.
+- Two secondary defects found alongside: SessionManager shares **one**
+  `<audio>` element across every managed session, so ending the
+  attended-transfer consult call wiped the resumed primary call's audio
+  (silent, not dropped); and the attended-hold failure wrote to
+  `dialError`, rendered by `Dialpad`, not `CallControls` — the agent could
+  never see it.
+
+**Fix:**
+
+- New `src/lib/call-termination.ts` (`classifyTermination`) and
+  `src/lib/refer-notify.ts` (`parseReferNotify`/`describeReferNotify`) —
+  pure, sip.js-independent decision helpers, same pattern as the existing
+  `transfer-guard.ts`. 16 new tests between the two.
+- `sip-context.tsx`: `toggleHold` wrapped in try/catch/finally with a
+  `holdInFlightRef`; `onCallHangup` now calls `classifyTermination` to set
+  a new `callError` (surfaced by `CallControls`, including its idle
+  branch, so the explanation survives the collapse) instead of silently
+  resetting; `completeAttendedTransfer` rewritten to pass `onNotify` and
+  gate the reset on `parseReferNotify` reporting `succeeded` — on
+  `failed`/timeout (~15s) both sessions are kept alive so the agent can
+  retry or cancel, matching the existing "single-port Dinstar" guard's own
+  intent; `blindTransfer` gets the same NOTIFY wiring for feedback only
+  (its local-leg collapse on REFER acceptance is legitimate). New
+  `reattachPrimaryAudio()` re-attaches the primary session's remote stream
+  via `manager.getRemoteMediaStream()` whenever the consult session ends
+  while the primary lives. The attended-hold failure now writes
+  `callError`, not `dialError`.
+- `call-controls.tsx`: renders `callError` in both the active-call and
+  idle cards, with a dismiss button; the Hold button gets a defensive
+  `.catch` on top of `toggleHold`'s own internal handling; the
+  `completeAttendedTransfer` catch surfaces the thrown error's real
+  message instead of a fixed string.
+- Behind `NEXT_PUBLIC_SIP_DEBUG=1`, sip.js's `userAgentOptions.logLevel`
+  now goes to `"debug"` — needed to actually capture the live SDP failure
+  on a real deploy; **not verified against live Asterisk/Dinstar, no such
+  environment exists in this session** (same standing constraint as every
+  other SIP code path in this repo). The fix makes the failure visible and
+  non-fatal to the UI; it does not by itself guarantee the hold re-INVITE
+  starts succeeding — that needs a `pjsip show history` SDP diff on real
+  hardware, see the plan file's Verification section.
+
+**Agent navbar wired to real routes.** `agent-shell.tsx`'s
+Voicemail/Missed/Chat items were plain `<span>`s — not stale data (their
+badge counts already polled live endpoints, fixed by an earlier commit),
+just non-navigable. New `src/app/agent/{voicemail,missed,chat}/page.tsx`,
+each a thin server-component shell (mirrors `admin/cdr/page.tsx`) around
+the **existing** `AgentVoicemail`/`AgentMissedCalls`/`ChatPanel`
+components — no duplicated data fetching, no new endpoints. Navbar items
+are now real `<Link>`s with an active-route indicator via `usePathname()`.
+`MissedCallsRefreshContext` still spans `children` at the layout level, so
+the badge-refresh handshake is unaffected. Also fixed in passing:
+`GET /api/me/missed-calls` never resolved `callerNumber` to a Contact
+display name, unlike `/api/cdr` — now reuses
+`buildContactDisplayMap`/`resolveContactDisplayName` from
+`contact-display.ts`, same as the admin CDR page.
+
+**MOH hardened.** Config was already structurally correct (verified live
+in §16/§18: `musiconhold.conf`'s `[default]` class registers,
+`direct_media=no` lets Asterisk anchor media and inject MOH). What was
+missing was that class selection was **entirely implicit** — no
+`moh_suggest` anywhere, so it only worked because PJSIP's own implicit
+default happens to be the string `"default"`, matching the class name by
+coincidence. Now pinned explicitly: `moh_suggest=default` on
+`[dinstar-trunk]` (`pjsip-base.conf`) and on every generated WebRTC/
+hardware endpoint (`src/lib/pjsip-config.ts`, with new test assertions),
+plus a new `[global]` section pinning `moh_passthrough=no`. Also moved
+`moh/default/README.md` → `moh/README.md`: it previously sat *inside* the
+directory Asterisk scans for playable files, and `moh show files` was
+listing it as a track (harmless only because `.wav` sorts first — see
+§16's original finding). **Not fixed, and can't be from here:**
+`moh/default/music-box.wav` is gitignored and will not exist on a fresh
+clone/deploy target — an empty directory means silence with no error, not
+a crash, so this is easy to miss. Must be copied to any new deploy target
+by hand.
+
+**Inbound-voice diagnosis in `handoff.md` corrected.** New evidence (the
+gateway *answers* and plays a "please dial the extension" prompt before
+dropping) directly contradicts §19's carrier-side-barring conclusion — a
+truly barred call can't produce gateway audio at all. This matches Dinstar
+DISA/second-dial-tone behavior from an empty "To VOIP Hotline" on one or
+more ports; §19's own record of a "Port 0 hotline" fix "confirmed
+persisted" suggests it was never applied (or didn't survive) on the other
+three ports. `handoff.md` now carries an explicit correction block above
+the superseded section rather than an edited-in-place rewrite of history.
+**Not applied in this session** — it's a Dinstar web UI change (To VOIP
+Hotline = `s` on all four ports), not a code change, and no access to the
+gateway exists in this environment.
+
+**Verified this session:** `npm run typecheck && npm run test &&
+npm run lint && npm run build` all clean — 294 tests passing (up from 278
+in §18/§19's last count, +16 from the two new pure-logic test files), build
+exits 0. **Not verified, and cannot be from this session:** any of the
+hold/transfer/MOH fixes against a real SIP call — no live Asterisk/Dinstar
+available here, same standing constraint as every other SIP code path in
+this repo. The Dinstar hotline fix and the `moh/default/music-box.wav`
+copy are both real-hardware/real-deploy follow-ups, not code.
+
+**Also produced, not yet executed:** a full production-deployment plan
+for a fresh Hostinger VPS (Phases 1–5: bootstrap, Tailscale bridge to the
+Dinstar, gateway inbound-voice config, SMS TLS fix + poller, security
+hardening), gated on this session's Phase 0 fixes landing first. Several
+corrections to the user-provided deployment brief are recorded in the
+plan file itself — notably a contested Dinstar LAN IP (`192.168.11.1` per
+this repo's own config vs `192.168.11.20` claimed in the brief, which
+§15's live VM record confirms is actually the VM's own second NIC on
+that LAN, not the gateway), `DINSTAR_AUTH_STYLE`'s real values being
+`basic`/`query` (not digest), and the SMS API being self-signed HTTPS (not
+plain HTTP) — undici rejects it before any application code runs, which is
+the actual blocker, not credentials or auth style, neither of which has
+ever been exercised.

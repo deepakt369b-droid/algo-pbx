@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
+import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,7 @@ export async function GET() {
     return NextResponse.json({ error: "No extension linked to this account" }, { status: 404 });
   }
 
-  const [calls, user] = await Promise.all([
+  const [calls, user, contacts] = await Promise.all([
     db.callDetailRecord.findMany({
       where: { agentExtension: extension, direction: "inbound", disposition: { in: MISSED_DISPOSITIONS } },
       orderBy: { startedAt: "desc" },
@@ -35,9 +36,23 @@ export async function GET() {
       select: { id: true, callerNumber: true, startedAt: true, disposition: true },
     }),
     db.user.findUnique({ where: { id: session.user.id }, select: { missedCallsSeenAt: true } }),
+    // Same best-effort name resolution GET /api/cdr already does (see
+    // that route's comment) — CallDetailRecord.callerNumber has no FK to
+    // Contact, it's a raw string off an Asterisk CDR event. This route
+    // previously showed only the raw number here while the admin CDR page
+    // already resolved names for the exact same data; agents deserve the
+    // same readability the admin view has.
+    db.contact.findMany({ select: { numberE164: true, displayName: true } }),
   ]);
+  const contactsByE164 = buildContactDisplayMap(contacts);
 
-  return NextResponse.json({ calls, lastSeenAt: user?.missedCallsSeenAt ?? null });
+  return NextResponse.json({
+    calls: calls.map((call) => ({
+      ...call,
+      callerDisplayName: resolveContactDisplayName(call.callerNumber, contactsByE164),
+    })),
+    lastSeenAt: user?.missedCallsSeenAt ?? null,
+  });
 }
 
 // Marks the agent's missed-call list as viewed — same lightweight

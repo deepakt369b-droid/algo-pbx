@@ -25,9 +25,14 @@ pbx_configs/keys/*
 pbx_configs/generated/*
 !pbx_configs/generated/README.md
 
-# Music-on-hold audio — licensing is an operator concern, don't commit media
+# Music-on-hold audio — licensing is an operator concern, don't commit media.
+# moh/README.md documents provenance and lives OUTSIDE this directory
+# deliberately: musiconhold.conf's directory= points straight at
+# moh/default/, and Asterisk's `moh show files` was listing README.md
+# itself as a playable track (harmless only by luck, since .wav sorted
+# first) — see musiconhold.conf's header for the fuller MOH-gaps writeup
+# this was fixed alongside.
 moh/default/*
-!moh/default/README.md
 
 # Same reasoning — inbound-call ringtone (see public/sounds/README.md)
 algo-pbx-frontend/public/sounds/*

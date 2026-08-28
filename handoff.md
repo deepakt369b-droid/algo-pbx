@@ -1,10 +1,52 @@
-# Handoff — Outbound GSM audio confirmed live. Inbound blocked on the carrier, not config.
+# Handoff — Outbound GSM audio confirmed live. Inbound root cause corrected below (was misdiagnosed as carrier-side).
 
-Last updated: 2026-08-28. Full detail in `LLM.md §19` and the plan file
+Last updated: 2026-08-28. Full detail in `LLM.md §19`/§20 and the plan file
 `~/.claude/plans/sorted-sprouting-crystal.md` (supersedes
 `objective-refer-the-handoff-validated-wigderson.md`).
 
-## THE headline: outbound calls carry real two-way audio; inbound is a carrier problem
+## CORRECTION (2026-08-28, later same day): inbound is NOT carrier-side barring
+
+The section below this one ("THE headline") concluded inbound calls were
+blocked by the carrier before ever reaching the SIP leg, based on a
+`FORBID CALL` GSM-layer log and an all-zeros SIP Call History. **New
+evidence contradicts that**: a real inbound call to the SIM is **answered
+by the Dinstar gateway**, which plays a "please dial the extension"
+second-dial-tone prompt, then times out and drops when the caller (who
+has no extension to dial) says nothing. A carrier-side block cannot
+produce gateway audio — the call would never be answered at all. So the
+GSM leg **is** completing; the failure is entirely on the Dinstar side of
+the gateway's own inbound routing.
+
+This matches Dinstar UC-series DISA/second-dial-tone behavior, which
+triggers when a port's **"To VOIP Hotline"** value is empty: the gateway
+answers, waits for the caller to key in a destination extension instead of
+routing anywhere automatically, and drops the call on timeout when nothing
+is entered. This is consistent with — and probably explains — the "gateway
+UI fix for the two-stage-dialing IVR (Port 0 hotline + 'Do Not Answer for
+Hotline')" mentioned as "applied and confirmed persisted" two paragraphs
+below: that fix may have only ever been applied to Port 0, or didn't
+survive, while the other ports (or the same port on a later test) still
+have an empty hotline.
+
+**Fix, not yet applied in-session** (needs the Dinstar web UI, not code):
+on **all four** GSM ports, set **To VOIP Hotline = `s`** — matching the `s`
+extension `[from-dinstar]` already defines in `pbx_configs/extensions.conf`
+— confirm each port's Tel→IP routing rule targets the Asterisk SIP trunk
+with "Allow Call" enabled, and disable any separate DISA/second-dial
+toggle if the firmware exposes one apart from the hotline field itself. No
+dialplan change is needed: `extensions.conf`'s `_[+0-9].`/`_X.` catch-alls
+already funnel any DID Dinstar sends to `s`.
+
+**Test:** call the SIM. Expect **no prompt** — the call should go straight
+to `asterisk -rvvv` showing the INVITE matched to `dinstar-trunk`, entering
+`[from-dinstar]`, ringing `support_queue`, and popping in the agent UI with
+caller ID. If the prompt is still heard, the hotline value didn't take (or
+a different port answered) — re-check per-port, not just the port that was
+fixed before. USSD `*#35#` returning `UNKNOWN APPLICATION` (below) may
+simply mean that code isn't supported by this carrier for this account
+type, not evidence of barring — don't re-chase that lead first.
+
+## THE headline (SUPERSEDED — kept for the record, see correction above): outbound calls carry real two-way audio; inbound is a carrier problem
 
 A call from agent 2002 to a **national-format** number (`0504852446`)
 went 100 Trying → 183 → 200 OK → bridged, with **confirmed bidirectional
@@ -14,7 +56,7 @@ First outbound call with verified real audio, not just signaling.
 GSM leg after ~2s — read this as the carrier rejecting that dial format on
 this SIM, not a bug; use national format for now.
 
-**Inbound is fully diagnosed and is NOT a Dinstar or Asterisk problem.**
+**[SUPERSEDED — see the correction above this section] Inbound is fully diagnosed and is NOT a Dinstar or Asterisk problem.**
 Every configurable surface on the gateway was checked and ruled out (Call
 Limit, Caller Manipulation, Digit Map, Call Forwarding, Phone Number
 Learning/Config, No Alerting Call Handle — all empty/default). The GSM

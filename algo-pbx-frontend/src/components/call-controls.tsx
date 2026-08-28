@@ -21,6 +21,8 @@ export function CallControls() {
     cancelAttendedTransfer,
     audioBlocked,
     retryAudioPlayback,
+    callError,
+    clearCallError,
   } = useSIP();
   const [transferTarget, setTransferTarget] = useState("");
   const [showTransfer, setShowTransfer] = useState(false);
@@ -33,7 +35,26 @@ export function CallControls() {
   const [transferBusy, setTransferBusy] = useState(false);
 
   if (callState === "idle") {
-    return <div className="glass-card w-full max-w-xs p-6 text-center text-slate-500">No active call</div>;
+    return (
+      <div className="glass-card flex w-full max-w-xs flex-col items-center gap-2 p-6 text-center">
+        <p className="text-slate-500">No active call</p>
+        {/* Surfaces WHY the call just ended when it wasn't an ordinary
+            hangup — a failed hold re-INVITE or a failed/unconfirmed
+            transfer (see sip-context.tsx's classifyTermination usage in
+            onCallHangup). Without this the explanation would vanish the
+            instant the active-call card unmounts and got replaced by this
+            one, leaving the agent with nothing but a call that "just
+            ended". */}
+        {callError && (
+          <div className="flex flex-col items-center gap-1 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
+            <p>{callError}</p>
+            <button onClick={clearCallError} className="underline hover:text-yellow-300">
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   if (callState === "ringing") {
@@ -101,6 +122,14 @@ export function CallControls() {
       <p className="text-center text-sm uppercase tracking-wide text-slate-400">
         {callState === "held" ? "On hold" : "In call"}
       </p>
+      {callError && (
+        <div className="flex items-start justify-between gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
+          <p>{callError}</p>
+          <button onClick={clearCallError} className="shrink-0 underline hover:text-yellow-300">
+            Dismiss
+          </button>
+        </div>
+      )}
       {audioBlocked && (
         <button
           onClick={retryAudioPlayback}
@@ -120,7 +149,16 @@ export function CallControls() {
           {isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
         </button>
         <button
-          onClick={toggleHold}
+          onClick={() => {
+            // toggleHold itself has an internal try/catch (see
+            // sip-context.tsx) that never lets a hold/unhold rejection go
+            // unhandled — this .catch is a second, redundant backstop, not
+            // the primary handling. It existing at all replaces what used
+            // to be nothing: an onClick calling an async function with no
+            // .catch, i.e. a guaranteed unhandled promise rejection on any
+            // failure path that try/catch didn't anticipate.
+            toggleHold().catch((err) => console.error("toggleHold failed unexpectedly:", err));
+          }}
           className="flex h-12 w-12 items-center justify-center rounded-full border border-border hover:border-cyan"
           aria-label={callState === "held" ? "Resume call" : "Hold call"}
           disabled={consultState !== "idle"}
@@ -206,7 +244,18 @@ export function CallControls() {
           </p>
           <div className="flex gap-2">
             <button
-              onClick={() => completeAttendedTransfer().catch(() => setTransferError("Complete transfer failed"))}
+              onClick={() =>
+                completeAttendedTransfer().catch((err) => {
+                  // completeAttendedTransfer (sip-context.tsx) already
+                  // wrote the same explanation to callError (rendered
+                  // above, on both this card and the idle one) — this
+                  // ALSO shows it right next to the buttons that caused
+                  // it, rather than the generic "Complete transfer
+                  // failed" this used to always show regardless of why.
+                  const text = err instanceof Error ? err.message : "Complete transfer failed";
+                  setTransferError(text);
+                })
+              }
               disabled={consultState !== "active"}
               className="flex-1 rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background disabled:cursor-not-allowed disabled:opacity-40"
             >

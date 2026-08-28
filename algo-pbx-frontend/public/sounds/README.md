@@ -8,7 +8,7 @@ came from) to 8kHz mono 16-bit PCM. `.wav`, not `.mp3` as originally
 planned — nothing here can encode MP3, and WAV needs no codec support
 browsers don't already have.
 
-Gitignored, same reasoning as `moh/default/README.md`: this file exists on
+Gitignored, same reasoning as `moh/README.md`: this file exists on
 whichever machine converted it and must be copied to any other deploy
 target separately; it is NOT in git history.
 

@@ -7,6 +7,10 @@ import { useMissedCallsRefresh } from "@/components/agent-shell/agent-shell";
 interface MissedCall {
   id: string;
   callerNumber: string;
+  /** Resolved by GET /api/me/missed-calls via src/lib/contact-display.ts —
+   * same fallback rule as the admin CDR page's callerDisplayName. Null
+   * when the number matches no Contact row. */
+  callerDisplayName: string | null;
   startedAt: string;
   disposition: string;
 }
@@ -73,7 +77,7 @@ export function AgentMissedCalls() {
         {calls.map((c) => (
           <li key={c.id} className="flex items-center justify-between gap-3 border-t border-border pt-3 first:border-0 first:pt-0">
             <div>
-              <p>{c.callerNumber}</p>
+              <p>{c.callerDisplayName ?? c.callerNumber}</p>
               <p className="text-xs text-slate-500">
                 {new Date(c.startedAt).toLocaleString()} · {c.disposition}
               </p>

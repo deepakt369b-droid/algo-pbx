@@ -28,6 +28,10 @@ describe("renderPjsipConf", () => {
     expect(output).toContain("dtls_setup=actpass");
     expect(output).toContain("ice_support=yes");
     expect(output).toContain("media_use_received_transport=yes");
+    // Pinned explicitly rather than left to PJSIP's implicit default —
+    // see the generator's comment for why that coincidence (implicit
+    // default == musiconhold.conf's only class name) was worth naming.
+    expect(output).toContain("moh_suggest=default");
     expect(output).toContain("auth=1002");
     expect(output).toContain("aors=1002");
 
@@ -54,6 +58,7 @@ describe("renderPjsipConf", () => {
     expect(output).toContain("context=from-agent");
     expect(output).toContain("disallow=all");
     expect(output).toContain("allow=alaw,ulaw");
+    expect(output).toContain("moh_suggest=default");
     expect(output).toContain("auth=2002");
     expect(output).toContain("aors=2002");
 

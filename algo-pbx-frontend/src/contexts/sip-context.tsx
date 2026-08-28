@@ -7,6 +7,8 @@ import type { Session } from "sip.js";
 import type { CallState, AgentStatus } from "@/types";
 import { extractCallQuality } from "@/lib/webrtc-stats";
 import { evaluateTransferPermission, isInternalExtension, type CallOrigin } from "@/lib/transfer-guard";
+import { classifyTermination } from "@/lib/call-termination";
+import { describeReferNotify, parseReferNotify } from "@/lib/refer-notify";
 
 // Phase F rewrite: migrated off Web.SimpleUser onto sip.js's official
 // Web.SessionManager. SimpleUser's own docblock says "it only handles a
@@ -33,6 +35,14 @@ interface SIPContextType {
   agentStatus: AgentStatus;
   incomingCallerId: string | null;
   dialError: string | null;
+  /** Agent-facing explanation for a call that just ended abnormally — a
+   * failed hold re-INVITE (see src/lib/call-termination.ts) or a
+   * failed/unconfirmed transfer (see src/lib/refer-notify.ts). Rendered by
+   * CallControls, including in its "idle" branch, so the explanation
+   * survives the collapse back to "No active call" instead of vanishing
+   * with the card that would have shown it. */
+  callError: string | null;
+  clearCallError: () => void;
   /** True when the browser's autoplay policy blocked remote audio
    * playback — see onCallAnswered's comment. The UI should render an
    * "unmute" affordance calling retryAudioPlayback when this is true. */
@@ -125,6 +135,16 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   // transfer time, since by then the only signal left is the (possibly
   // stale) remote identity.
   const primaryCallOriginRef = useRef<CallOrigin>(null);
+  // Set for the duration of a hold/unhold re-INVITE or an attended-transfer
+  // completion REFER against the PRIMARY session — read by onCallHangup to
+  // tell an ordinary hangup apart from sip.js killing the session itself as
+  // a side effect of one of those in-flight operations (see
+  // src/lib/call-termination.ts's header for why that distinction matters
+  // and why it can only be inferred this way, not read off sip.js's own
+  // termination reason). Always cleared in a finally so a thrown error
+  // never leaves a stale in-flight flag behind.
+  const holdInFlightRef = useRef(false);
+  const transferInFlightRef = useRef(false);
   // A useRef instead of document.getElementById("remote-audio") (the
   // previous approach) — fragile under Suspense/streaming rendering where
   // an effect can run before the element the id refers to has actually
@@ -169,6 +189,15 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   const [agentStatus, setAgentStatusState] = useState<AgentStatus>("OFFLINE");
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null);
   const [dialError, setDialError] = useState<string | null>(null);
+  // Distinct from dialError: dialError is rendered by Dialpad (dial-time
+  // failures — a call that never got established). callError is rendered
+  // by CallControls, for a call that WAS established and then ended
+  // abnormally (failed hold, failed/unconfirmed transfer) — mixing the two
+  // previously meant the attended-transfer hold failure (see
+  // startAttendedTransfer below) wrote to dialError and the agent, looking
+  // at CallControls, never saw it.
+  const [callError, setCallError] = useState<string | null>(null);
+  const clearCallError = useCallback(() => setCallError(null), []);
   const [audioBlocked, setAudioBlocked] = useState(false);
 
   // Step 0: fetch the runtime SIP domain/WS server — unauthenticated,
@@ -232,6 +261,33 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       cancelled = true;
     };
   }, [sessionStatus]);
+
+  // Re-attach the primary call's remote audio to the shared <audio>
+  // element after some OTHER session (the attended-transfer consult call)
+  // has terminated and wiped it — see onCallHangup's consult-branch comment
+  // for why SessionManager's shared-element design requires this.
+  // manager.getRemoteMediaStream is the same public accessor sip.js's own
+  // setupRemoteMedia uses internally (session-manager.js); undefined if the
+  // session isn't Established, which the caller sites here already
+  // guarantee. Declared here (ahead of the SessionManager-construction
+  // effect below, which closes over it) rather than near the other call
+  // actions further down, since a const referenced inside that effect's
+  // own dependency array must already be initialized at render time.
+  const reattachPrimaryAudio = useCallback((session: Session) => {
+    const manager = sessionManagerRef.current;
+    const audioEl = audioElementRef.current;
+    if (!manager || !audioEl) return;
+    const stream = manager.getRemoteMediaStream(session);
+    if (!stream) return;
+    audioEl.srcObject = stream;
+    // Same autoplay-policy handling as onCallAnswered — reattaching
+    // srcObject programmatically can hit the same Chrome block a fresh
+    // inbound-call assignment does.
+    audioEl
+      .play()
+      .then(() => setAudioBlocked(false))
+      .catch(() => setAudioBlocked(true));
+  }, []);
 
   // Step 2: once credentials are known, register the softphone under THIS
   // user's own extension via a SessionManager instance.
@@ -308,6 +364,15 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       userAgentOptions: {
         authorizationUsername: extension,
         authorizationPassword: secret,
+        // Opt-in verbose sip.js logging (SDP, re-INVITE handling, session
+        // state transitions) — off by default since it's noisy. Turn on
+        // with NEXT_PUBLIC_SIP_DEBUG=1 to capture the exact failure
+        // reason when a hold/transfer re-INVITE goes wrong in the field:
+        // look for "Failed to handle answer in 2xx response to re-INVITE"
+        // or "...without a session description" immediately followed by
+        // "Session state changed to Terminated", which confirms sip.js
+        // itself killed the session (see call-termination.ts's header).
+        logLevel: process.env.NEXT_PUBLIC_SIP_DEBUG === "1" ? "debug" : "warn",
         transportOptions: {
           // CRITICAL: `server` MUST be repeated here. sip.js's
           // SessionManager only falls back to its `server` constructor
@@ -443,6 +508,16 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         },
         onCallHangup: (ended) => {
           if (ended === primarySessionRef.current) {
+            // Distinguish an ordinary hangup from sip.js having killed
+            // THIS session itself as a side effect of an in-flight hold or
+            // transfer re-INVITE/REFER (see call-termination.ts's header —
+            // both land here through the same delegate, sip.js gives no
+            // other signal). Read before clearing the refs below.
+            const verdict = classifyTermination({
+              holdInFlight: holdInFlightRef.current,
+              transferInFlight: transferInFlightRef.current,
+            });
+            if (verdict.message) setCallError(verdict.message);
             primarySessionRef.current = null;
             primaryCallOriginRef.current = null;
             setCallState("idle");
@@ -452,6 +527,20 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
           } else if (ended === consultSessionRef.current) {
             consultSessionRef.current = null;
             setConsultState("idle");
+            // The consult leg just died (e.g. cancelAttendedTransfer's own
+            // hangup, or the far end declining/hanging up on it) while the
+            // primary call is still up. SessionManager shares ONE <audio>
+            // element across every managed session (see the <audio
+            // id="remote-audio"> below) and its cleanupMedia nulls that
+            // element's srcObject whenever ANY session terminates — so
+            // without this, the resumed primary call is left live but
+            // silent. Re-attach on the next tick: this delegate fires
+            // during sip.js's own cleanup, before it's necessarily safe to
+            // read the primary session's media state back out.
+            if (primarySessionRef.current) {
+              const primary = primarySessionRef.current;
+              setTimeout(() => reattachPrimaryAudio(primary), 0);
+            }
           }
         },
         onCallHold: (holdSession, isHeld) => {
@@ -508,7 +597,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     // refactor to inject ICE servers into an already-constructed
     // SessionManager, which sip.js does not support post-construction.
     // patchServerStatus is a stable useCallback([]).
-  }, [credentials, turnCredentials, runtimeConfig, patchServerStatus]);
+  }, [credentials, turnCredentials, runtimeConfig, patchServerStatus, reattachPrimaryAudio]);
 
   // Inbound-call ringtone + browser notification. Fires only on the
   // "ringing" transition (not on every callState change) so it plays
@@ -671,11 +760,41 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     if (!manager || !target) return;
     // The actual callState flip happens in the onCallHold delegate above,
     // once Asterisk confirms the re-INVITE — not assumed optimistically
-    // here, since a hold/unhold re-INVITE can be rejected.
-    if (callState === "held") {
-      await manager.unhold(target);
-    } else if (callState === "active") {
-      await manager.hold(target);
+    // here, since a hold/unhold re-INVITE can be rejected. A REJECTED
+    // re-INVITE can't terminate the call (the Web SessionDescriptionHandler
+    // has no rollbackDescription, so sip.js's rollbackOffer is a no-op) —
+    // but an ACCEPTED one whose answer SDP the browser can't apply DOES
+    // terminate it, from inside sip.js's own Session.invite(), and reports
+    // through the same onCallHangup delegate as an ordinary hangup. This
+    // try/catch/finally exists to (a) never leave an unhandled rejection —
+    // there used to be no .catch anywhere on this path, at either this
+    // function or call-controls.tsx's onClick — and (b) mark the window
+    // onCallHangup checks (see call-termination.ts) so that failure reads
+    // as "hold failed" instead of "call ended" with no explanation.
+    holdInFlightRef.current = true;
+    try {
+      if (callState === "held") {
+        await manager.unhold(target);
+      } else if (callState === "active") {
+        await manager.hold(target);
+      }
+    } catch (err) {
+      console.error("Hold/unhold failed:", err);
+      setCallError("Hold failed. If the call ended, the other party may still be on the line.");
+      // No further correction attempted here deliberately: for a session
+      // that SURVIVES (a re-INVITE rejected with a final response),
+      // SessionManager.setHold's own requestDelegate.onReject
+      // (session-manager.js) already flips its internal `managedSession
+      // .held` back and fires onCallHold with the corrected value BEFORE
+      // this catch runs — which is what keeps callState in sync in that
+      // case, same as any other hold attempt. This catch only additionally
+      // covers invite() rejecting the promise itself with no requestDelegate
+      // callback at all (a pre-flight guard, RequestPendingError, or — the
+      // scenario this whole file exists for — the session terminating out
+      // from under the call, which onCallHangup's own classifyTermination
+      // check handles separately).
+    } finally {
+      holdInFlightRef.current = false;
     }
   }, [callState]);
 
@@ -702,8 +821,26 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     // SessionManager.transfer(session, target): a string target means
     // blind transfer (plain REFER) — the public, documented equivalent of
     // the old private-`session.refer()` hack.
+    //
+    // onNotify: Session.refer()/._refer() (session.js) resolves as soon as
+    // the REFER hits the transport — never on the 202, and never on the
+    // transfer-result NOTIFY that says whether the far end actually
+    // accepted the referral. Without this, call-controls.tsx's
+    // startTransfer closed the transfer form as if it had worked
+    // regardless of the real outcome. For blind transfer the LOCAL leg
+    // legitimately ends the moment Asterisk accepts the REFER (that's
+    // BYE'd by Asterisk itself, not something this app resets) — so the
+    // NOTIFY here is feedback only, surfaced via callError, not a gate on
+    // any state reset.
     const referTo = `sip:${destination}@${sipDomainRef.current}`;
-    await manager.transfer(target, referTo);
+    await manager.transfer(target, referTo, {
+      onNotify: (notification) => {
+        const result = parseReferNotify(notification.request.body ?? "");
+        if (result.progress === "failed") {
+          setCallError(describeReferNotify(result));
+        }
+      },
+    });
   }, []);
 
   // --- Attended transfer (Phase F) ---
@@ -735,7 +872,13 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
           // <audio> element (both audible at once). Abort instead and tell
           // the agent via the same surface the Dialpad uses for call errors.
           console.error("Hold failed — attended transfer aborted.");
-          setDialError("Could not hold the current call — attended transfer aborted.");
+          // CallControls, not Dialpad — this failure happens mid-call
+          // (there IS an active call, that's the whole premise of a
+          // transfer), so it belongs on the same card as the rest of
+          // transfer/hold error handling. dialError is Dialpad's surface
+          // for dial-TIME failures and previously this write there meant
+          // the agent, looking at CallControls, could simply never see it.
+          setCallError("Could not hold the current call — attended transfer aborted.");
           return;
         }
       }
@@ -754,25 +897,101 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     [callState]
   );
 
+  // How long to wait for a transfer-result NOTIFY before giving up on
+  // confirmation. Not a hard protocol timeout — just how long the UI keeps
+  // both sessions "in progress" before telling the agent the outcome is
+  // unconfirmed rather than silently hanging the Complete Transfer button
+  // forever if Asterisk never sends one.
+  const ATTENDED_TRANSFER_NOTIFY_TIMEOUT_MS = 15_000;
+
   const completeAttendedTransfer = useCallback(async () => {
     const manager = sessionManagerRef.current;
     const primary = primarySessionRef.current;
     const consult = consultSessionRef.current;
     if (!manager || !primary || !consult) return;
-    // Session target -> attended transfer completion (REFER w/ Replaces),
-    // per SessionManager.transfer()'s own documented behavior. A failure
-    // here must NOT run the optimistic reset below — both sessions are
-    // still alive, so rethrow and let the caller show the error while the
-    // agent can retry or cancel.
-    await manager.transfer(primary, consult);
-    // Both legs end from the transferor's perspective once the transfer
-    // completes; onCallHangup will fire for each and reset state, but
-    // reset optimistically too so the UI doesn't wait on that round-trip.
-    primarySessionRef.current = null;
-    consultSessionRef.current = null;
-    setCallState("idle");
-    setConsultState("idle");
-    setIncomingCallerId(null);
+    // Session target -> attended transfer completion (REFER w/ Replaces).
+    //
+    // manager.transfer() -> Session.refer() -> Session._refer() resolves as
+    // soon as the REFER hits the transport — NOT on the 202, and NEVER on
+    // the transfer-result NOTIFY that actually says whether the far end
+    // accepted the referral (see refer-notify.ts's header). The PREVIOUS
+    // version of this function treated that early resolution as "the
+    // transfer succeeded" and reset both sessions unconditionally — so a
+    // REFER later rejected (4xx/5xx/6xx; the Dinstar single-port 503 case
+    // from transfer-guard.ts's header is exactly this) still collapsed the
+    // UI to idle with BOTH sip.js sessions alive and orphaned: hangupCall
+    // early-returns on the now-null ref, a later far-end BYE fails the
+    // identity check in onCallHangup, and onCallReceived believes the
+    // agent is free for a new call while two real ones are still up.
+    //
+    // Fix: pass onNotify and gate the reset on parseReferNotify actually
+    // reporting success. On failure, keep BOTH sessions intact — the agent
+    // can retry Complete Transfer or press Cancel, same as any other
+    // in-progress transfer state. transferInFlightRef marks the window so
+    // onCallHangup's classifyTermination (see call-termination.ts) can
+    // explain it correctly if the primary session dies for some OTHER
+    // reason while this is pending.
+    transferInFlightRef.current = true;
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = () => {
+        transferInFlightRef.current = false;
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        finish();
+        // Deliberately resolve, not reject: an unconfirmed outcome is not
+        // the same claim as a confirmed failure, and rejecting here would
+        // make call-controls.tsx show a harder "failed" message than is
+        // actually known to be true. Both sessions are left exactly as
+        // they are (still in the consult UI) so the agent can act on
+        // whatever Asterisk reports next, or retry.
+        setCallError("Transfer status unconfirmed — no response from the server in time. The call may or may not have transferred; check before assuming either way.");
+        resolve();
+      }, ATTENDED_TRANSFER_NOTIFY_TIMEOUT_MS);
+
+      manager
+        .transfer(primary, consult, {
+          onNotify: (notification) => {
+            if (settled) return;
+            const result = parseReferNotify(notification.request.body ?? "");
+            if (result.progress === "succeeded") {
+              settled = true;
+              clearTimeout(timeout);
+              finish();
+              // Both legs end from the transferor's perspective once the
+              // transfer completes; onCallHangup will also fire for each
+              // (its guards no-op harmlessly against the already-nulled
+              // refs below), but reset here too so the UI doesn't wait on
+              // that separate round-trip.
+              primarySessionRef.current = null;
+              consultSessionRef.current = null;
+              setCallState("idle");
+              setConsultState("idle");
+              setIncomingCallerId(null);
+              resolve();
+            } else if (result.progress === "failed") {
+              settled = true;
+              clearTimeout(timeout);
+              finish();
+              const message = describeReferNotify(result);
+              setCallError(message);
+              reject(new Error(message));
+            }
+            // "pending" (1xx) — keep waiting for a final NOTIFY.
+          },
+        })
+        .catch((err) => {
+          // The REFER itself couldn't even be sent (e.g. invalid session
+          // state) — no NOTIFY will ever arrive for this attempt.
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          finish();
+          reject(err);
+        });
+    });
   }, []);
 
   const cancelAttendedTransfer = useCallback(async () => {
@@ -781,6 +1000,12 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     const consult = consultSessionRef.current;
     if (!manager) return;
     if (consult) {
+      // manager.hangup(consult) below terminates the consult session, which
+      // fires onCallHangup's consult branch — that branch already calls
+      // reattachPrimaryAudio when the primary is still live, restoring the
+      // shared <audio> element's srcObject after SessionManager's
+      // cleanupMedia wipes it (see that branch's comment for the full
+      // explanation). Nothing extra needed here for that.
       await manager.hangup(consult).catch(() => undefined);
       consultSessionRef.current = null;
       setConsultState("idle");
@@ -837,8 +1062,10 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         answerCall,
         audioBlocked,
         blindTransfer,
+        callError,
         callState,
         cancelAttendedTransfer,
+        clearCallError,
         completeAttendedTransfer,
         consultState,
         dialError,

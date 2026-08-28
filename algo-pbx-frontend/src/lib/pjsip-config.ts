@@ -101,6 +101,12 @@ rtp_symmetric=yes
 direct_media=no
 rtp_timeout=30
 rtp_timeout_hold=300
+; Matches pjsip-base.conf's dinstar-trunk (moh_suggest=default) — was
+; previously unset here too, working only because PJSIP's own implicit
+; default happens to be the string "default", same as
+; musiconhold.conf's only class. Pinned explicitly for the same reason:
+; nothing should depend on that coincidence continuing to hold.
+moh_suggest=default
 ; auth / aor objects share the endpoint's own name (NOT a "-auth" /
 ; "-aor" suffix). res_pjsip_registrar resolves the AOR for a REGISTER by
 ; the To: header username, so an AOR with a suffixed name is never found
@@ -140,6 +146,7 @@ allow=alaw,ulaw
 direct_media=no
 rtp_timeout=30
 rtp_timeout_hold=300
+moh_suggest=default
 auth=${ext.number}
 aors=${ext.number}
 

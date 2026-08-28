@@ -15,11 +15,20 @@ history.
 This repo intentionally ships no audio files IN GIT — sourcing/licensing
 music is an operator decision, not something to bundle into source
 control, even once a real file exists locally (see `.gitignore`). With
-this directory empty, `[default]`'s MOH class (`pbx_configs/musiconhold.conf`)
+`moh/default/` empty, `[default]`'s MOH class (`pbx_configs/musiconhold.conf`)
 has nothing to play; Asterisk logs a warning and callers get silence
 instead of hold music, not an error — that was the state before
-`music-box.wav` was added.
+`music-box.wav` was added, and is very likely the state on any freshly
+cloned deploy target until this file is copied over by hand.
+
+This README itself lives at `moh/README.md`, one level ABOVE
+`moh/default/` — deliberately not inside it. `[default]`'s `directory=`
+(below) points straight at `moh/default/`, and Asterisk's own `moh show
+files` was listing this README as a playable track when it lived there
+(harmless only by luck: `.wav` sorts before `README.md`). Keep it here.
 
 Referenced by:
-- `pbx_configs/musiconhold.conf`'s `[default]` class (`directory=default`)
+- `pbx_configs/musiconhold.conf`'s `[default]` class
+  (`directory=/var/lib/asterisk/moh/default`, bind-mounted from
+  `./moh/default` — see `docker-compose.yml`)
 - `pbx_configs/queues.conf`'s `musicclass=default` on `support_queue`

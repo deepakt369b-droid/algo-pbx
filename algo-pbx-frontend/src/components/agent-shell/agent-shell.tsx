@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useSIP } from "@/contexts/sip-context";
 import { countUnseenVoicemail } from "@/lib/voicemail-unread";
 
@@ -87,6 +88,7 @@ export function AgentShell({
   signOutAction: () => Promise<void>;
 }) {
   const { isConnected, callState } = useSIP();
+  const pathname = usePathname();
 
   const [voicemailCount] = useBadgeCount("/api/voicemail", (d) => {
     const { messages, lastSeenAt } = d as {
@@ -146,19 +148,39 @@ export function AgentShell({
           <span className={isConnected ? "text-green-400" : "text-red-400"}>{isConnected ? "Connected" : "Disconnected"}</span>
         </span>
         <div className="flex-1" />
+        {/* Real links to /agent/{voicemail,missed,chat} — before this
+            these were plain <span>s with a badge and nothing else;
+            clicking did nothing, and the panels they named were only
+            reachable by scrolling the single /agent dashboard. The badge
+            counts themselves were already live (see useBadgeCount above),
+            it was purely navigation that was missing. isActive drives a
+            visible current-page indicator, since this bar has no sidebar
+            to otherwise show where you are. */}
         <span className="flex items-center gap-3 text-xs text-slate-400">
-          <span title="Unread voicemail" className="flex items-center">
-            Voicemail
-            <Badge count={voicemailCount} />
-          </span>
-          <span title="Missed calls since you were last seen" className="flex items-center">
-            Missed
-            <Badge count={missedCallsCount} />
-          </span>
-          <span title="Unread WhatsApp/SMS" className="flex items-center">
-            Chat
-            <Badge count={whatsappUnreadCount} />
-          </span>
+          {[
+            { href: "/agent/voicemail", label: "Voicemail", count: voicemailCount, title: "Unread voicemail" },
+            {
+              href: "/agent/missed",
+              label: "Missed",
+              count: missedCallsCount,
+              title: "Missed calls since you were last seen",
+            },
+            { href: "/agent/chat", label: "Chat", count: whatsappUnreadCount, title: "Unread WhatsApp/SMS" },
+          ].map(({ href, label, count, title }) => {
+            const isActive = pathname === href;
+            return (
+              <Link
+                key={href}
+                href={href}
+                title={title}
+                aria-current={isActive ? "page" : undefined}
+                className={`flex items-center hover:text-cyan ${isActive ? "text-cyan" : ""}`}
+              >
+                {label}
+                <Badge count={count} />
+              </Link>
+            );
+          })}
         </span>
         {(role === "SUPERVISOR" || role === "ADMIN") && (
           <Link href="/admin" className="text-xs text-cyan hover:underline">
