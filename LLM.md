@@ -2237,3 +2237,266 @@ that LAN, not the gateway), `DINSTAR_AUTH_STYLE`'s real values being
 plain HTTP) — undici rejects it before any application code runs, which is
 the actual blocker, not credentials or auth style, neither of which has
 ever been exercised.
+
+
+## 21. Production deployment to a real Hostinger VPS — full stack live over HTTPS on a real domain; Tailscale bridge to the Dinstar re-established; inbound-voice diagnosis re-confirmed live, correcting §20's correction (2026-08-28, same day, follow-up to §20)
+
+Direct continuation of §20 in the same session: once the Phase 0 app fixes
+landed, the user asked to continue straight into the deployment plan
+(`~/.claude/plans/the-navbar-voicemail-missed-chat-cheeky-pinwheel.md`,
+Phases 1–5) rather than stopping. This entry covers everything actually
+executed — Phase 1 (VPS bootstrap) end to end, Phase 2 (Tailscale bridge)
+end to end, and the start of Phase 3 (Dinstar gateway config), where a
+live re-test overturned §20's own inbound-voice correction.
+
+### Access established, not assumed
+
+The session had no pre-supplied VPS credentials. Key-based SSH to
+`root@187.53.128.252` (Hostinger, Ubuntu 26.04.1 LTS, hostname
+`srv1936994`) worked on the first attempt using this machine's existing
+`~/.ssh/id_ed25519` — confirmed rather than guessed
+(`ssh -o BatchMode=yes ... echo CONNECTED`). Two Cloudflare API tokens the
+user pasted (`cfat_...` prefix, not the standard unprefixed Cloudflare
+token format) were both rejected outright by Cloudflare's own
+`/user/tokens/verify` endpoint ("Invalid API Token", code 1000) — real,
+externally-verified rejections, not a local assumption. Documented as a
+genuine open question (why a token generated fresh from the dashboard's
+own confirmation screen would still fail Cloudflare's own check) rather
+than papered over.
+
+### Phase 0 committed and pushed first
+
+Per the plan's explicit gate, §20's fixes were committed
+(`7ff2c4c "Fix hold/transfer call-window collapse, wire agent navbar, pin
+MOH config"`, 21 files) and pushed to `origin/main` before Phase 1 cloned
+the repo onto the VPS — discovered in the process that GitHub's default
+branch for this repo is still `master` (stale, unrelated history), not
+`main`; the clone step now explicitly documents `git checkout main`.
+
+### Phase 1 — VPS bootstrap
+
+- Docker 29.7.2, Compose v5.5.0, git 2.53.0 already present on Hostinger's
+  image (skipped the manual install steps in the plan).
+- `ufw`: SSH already implicitly reachable, then explicitly allowed
+  22/80/443/8089/tcp + 443/3478/10000:20000/udp, enabled with 22 allowed
+  FIRST to avoid a lockout, verified with a **fresh** SSH connection
+  (not the already-open session) before proceeding. 5060 deliberately
+  left closed at this point.
+- Secrets: all 12 required (`POSTGRES_PASSWORD`, `SETTINGS_ENCRYPTION_KEY`,
+  `COTURN_AUTH_SECRET`, `AMI_SECRET`, `CDR_AMI_SECRET`, `AUTH_SECRET`,
+  `CDR_INGEST_SECRET`, `CRM_WEBHOOK_SECRET`, `OPENWA_API_MASTER_KEY`,
+  `OPENWA_WEBHOOK_SECRET`, `SMS_POLL_SECRET`, `PRUNE_SECRET`) generated with
+  `openssl rand` on the VPS itself, not invented locally. `VM_PUBLIC_IP`/
+  `VM_PRIVATE_IP` both `187.53.128.252` — this Hostinger VPS has a single
+  NIC with a directly-assigned public IP, no separate private network
+  segment, confirmed via `ip -4 addr show` (not assumed from the plan's
+  generic dual-IP template). `DINSTAR_LAN_IP=192.168.11.1` kept as-is,
+  resolving the plan's flagged contested-IP question in the repo's favor
+  (confirmed later this session — `.20` really is the old local VM, `.1`
+  really is the gateway). `RESEND_API_KEY`/`DINSTAR_SMS_PASSWORD`
+  deliberately left as `change-me` (not needed to launch / gated on
+  Phase 4).
+- **Build trap, found and fixed live:** `docker compose build` failed on
+  `vendor/openwa/upstream` not existing — not a submodule, a documented
+  manual step (`bash vendor/openwa/prepare.sh`, pins a specific upstream
+  OpenWA commit) that the plan's Phase 1 checklist hadn't called out
+  explicitly. Run once, unblocks the build.
+- **Real root cause chased down, not worked around:** the full
+  `docker compose build` then failed with `make[2]: *** [...
+  libpjsua...] Error 2` inside the from-source Asterisk build — a bare
+  `make` exit code with no compiler diagnostic in the captured log. Rather
+  than accept that as a genuine pjproject/toolchain incompatibility,
+  reproduced the exact failing `RUN` step in an isolated throwaway image
+  (truncated `Dockerfile.asterisk` built up to the `WORKDIR` before the
+  failing line, `docker run` into it, re-ran `./configure` /
+  `make menuselect.makeopts` / `make third-party` individually with the
+  real exit code captured to a separate file — the exact `> log 2>&1;
+  echo $?` discipline `CLAUDE.md`'s build-log-capture warning describes).
+  **The isolated rebuild succeeded cleanly, exit 0.** Conclusion: the
+  original failure was resource contention — `docker compose build`
+  defaults to building all 5 services concurrently, and this box has only
+  2 vCPUs / 7.7GB RAM building Asterisk-from-source, OpenWA's
+  Chromium+Vite bundle, Caddy's Go compile, and two Next.js `npm ci`s all
+  at once. Fix: build each service **sequentially**
+  (`docker compose build <service>`, one at a time, each with its own
+  captured real exit code) — all five (`asterisk`, `caddy`, `web`,
+  `cdr-listener`, `openwa`) then built clean individually.
+- **Second trap, exactly as the plan predicted:** `docker compose up -d`
+  failed on `caddy` — `error mounting
+  "/opt/algo-pbx/pbx_configs/generated/Caddyfile" to rootfs`, because
+  `pbx_configs/generated/` ships with only a `README.md` and Docker had
+  materialised a directory at the missing mount path. `rmdir` the stray
+  directory, `bash scripts/render-caddy-env.sh` (seeds the safe
+  plain-HTTP-only template), `docker compose up -d caddy` — came up
+  healthy. All 8 services (`postgres`, `coturn`, `asterisk`, `web`,
+  `cdr-listener`, `caddy`, `cert-sync`, `openwa`) confirmed healthy via
+  `docker compose ps`; `cert-sync` needed a second plain `docker compose
+  up -d` (no service filter) since it `depends_on: caddy` and hadn't
+  auto-started when only `caddy` was targeted.
+- Verified externally: `curl http://187.53.128.252/` — 200, real Algo PBX
+  landing page ("Wired for SAHARA") rendered, not a stub.
+- **TLS, without the Cloudflare token that never worked:** since both
+  Cloudflare tokens failed and the VPS already has port 80/443 openly
+  reachable, used Caddy's own default automatic HTTPS instead of the
+  app's built-in Cloudflare-DNS-01 `/admin/settings` flow — a
+  hand-written `pbx_configs/generated/Caddyfile` for `pbx.saharatechs.com`
+  with no `tls` block, which Caddy satisfies via `tls-alpn-01` using the
+  already-open port. Real blocker hit and resolved along the way: the
+  `pbx` A record didn't exist in Cloudflare yet (confirmed absent even on
+  Cloudflare's own `1.1.1.1` resolver, ruling out propagation lag) — the
+  user added it by hand (grey-cloud/DNS-only, matching the plan's
+  requirement that the proxy not intercept WSS/TURN traffic on this
+  domain). Once DNS resolved, `docker restart algo-caddy` obtained a real
+  Let's Encrypt certificate on the first attempt — confirmed independently
+  via `openssl s_client`: `subject=CN=pbx.saharatechs.com`,
+  `issuer=Let's Encrypt`, valid through 2026-11-26. This deliberately
+  diverges from the app's own domain-apply route (still Cloudflare-DNS-01
+  only) — documented in the Caddyfile's own header comment so a future
+  session doesn't get confused about why the two don't match, and so a
+  working Cloudflare token later can cleanly take over without conflict.
+- **First-run `/setup` intentionally left to the user.** `POST /api/setup`
+  creates the first ADMIN account with a real login password — squarely
+  "creating an account, entering a password to authenticate" per this
+  session's own action-permission rules, prohibited regardless of
+  technical ability to do it via `curl`. Directed the user to
+  `https://pbx.saharatechs.com/setup` in their own browser; verified after
+  via `GET /api/setup` returning `needsSetup: false`, not by asking the
+  user to self-report.
+
+### Phase 2 — Tailscale bridge to the Dinstar
+
+- **Corrected an assumption in the plan's own Phase 2, live:** the plan
+  assumed a Linux "always-on machine" would run
+  `scripts/setup-tailscale-uae-office.sh`. This session's actual dev
+  machine (this Windows PC) turned out to already be physically wired
+  into the Dinstar's own LAN (`Ethernet` interface holds
+  `192.168.11.50`/`192.168.11.10`, confirmed reachable to the gateway at
+  `192.168.11.1` via `ping` and an HTTPS 302). Rather than force the bash
+  script onto an unsupported OS, installed the Windows Tailscale client
+  directly (`winget install Tailscale.Tailscale`) and brought it up with
+  `tailscale up --advertise-routes=192.168.11.0/24 --accept-routes` — the
+  same effective config the shell script would have produced, adapted to
+  the actual host. **The stale `192.168.1.0/24` default in
+  `setup-tailscale-uae-office.sh`/`setup-tailscale-cloud.sh` the plan
+  flagged is still unfixed in the repo** — not touched this session since
+  the Linux script path wasn't actually exercised; flagged again here so
+  it isn't lost.
+- Both ends authorized interactively (user opened each
+  `login.tailscale.com/a/...` link) — confirmed via `tailscale status` on
+  both sides, not assumed from the CLI returning without error.
+- **Route approval traced through a real UI-navigation confusion, not
+  hand-waved:** after advertising the route, the VPS's own
+  `tailscale status --json` kept showing `PrimaryRoutes: None` for the
+  Windows peer despite the user reporting the route as "approved" twice —
+  turned out they were looking at the Windows tray applet (local
+  connection status only) and then the bare machines list, not the
+  specific per-machine "Subnets" panel in the web admin console where
+  approval actually lives. Resolved once the user clicked through to the
+  right panel; confirmed via the VPS's own peer view
+  (`PrimaryRoutes: ['192.168.11.0/24']`) before declaring it done, then a
+  real `ping 192.168.11.1` from the VPS (0% loss, ~150ms RTT, UAE↔cloud)
+  as the final proof — not the advertised-route state alone, which had
+  already been shown to lag reality once.
+- **5060 opened narrowly, not broadly:** confirmed via `ufw`'s own block
+  log (`grep 'UFW BLOCK'`) that container-to-host AMI traffic
+  (`5038/tcp`) was being silently dropped from the `algo-net`/`default`
+  Docker bridge subnets — `cdr-listener` had been stuck in a reconnect
+  loop against `host.docker.internal:5038` this whole time with no
+  visible error beyond "connecting...". Fixed by scoping `ufw` rules to
+  the exact three Docker bridge subnets in use (`172.17/18/19.0.0/16`),
+  not "Anywhere" — `cdr-listener` connected and went healthy immediately
+  after. Applied the identical narrow-scoping principle to SIP itself:
+  rather than rebind Asterisk's PJSIP transport off `0.0.0.0:5060` (which
+  the plan flagged as needing a templating mechanism that doesn't exist
+  yet), left the bind alone and added one `ufw` rule
+  (`allow in on tailscale0 from 192.168.11.0/24 to any port 5060 proto
+  udp`) — achieves "SIP never exposed publicly" at the firewall layer with
+  no code change, confirmed 5060 has no other rule (still unreachable
+  from the public internet).
+
+### Phase 3 — Dinstar gateway config, and a self-correction
+
+Logged into the gateway's own web UI (user entered credentials directly,
+never shared with or seen by this session) via browser automation from
+the Windows PC already on that LAN. **Corrected two more assumptions on
+sight:** this is a UC2000-**VE Business**, 8 ports not 4 (ports 4–7 have
+no modem hardware installed/powered; ports 1–3 have modems but no SIM
+inserted; only port 0 has a live, registered SIM) — the plan's "all 4
+ports" instructions were adjusted to "all 8" accordingly, though only
+port 0 is actually live.
+
+Findings, all read directly off the device, not inferred:
+- **Port Configuration**: only port 0 had a "To VOIP Hotline" value
+  (`100`); ports 1–7 were empty. Set to `100` on all 8 (matching port 0's
+  existing, dialplan-compatible value — `extensions.conf`'s `_X.`
+  catch-all routes any digit string to `s` regardless, so `100` and the
+  plan's suggested `s` are functionally identical here) via the
+  bulk-select-and-type UI flow (the page's own "copy to all" button
+  turned out to clear fields instead of propagating them — typed each
+  port's field individually instead once that was discovered).
+- **Tel→IP Routing table appeared empty on first load** — turned out to
+  be a stale/slow AJAX render on that specific page, not a real gap: a
+  page reload revealed a pre-existing rule (`ToAlgoPBX`, index 0,
+  Port Group-0 → Trunk-0, Allow) that was there all along. A duplicate
+  rule added before catching this was deleted again, leaving the
+  original two rules (`ToAlgoPBX` and a `default` catch-all) untouched.
+- **The real, load-bearing find:** SIP Trunk 0 ("AlgoPBX") pointed at
+  `192.168.11.20:5060` — the OLD local-office VM from before this
+  redeploy, not the new cloud VPS. Updated to `100.64.32.115:5060` (the
+  VPS's Tailscale IP) via the trunk's Modify form. This is the actual
+  config gap that mattered; the hotline values were cosmetically
+  incomplete but the trunk destination being dead would have blocked
+  everything regardless.
+- No NAT-traversal toggle exists anywhere in this firmware's UI to
+  disable — confirmed by reading through `SIP Configuration` and
+  `Network Configuration` in full rather than assuming a checkbox exists
+  because the plan mentioned one.
+
+**Live re-test overturned §20's own correction.** With `pjsip set logger
+on` and a live `docker logs -f algo-asterisk` watch running, the user
+placed two real calls to the SIM immediately after the hotline+trunk fix.
+Both logged `FORBID CALL` in the gateway's own GSM Event history (1s
+duration, identical to every other inbound attempt recorded tonight going
+back hours) and **produced zero SIP traffic on the Asterisk side** —
+nothing in the live log at all. Before concluding anything, re-checked
+every device-side setting that could plausibly cause a DISA-then-reject
+pattern (Call Limit: no rules; Phone Number Learning: no rules; Digit Map:
+permissive catch-all; Basic Configuration's "No Alerting Call Handle":
+Normal Handle; GSM incoming call limit: disabled) — all clean, matching
+what `handoff.md` §19 had already ruled out before §20's correction ever
+happened. Two YouTube links the user offered as reference mid-test turned
+out to be a 30s Dinstar IP-PBX demo clip and a **Dinstar Analog Gateway**
+(FXO/FXS, not GSM) training video — checked both, neither applicable to a
+GSM carrier-barring question.
+
+**`handoff.md` corrected a second time** (a RE-CORRECTION section, not a
+silent rewrite): the DISA/empty-hotline theory that drove §20's earlier
+fix does not survive live re-testing and is now marked superseded again;
+the original carrier-side-barring diagnosis from §19 is confirmed current.
+The hotline and trunk-IP fixes made this session are kept (real, correct
+config hygiene, and now correct for whenever the carrier issue clears) but
+are documented as **not** the fix for today's actual blocker. Next step
+recorded as unchanged from §19: contact the SIM's mobile carrier about
+incoming-call barring — nothing further is fixable from the PBX/gateway
+side. Also recorded honestly: the user separately recalled hearing a DISA
+prompt on this same SIM earlier today, before this session's changes —
+noted as a real, credible first-person observation that doesn't reconcile
+with tonight's live evidence, rather than dismissed.
+
+**Verified this session:** VPS reachable and healthy end-to-end (8/8
+services), HTTPS live with a real independently-verified cert, admin
+account created and confirmed, Tailscale bridge proven with a real ping
+across it, Dinstar SIP trunk pointed at a reachable destination, ufw
+rules confirmed via both `status` and the kernel's own block log — not
+assumed from any single tool's success exit code. **Not verified, and
+currently blocked on something outside this session's control:** any
+inbound call actually reaching Asterisk — carrier-side barring prevents
+testing the SIP trunk/`[from-dinstar]` dialplan/queue path at all until
+the carrier issue clears. Outbound calling was not re-tested this session
+(no reason to expect regression — nothing touched the outbound path — but
+not independently confirmed against the new VPS either).
+
+**Not yet done, remaining from the plan:** Phase 4 (SMS — the TLS-bypass
+code change and the poller service), Phase 5 (fail2ban, `ss -tulnp`
+audit, Hostinger snapshots), and the stale-subnet-default fix in the two
+Tailscale shell scripts noted above.

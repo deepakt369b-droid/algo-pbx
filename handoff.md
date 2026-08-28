@@ -1,10 +1,46 @@
-# Handoff — Outbound GSM audio confirmed live. Inbound root cause corrected below (was misdiagnosed as carrier-side).
+# Handoff — Outbound GSM audio confirmed live. Inbound is carrier-side call barring (re-confirmed live; see RE-CORRECTION below).
 
-Last updated: 2026-08-28. Full detail in `LLM.md §19`/§20 and the plan file
+Last updated: 2026-08-28 (production deploy session). Full detail in
+`LLM.md §19`/§20/§21 and the plan file
 `~/.claude/plans/sorted-sprouting-crystal.md` (supersedes
 `objective-refer-the-handoff-validated-wigderson.md`).
 
-## CORRECTION (2026-08-28, later same day): inbound is NOT carrier-side barring
+## RE-CORRECTION (2026-08-28, production deploy session): the DISA theory below was wrong — original carrier-barring diagnosis stands
+
+The "CORRECTION" section immediately below this one (same date, an earlier
+session) proposed that inbound was actually a Dinstar-side DISA/empty-hotline
+issue, not carrier barring, based on a secondhand description of the gateway
+answering and playing a "please dial the extension" prompt. That fix (To VOIP
+Hotline = `100` on all 8 ports — this device is a UC2000-VE Business with 8
+ports, not 4 — and correcting the SIP Trunk's IP, which had gone stale
+pointing at an old local-office VM address instead of the new cloud VPS) was
+applied for real this session and is still worth keeping: it's correct config
+hygiene regardless. **But it did not change the outcome.**
+
+Live-tested against the real hardware, twice, immediately after the fix: both
+calls to the SIM logged `FORBID CALL` in the gateway's own GSM Event history,
+duration 1s, identical to every other inbound attempt recorded tonight (going
+back hours, always the same caller number, always the same result) — and
+**zero** SIP traffic ever reached Asterisk for either call (`pjsip set logger
+on` + live `docker logs -f` showed nothing at all). If the DISA theory were
+correct, a working hotline should have produced a real SIP INVITE this time;
+it did not. Every device-side setting that could plausibly cause a
+DISA-then-reject pattern was re-checked this session and is clean/default:
+Call Limit (no rules), Phone Number Learning (no rules), Digit Map (permissive
+catch-all `x.#|x.T`), Basic Configuration's "No Alerting Call Handle" (Normal
+Handle), GSM incoming call limit (disabled, `0`/`0`).
+
+**Conclusion: the original diagnosis below (carrier-side incoming-call
+barring) is correct and current.** The DISA/empty-hotline theory does not
+survive live re-testing. Whatever produced the "please dial the extension"
+audio the operator recalls hearing earlier today did not reproduce under
+observation this session — possibly a different call, a transient carrier
+state, or a misremembered detail; it is not reproducible against the current
+hardware state. **Next step is still: contact the SIM's mobile carrier about
+incoming-call barring on this number.** Nothing further is fixable from the
+Asterisk/Dinstar config side until that clears.
+
+## CORRECTION (2026-08-28, earlier session, SUPERSEDED by the RE-CORRECTION above): inbound is NOT carrier-side barring
 
 The section below this one ("THE headline") concluded inbound calls were
 blocked by the carrier before ever reaching the SIP leg, based on a
@@ -46,7 +82,7 @@ fixed before. USSD `*#35#` returning `UNKNOWN APPLICATION` (below) may
 simply mean that code isn't supported by this carrier for this account
 type, not evidence of barring — don't re-chase that lead first.
 
-## THE headline (SUPERSEDED — kept for the record, see correction above): outbound calls carry real two-way audio; inbound is a carrier problem
+## THE headline (current — see RE-CORRECTION above): outbound calls carry real two-way audio; inbound is a carrier problem
 
 A call from agent 2002 to a **national-format** number (`0504852446`)
 went 100 Trying → 183 → 200 OK → bridged, with **confirmed bidirectional
@@ -56,7 +92,7 @@ First outbound call with verified real audio, not just signaling.
 GSM leg after ~2s — read this as the carrier rejecting that dial format on
 this SIM, not a bug; use national format for now.
 
-**[SUPERSEDED — see the correction above this section] Inbound is fully diagnosed and is NOT a Dinstar or Asterisk problem.**
+**[Current — re-confirmed live this session, see RE-CORRECTION above] Inbound is fully diagnosed and is NOT a Dinstar or Asterisk problem.**
 Every configurable surface on the gateway was checked and ruled out (Call
 Limit, Caller Manipulation, Digit Map, Call Forwarding, Phone Number
 Learning/Config, No Alerting Call Handle — all empty/default). The GSM
@@ -72,6 +108,15 @@ A gateway-UI fix for the two-stage-dialing IVR (Port 0 hotline + "Do Not
 Answer for Hotline") was applied and confirmed persisted, but it's now
 moot until the carrier-side barring is resolved — inbound calls don't
 reach that logic at all.
+
+**Extended this session** (production deploy): "To VOIP Hotline" set to
+`100` on all 8 ports (this device is a UC2000-VE Business, not the 4-port
+model earlier notes assumed — ports 4-7 have no modem installed/powered
+and ports 1-3 have modems but no SIM; only port 0 is live), and the SIP
+Trunk's IP corrected from a stale local-office-VM address to the new
+cloud VPS's Tailscale IP. Both are real, correct fixes and stay in place,
+but per the RE-CORRECTION above they did not change the live outcome —
+inbound is still barred before reaching any of this logic.
 
 ## Messaging track (E7–E9, D1–D2) — all 5 items done, verified
 
