@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { cn } from "@/lib/utils";
 
 interface ConversationSummary {
@@ -34,6 +34,15 @@ export function ConversationList({
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [mineOnly, setMineOnly] = useState(false);
   const [stale, setStale] = useState(false);
+  // New-conversation compose form. There is otherwise no way to start a
+  // WhatsApp/SMS thread from the agent UI — every existing conversation
+  // comes from an inbound message (see POST /api/messaging/conversations's
+  // file header for the full gap description).
+  const [composing, setComposing] = useState(false);
+  const [composeNumber, setComposeNumber] = useState("");
+  const [composeChannel, setComposeChannel] = useState<ConversationSummary["channel"]>("WHATSAPP");
+  const [composeError, setComposeError] = useState<string | null>(null);
+  const [composeBusy, setComposeBusy] = useState(false);
   // Locally-cleared unread counts: selecting a conversation used to leave
   // its badge up until the next poll reflected the server-side read mark.
   // The optimistic clear is corrected by whichever poll lands next.
@@ -79,15 +88,92 @@ export function ConversationList({
     }
   };
 
+  const handleCompose = async (e: FormEvent) => {
+    e.preventDefault();
+    setComposeError(null);
+    setComposeBusy(true);
+    try {
+      const res = await fetch("/api/messaging/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ numberE164: composeNumber, channel: composeChannel }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setComposeError(data?.error ?? `Failed (${res.status})`);
+        return;
+      }
+      // Select immediately rather than waiting up to 5s for the next poll
+      // to surface the new row — the next poll will fill in its summary.
+      handleSelect(data.conversationId);
+      setComposing(false);
+      setComposeNumber("");
+    } catch {
+      setComposeError("Network error — try again.");
+    } finally {
+      setComposeBusy(false);
+    }
+  };
+
   return (
     <div className="glass-card flex h-full w-72 flex-shrink-0 flex-col gap-2 p-3">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Conversations</h2>
-        <label className="flex items-center gap-1 text-xs text-slate-500">
-          <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
-          Mine
-        </label>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
+            Mine
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setComposing((v) => !v);
+              setComposeError(null);
+            }}
+            className="rounded border border-border px-1.5 py-0.5 text-xs text-cyan hover:bg-surface"
+            title="Start a new conversation"
+          >
+            + New
+          </button>
+        </div>
       </div>
+      {composing && (
+        <form onSubmit={handleCompose} className="flex flex-col gap-2 rounded-lg border border-border bg-background p-2">
+          <input
+            type="text"
+            required
+            placeholder="Phone number, e.g. +9715XXXXXXXX"
+            value={composeNumber}
+            onChange={(e) => setComposeNumber(e.target.value)}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200"
+          />
+          <select
+            value={composeChannel}
+            onChange={(e) => setComposeChannel(e.target.value as ConversationSummary["channel"])}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200"
+          >
+            <option value="WHATSAPP">WhatsApp</option>
+            <option value="SMS">SMS</option>
+          </select>
+          {composeError && <p className="text-[10px] text-red-400">{composeError}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setComposing(false)}
+              className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-surface"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={composeBusy}
+              className="rounded bg-cyan px-2 py-1 text-xs font-medium text-background disabled:opacity-50"
+            >
+              {composeBusy ? "Starting…" : "Start"}
+            </button>
+          </div>
+        </form>
+      )}
       {stale && <p className="text-[10px] text-yellow-500">Live updates unavailable — retrying…</p>}
       <ul className="flex flex-1 flex-col gap-1 overflow-y-auto">
         {conversations.length === 0 && <li className="text-xs text-slate-500">No conversations yet.</li>}
