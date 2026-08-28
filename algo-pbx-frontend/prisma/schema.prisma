@@ -105,6 +105,12 @@ model User {
   // already carry everything the list needs; this is just "have they
   // looked" for badge purposes.
   missedCallsSeenAt      DateTime?
+  // Same read-state-marker pattern as missedCallsSeenAt above, but for an
+  // agent's own voicemail inbox (GET /api/voicemail) — voicemail itself
+  // stays filesystem-only (see src/lib/voicemail-spool.ts), this is just
+  // "have they looked" for badge purposes, keyed off each message's
+  // origtime rather than a per-message read table.
+  voicemailSeenAt        DateTime?
   extension         Extension?
   doNotCallEntries  DoNotCallEntry[]
   hiddenRecordings  Recording[]

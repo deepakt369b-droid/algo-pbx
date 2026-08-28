@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSIP } from "@/contexts/sip-context";
+import { countUnseenVoicemail } from "@/lib/voicemail-unread";
 
 const BASE_TITLE = "Algo PBX — Agent Workspace";
 
@@ -15,8 +16,15 @@ const BASE_TITLE = "Algo PBX — Agent Workspace";
 // were visible anywhere without opening the relevant panel: a backgrounded
 // tab or an agent who didn't scroll down had no idea there was unread
 // work waiting.
-function useBadgeCount(url: string, extract: (data: unknown) => number, intervalMs = 20000): number {
+// Returns [count, refreshNow] — refreshNow lets a caller elsewhere in the
+// tree (e.g. AgentMissedCalls, after its own mark-read POST resolves)
+// force an immediate re-fetch instead of waiting up to `intervalMs` for
+// the next poll. Before this, the badge and the panel that clears it had
+// no way to talk to each other at all.
+function useBadgeCount(url: string, extract: (data: unknown) => number, intervalMs = 20000): [number, () => void] {
   const [count, setCount] = useState(0);
+  const loadRef = useRef<() => void>(() => undefined);
+
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -27,6 +35,7 @@ function useBadgeCount(url: string, extract: (data: unknown) => number, interval
         })
         .catch(() => undefined);
     };
+    loadRef.current = load;
     load();
     const interval = setInterval(load, intervalMs);
     return () => {
@@ -37,7 +46,19 @@ function useBadgeCount(url: string, extract: (data: unknown) => number, interval
     // expected to change identity in a way that matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, intervalMs]);
-  return count;
+
+  const refreshNow = useCallback(() => loadRef.current(), []);
+  return [count, refreshNow];
+}
+
+// Lets AgentMissedCalls (rendered as a descendant of `children` below, not
+// a direct child of this component) signal "I just marked missed calls as
+// read, re-poll the navbar badge now" without prop-drilling through the
+// page/layout boundary or waiting out the badge's own 20s interval.
+const MissedCallsRefreshContext = createContext<() => void>(() => undefined);
+
+export function useMissedCallsRefresh(): () => void {
+  return useContext(MissedCallsRefreshContext);
 }
 
 function Badge({ count }: { count: number }) {
@@ -67,13 +88,20 @@ export function AgentShell({
 }) {
   const { isConnected, callState } = useSIP();
 
-  const voicemailCount = useBadgeCount("/api/voicemail", (d) => (d as { messages?: unknown[] }).messages?.length ?? 0);
-  const missedCallsCount = useBadgeCount("/api/me/missed-calls", (d) => {
+  const [voicemailCount] = useBadgeCount("/api/voicemail", (d) => {
+    const { messages, lastSeenAt } = d as {
+      messages?: { origtime: number | null }[];
+      lastSeenAt?: string | null;
+    };
+    if (!messages) return 0;
+    return countUnseenVoicemail(messages, lastSeenAt ?? null);
+  });
+  const [missedCallsCount, refreshMissedCalls] = useBadgeCount("/api/me/missed-calls", (d) => {
     const { calls, lastSeenAt } = d as { calls?: { startedAt: string }[]; lastSeenAt?: string | null };
     if (!calls) return 0;
     return lastSeenAt ? calls.filter((c) => new Date(c.startedAt) > new Date(lastSeenAt)).length : calls.length;
   });
-  const whatsappUnreadCount = useBadgeCount("/api/messaging/conversations", (d) => {
+  const [whatsappUnreadCount] = useBadgeCount("/api/messaging/conversations", (d) => {
     const { conversations } = d as { conversations?: { unreadCount: number }[] };
     return (conversations ?? []).reduce((sum, c) => sum + c.unreadCount, 0);
   });
@@ -144,7 +172,7 @@ export function AgentShell({
           </button>
         </form>
       </header>
-      {children}
+      <MissedCallsRefreshContext.Provider value={refreshMissedCalls}>{children}</MissedCallsRefreshContext.Provider>
     </div>
   );
 }

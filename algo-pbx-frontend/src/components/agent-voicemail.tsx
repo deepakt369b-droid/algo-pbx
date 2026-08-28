@@ -42,6 +42,15 @@ export function AgentVoicemail() {
     return () => clearInterval(interval);
   }, [load]);
 
+  // Marks the inbox "seen" (clearing the unread badge in AgentShell) as
+  // soon as it's rendered with at least one message — same pattern as
+  // AgentMissedCalls's identical effect.
+  useEffect(() => {
+    if (messages.length > 0) {
+      fetch("/api/voicemail", { method: "POST" }).catch(() => undefined);
+    }
+  }, [messages.length]);
+
   const remove = async (id: string) => {
     try {
       const res = await fetch(`/api/voicemail/${id}`, { method: "DELETE" });

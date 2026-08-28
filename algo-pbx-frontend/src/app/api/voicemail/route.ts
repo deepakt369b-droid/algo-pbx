@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessMailbox, parseVoicemailMessageMetadata } from "@/lib/voicemail-spool";
 
@@ -42,13 +43,24 @@ export async function GET(req: NextRequest) {
 
   const dir = path.resolve(process.env.VOICEMAIL_DIR || "/voicemail", CONTEXT, mailbox, "INBOX");
 
+  // Own-mailbox seen-state only — mirrors GET /api/me/missed-calls's
+  // User.missedCallsSeenAt marker, but for voicemail. A staff member
+  // browsing someone else's mailbox via ?mailbox= isn't "the agent who
+  // owns this inbox", so lastSeenAt is deliberately omitted (null) for
+  // that case rather than reporting the staff viewer's own unrelated
+  // seen-timestamp.
+  const lastSeenAt = isStaff
+    ? null
+    : (await db.user.findUnique({ where: { id: session.user.id }, select: { voicemailSeenAt: true } }))
+        ?.voicemailSeenAt ?? null;
+
   let files: string[];
   try {
     files = await readdir(dir);
   } catch {
     // No INBOX directory yet just means no messages, not an error — a
     // brand-new mailbox has no spool folder until its first message.
-    return NextResponse.json({ messages: [] });
+    return NextResponse.json({ messages: [], lastSeenAt });
   }
 
   const txtFiles = files.filter((f) => f.endsWith(".txt")).sort();
@@ -66,5 +78,17 @@ export async function GET(req: NextRequest) {
     })
   );
 
-  return NextResponse.json({ messages });
+  return NextResponse.json({ messages, lastSeenAt });
+}
+
+// Marks the agent's own voicemail inbox as viewed — same lightweight
+// same-route-POST pattern as POST /api/me/missed-calls. Always the
+// session user's own extension/mailbox; there is no ?mailbox= override
+// here, matching how the GET handler ignores it for AGENT sessions too.
+export async function POST() {
+  const guard = await requireSession();
+  if ("response" in guard) return guard.response;
+
+  await db.user.update({ where: { id: guard.session.user.id }, data: { voicemailSeenAt: new Date() } });
+  return NextResponse.json({ ok: true });
 }

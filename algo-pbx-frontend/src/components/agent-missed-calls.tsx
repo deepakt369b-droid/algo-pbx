@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSIP } from "@/contexts/sip-context";
+import { useMissedCallsRefresh } from "@/components/agent-shell/agent-shell";
 
 interface MissedCall {
   id: string;
@@ -18,6 +19,7 @@ interface MissedCall {
 // how /admin/sign-ins treats "viewed the page" as "seen".
 export function AgentMissedCalls() {
   const { makeCall } = useSIP();
+  const refreshBadge = useMissedCallsRefresh();
   const [calls, setCalls] = useState<MissedCall[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +46,13 @@ export function AgentMissedCalls() {
 
   useEffect(() => {
     if (calls.length > 0) {
-      fetch("/api/me/missed-calls", { method: "POST" }).catch(() => undefined);
+      fetch("/api/me/missed-calls", { method: "POST" })
+        .then(() => refreshBadge())
+        .catch(() => undefined);
     }
+    // refreshBadge is a stable ref-backed callback from AgentShell's
+    // context (see useBadgeCount there) — not expected to change identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calls.length]);
 
   if (loading && calls.length === 0 && !error) return null;
