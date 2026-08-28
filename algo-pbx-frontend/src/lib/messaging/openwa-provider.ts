@@ -40,7 +40,7 @@ export class OpenWaProvider implements MessageProvider {
     if (!waId) return { providerMessageId: null, status: "failed", error: "Destination is not E.164" };
 
     try {
-      const res = await openwa.sendText(input.instanceId, { to: `${waId}@c.us`, text: input.text });
+      const res = await openwa.sendText(input.instanceId, { chatId: `${waId}@c.us`, text: input.text });
       return { providerMessageId: readMessageId(res), status: "sent" };
     } catch (err) {
       return { providerMessageId: null, status: "failed", error: (err as Error).message };
@@ -53,7 +53,7 @@ export class OpenWaProvider implements MessageProvider {
 
     try {
       const res = await openwa.sendMedia(input.instanceId, {
-        to: `${waId}@c.us`,
+        chatId: `${waId}@c.us`,
         url: input.mediaUrl,
         caption: input.caption ?? "",
         mimetype: input.mimeType,

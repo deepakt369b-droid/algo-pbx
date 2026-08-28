@@ -28,6 +28,8 @@ import {
   type OpenWaQrCodeResponse,
   type OpenWaRegisterWebhookRequest,
   type OpenWaRequestPairingCodeRequest,
+  type OpenWaSendMediaRequest,
+  type OpenWaSendTextRequest,
   type OpenWaSessionResponse,
   type OpenWaSessionStatsOverview,
   type OpenWaSuccessResult,
@@ -134,7 +136,7 @@ export async function requestPairingCode(
 
 export async function sendText(
   sessionId: string,
-  body: { to: string; text: string }
+  body: OpenWaSendTextRequest
 ): Promise<OpenWaMessageResponse> {
   const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
   return requestJson<OpenWaMessageResponse>(`${url}${sessionPath(sessionId, "/messages/send-text")}`, {
@@ -146,7 +148,7 @@ export async function sendText(
 
 export async function sendMedia(
   sessionId: string,
-  body: { to: string; url: string; caption?: string; mimetype?: string }
+  body: OpenWaSendMediaRequest
 ): Promise<OpenWaMessageResponse> {
   const [baseUrlValue, headers] = await Promise.all([baseUrl(), authHeaders()]);
   return requestJson<OpenWaMessageResponse>(`${baseUrlValue}${sessionPath(sessionId, "/messages/send-media")}`, {

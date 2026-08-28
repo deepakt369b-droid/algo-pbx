@@ -19,7 +19,7 @@ export async function GET() {
 
   const instance = await db.waInstance.findUnique({
     where: { assignedUserId: guard.session.user.id },
-    select: { label: true, simPort: true, phoneE164: true, status: true, pushName: true },
+    select: { label: true, simPort: true, phoneE164: true, status: true, pushName: true, lastError: true },
   });
 
   if (!instance) {

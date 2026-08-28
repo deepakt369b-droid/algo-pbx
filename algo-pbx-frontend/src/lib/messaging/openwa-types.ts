@@ -79,6 +79,32 @@ export interface OpenWaMessageResponse {
   [key: string]: unknown;
 }
 
+/** Body for POST /api/sessions/{id}/messages/send-text. The destination
+ * field is `chatId` (a JID, e.g. "971501234567@c.us") — NOT `to`. This was
+ * the exact shape of a real, reproduced 400 from a live send: the wire
+ * body openwa-client.ts used to build had a `to` key that the real
+ * send-text DTO does not recognize at all, so validation rejected the
+ * request outright. Source: sdk/javascript/src/types.ts `SendTextRequest`
+ * at the pinned commit (see this file's header). */
+export interface OpenWaSendTextRequest {
+  chatId: string;
+  text: string;
+}
+
+/** Body for POST /api/sessions/{id}/messages/send-media (and the
+ * send-image/send-video/send-document/send-sticker aliases the real
+ * client resource picks by suffix). Same `chatId`-not-`to` correction as
+ * OpenWaSendTextRequest — see its comment. Source: sdk/javascript/src/
+ * types.ts `SendMediaRequest`. */
+export interface OpenWaSendMediaRequest {
+  chatId: string;
+  url?: string;
+  base64?: string;
+  mimetype?: string;
+  filename?: string;
+  caption?: string;
+}
+
 export interface OpenWaSuccessResult {
   success: boolean;
   message?: string;

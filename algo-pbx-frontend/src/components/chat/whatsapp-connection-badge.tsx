@@ -9,6 +9,7 @@ interface WhatsAppSelf {
   phoneE164?: string | null;
   status?: "PAIRING" | "CONNECTED" | "DISCONNECTED" | "LOGGED_OUT";
   pushName?: string | null;
+  lastError?: string | null;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -67,11 +68,18 @@ export function WhatsAppConnectionBadge() {
   }
 
   return (
-    <div className="flex items-center gap-2 px-1 text-xs text-slate-400">
-      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_COLOR[data.status ?? ""] ?? "bg-slate-500"}`} />
-      <span>
-        {data.phoneE164 ?? `SIM ${data.simPort}`} — {data.status?.toLowerCase()}
-      </span>
+    <div className="px-1">
+      <div className="flex items-center gap-2 text-xs text-slate-400">
+        <span className={`h-1.5 w-1.5 rounded-full ${STATUS_COLOR[data.status ?? ""] ?? "bg-slate-500"}`} />
+        <span>
+          {data.phoneE164 ?? `SIM ${data.simPort}`} — {data.status?.toLowerCase()}
+        </span>
+      </div>
+      {data.lastError && (
+        <p className="mt-1 rounded border border-red-900 bg-red-950/40 px-2 py-1 text-[11px] leading-snug text-red-300">
+          {data.lastError}
+        </p>
+      )}
     </div>
   );
 }

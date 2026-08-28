@@ -173,7 +173,13 @@ export default function SmsAdminPage() {
                 Close
               </button>
             </div>
-            <ChatThread conversationId={openThreadId} />
+            <ChatThread
+              conversationId={openThreadId}
+              contactLabel={
+                smsConversations.find((c) => c.id === openThreadId)?.contact.displayName ??
+                smsConversations.find((c) => c.id === openThreadId)?.contact.numberE164
+              }
+            />
           </div>
         </div>
       )}
