@@ -275,6 +275,8 @@ Append one line per session/change, newest last. Format: `YYYY-MM-DD — what ch
   - **Verified:** `npx tsc --noEmit` clean (Phase F's full context rewrite passed on the *first* attempt, not after iteration — a direct payoff of reading the `.d.ts` files first); `npm run test` — 63/63 (11 new since Phase D); `npm run build` succeeds across all three phases with every new route present (`/api/voicemail*`, `/api/calls/conference`), `Middleware 78.3 kB` unaffected throughout. **Not verified, honestly:** none of this has run against a live Asterisk or WSS endpoint — voicemail spool format, `SessionManager`'s on-the-wire REFER/Replaces behavior, and the conference `BridgeId`/media-renegotiation risk are all flagged explicitly in their own checklist items rather than assumed to work.
   - This closes out the entire plan at `C:\Users\SAHARA\.claude\plans\refer-the-https-github-com-3cx-page-jiggly-starlight.md` — Foundation through Phase G, all seven phases done. What remains is exclusively live-infrastructure verification (Docker/Postgres/Asterisk/WSS), not further design or implementation work.
   - Ran `graphify . && graphify cluster-only . && graphify label .`: 426 nodes, 625 edges, 43 communities (up from 393/546/41).
+- 2026-08-27 — Call-path root cause (6 stacked bugs) found and fixed; **first call ever carried** (`*97`, 0% RTP loss). CDR ingestion (`cdr_manager.conf`), outbound recording (MixMonitor in `from-agent-common`), `_[+0-9].` dialplan match, `DINSTAR_SIP_PORT` setting, Track B security fixes, E1 admin user-edit, E2 Cloudflare errors, E6 admin recordings page, A5/B3b Docker entrypoints. Outbound GSM test: Asterisk side works, Dinstar returns 503 — pending gateway-UI config (user, 2026-08-28). Full detail in §17 + §18.
+- 2026-08-28 — **First outbound GSM call with verified real bidirectional RTP audio** (national dial format; E.164 still 503/480 — carrier-side format rejection, not a bug). Both 503 hypotheses (source-address asymmetry, DINSTAR_SIP_PORT desync) eliminated as today's cause via live agent diagnosis, but the env-forwarding gap for `DINSTAR_SIP_PORT` is real and unfixed. New bug found: blind transfer re-dials through the same busy GSM trunk, correctly 503s — needs a design fix, not started. Inbound two-stage-dialing fixed via Dinstar UI (hotline + Do Not Answer setting); revealed a deeper carrier-side call-barring issue (GSM Event: `FORBID CALL`; SIP Call History: all zeros; USSD `*#35#` → `UNKNOWN APPLICATION`) — blocked on the operator contacting the SIM's carrier. Messaging track findings mapped, delegated to run in parallel (no longer last). Repo confirmed public; operator decided to push anyway. Full detail in §19.
 
 ## 6. Decisions Made While Scaffolding (flag if you'd have chosen differently)
 
@@ -1642,3 +1644,393 @@ local call (A6) is the immediate next verification once it finishes.
 5. B3b: render `manager.conf`/`odbc.ini` from `.env` at startup (still
    hand-templated; a resync reverts them).
 6. Rotate all credentials (plan Track B5).
+
+## 18. First call carried; outbound GSM blocked at the Dinstar; CDR/recording gaps closed (2026-08-27, fourth follow-up to §17)
+
+**FIRST CALL EVER CARRIED.** After the §17 fixes plus two more found this
+session (AOR/auth object naming, `Web.SessionManager` ignoring its
+`server` arg), agent 2002's softphone registered over WSS and dialed
+`*97` → call went Up in VoicemailMain → **Asterisk RTP 150 rx / 128 tx,
+0% loss, codec alaw** — bidirectional DTLS-SRTP media over the direct
+192.168.11.x LAN path. `GO_LIVE_CHECKLIST.md` Gate 1 is finally met.
+
+Two more call-path bugs fixed:
+7. **Generated PJSIP `[<n>-aor]` / `[<n>-auth]` object names.**
+   `res_pjsip_registrar` resolves a REGISTER's AOR by the `To:` username
+   (`2002`), so a `2002-aor` object is never found →
+   `404 "AOR '' not found for endpoint '2002'"` on every registration.
+   Fixed `pjsip-config.ts` to name all three objects `[<n>]` (standard
+   PJSIP wizard pattern).
+8. **`Web.SessionManager` ignores its `server` constructor arg when
+   `userAgentOptions.transportOptions` is set** (it was, for
+   `keepAliveInterval`) → transport URL became `""` → "Invalid WebSocket
+   Server URL" → crashed the whole React app on every agent page. Fixed
+   `sip-context.tsx`: repeat `server` inside `transportOptions` + a
+   fail-soft guard.
+
+**CDR + recording ingestion gaps closed:**
+- `cdr_manager.so` shipped "Not Running" — no `pbx_configs/cdr_manager.conf`
+  existed, so Asterisk never emitted the `Cdr` AMI event → CDR table
+  stayed empty regardless of call activity. Added the file + mounted it.
+  **Verified: a `*97` call now writes a `CallDetailRecord` row.**
+- `MixMonitor` was only in `[from-dinstar]` (inbound). Added it to
+  `[from-agent-common]` so **outbound calls record too** (objective:
+  "recording for both inbound and outbound").
+- `[from-agent-common]` / `-international` / `[from-dinstar]` matched only
+  `_X.`, which does NOT match a leading `+` → outbound to `+971544887712`
+  hit "invalid extension" → `603 Decline`. Changed to `_[+0-9].` and added
+  `Set(DIALNUM=...)` to strip the leading `+` before `Dial(...@dinstar-trunk)`.
+
+**Dinstar SIP port:** `src/lib/dinstar-config.ts` hardcoded `:5060` but
+the UC2000 must move off 5060 when Asterisk also binds 5060 on the same
+host (the device refuses a trunk peer on its own local port). New
+`DINSTAR_SIP_PORT` setting + env var (default 5060, this office = 5061);
+`renderDinstarConf(ip, sipPort)`; `dinstar-provision.ts` reads the setting.
+Seed conf + `.env.example` + VM `.env` all set to 5061.
+
+**OUTBOUND GSM TEST — Asterisk side fully working, Dinstar returns 503.**
+Placed a real call from 2002 to `+971544887712`. SIP trace confirms:
+tier match (2002 NATIONAL, +971 allowed) → DNC check (ODBC live) → `+`
+stripped → MixMonitor started → INVITE to `...@dinstar-trunk`. The GSM
+leg gets `503 Service Unavailable` (was `404` before the port fix). The
+gateway's "IP to GSM Call History" is all zeros — rejected at the SIP
+layer before any port is tried.
+
+**DINSTAR UI — pending (user is doing this, 2026-08-28).** Full checklist
+is in `handoff.md`. Summary: Claude already changed IP→Tel Routing rule
+"default" Source from `SIP Server` → `Trunk-0 <AlgoPBX>` (Asterisk
+connects as a trunk peer, not register-mode — most likely 503 cause).
+User to confirm it stuck + re-test, then check: gateway Local SIP Port =
+5061; port 0 in port-group-0; trunk is plain peer (no auth/register);
+number format (may need Digits-to-Delete=3 + Prefix=0 → `0544887712`);
+Tel→IP routing rule for inbound; and disable two-stage dialing /
+secondary dialtone for inbound (issue #6 "rings once then asks for
+extension").
+
+**Confirmed healthy in the Dinstar UI (no change needed):** SIP Trunk 0
+`192.168.11.20:5060` "AlgoPBX" KeepAlive Yes; Digit Map `x.#|x.T`; port 0
+SIM registered, full signal, Idle; device UC2000-VE Business 8 GSM ports.
+
+**Still un-run:** the rebuilt Asterisk image (A5 UID-chown + B3b
+config-templating entrypoints, res_srtp) has not been deployed yet.
+cdr-listener still has a ~12-min AMI reconnect loop (needs a keepalive
+ping — login itself works). Messaging track (E7 stale agent badges, E8
+start-new WhatsApp/SMS conversation, E9 Contacts page, D1/D2) is
+explicitly LAST per the user. `git`: 3 commits unpushed (19cc979,
+a444f94, + docs) — push only on explicit say-so.
+
+## 19. Outbound GSM audio confirmed live; inbound traced to carrier-side call barring, not config (2026-08-28)
+
+Session picked up mid-plan (`~/.claude/plans/sorted-sprouting-crystal.md`,
+supersedes the wigderson plan — that one was blocked on a stale subagent
+registry, fixed by a session restart). Full plan covers bridged-LAN
+migration, USB portability, and boot-time network identity (Phases 2–5);
+this entry covers only what was executed: Phase 1 (call path) and the
+start of Phase 6 (messaging, delegated in parallel per updated instruction).
+
+**Cabling reality correction, discovered live:** the operator had never run
+Ethernet from the office router to this PC — the wired NIC's only-ever use
+was the direct Dinstar cable. Mid-session the Dinstar was moved to the
+office router to test flattening, which stranded it on the wrong subnet
+(confirmed by a full `192.168.0.0/24` sweep — 7 hosts, none the UC2000) and
+left the VM's bridged `enp0s8` without carrier. **Reverted**: Dinstar back
+on the direct cable to the PC. Recovery techniqe for next time if this
+happens again: a temporary secondary IP in the Dinstar's subnet
+(`New-NetIPAddress -InterfaceAlias 'Wi-Fi' -IPAddress 192.168.11.50
+-PrefixLength 24`) reaches it over L2 without any routing, since it's the
+same broadcast domain. Phase 2 (the real flatten) is now gated on a cable
+run from the router to the PC that doesn't exist yet — nothing else in the
+plan needs it.
+
+**Bridge required a second full power-cycle** after the cable was restored
+— link came back but `ping 192.168.11.1` from inside the VM failed
+(`PROBE`, never `REACHABLE`) even though the reverse direction and
+host↔VM both worked, confirming VirtualBox's bridge binding — not the NIC's
+`Protocol ARP Offload` setting, which was already correctly `Disabled` —
+needs a full guest power-cycle to rebind after a carrier drop, matching
+§16. No SSH sudo password was available in-session for a clean
+`systemctl poweroff`; the operator ran it interactively via `! ssh`.
+
+### The 503 hypothesis chain — both leading theories eliminated, real cause found live
+
+1. **`DINSTAR_SIP_PORT` env-forwarding gap (new, sharper than previously known).**
+   Confirmed via `debugger` agent: the loaded AOR contact was correct
+   (`sip:192.168.11.1:5061`) but only because `pjsip_dinstar.conf` is still
+   the **build-time seed** from `.env.example` — it has never been through
+   `renderDinstarConf` at runtime. Both resolution legs are dead: no
+   `DINSTAR_SIP_PORT` row in `AppSetting` (the wizard's apply route never
+   persists it — already known), **and** `docker-compose.yml:303-305` never
+   forwards `DINSTAR_SIP_PORT` into the `web` service's `environment:`
+   block at all — the host `.env` has it, `algo-web`'s `process.env` does
+   not. First "write Asterisk config" wizard run will silently regress the
+   trunk to `:5060`. **Not yet fixed in code** — two-line fix identified
+   (add to compose `environment:`, persist in the apply route), queued in
+   the plan's Phase 1.4.
+2. **Source-address asymmetry (dual NIC) — ELIMINATED.** `network-engineer`
+   agent: `ip route get 192.168.11.1` returns `dev enp0s8 src 192.168.11.20`
+   unconditionally (longest-prefix match beats the NAT default route, no
+   policy-routing override). There is no code path by which the NAT
+   address reaches the gateway. **The planned LAN flatten would not have
+   fixed the 503 structurally — that hypothesis is retired, not deferred.**
+
+### What actually happened on a live test call — real audio, then a real transfer bug
+
+With the bridge fixed, a call from agent 2002 to a national-format number
+(`0504852446` — dialing in `+971...` E.164 form got `503`/`480` from the
+GSM leg, but the **national format `05...` got through cleanly**) went
+**100 Trying → 183 Session Progress → 200 OK**, bridged, and carried
+**confirmed bidirectional RTP** (`res_rtp_asterisk.c` packet log, both
+legs, both directions — Dinstar↔Asterisk on `192.168.11.1:8000`↔`.20`,
+Asterisk↔browser via ICE on `192.168.56.1`/`192.168.11.10`). **First
+outbound call with verified real audio, not just signaling.** Call ended
+normally 11s later (`Reason: Q.850;cause=16`, the far end hanging up).
+
+**The `+971...` E.164 attempts were the original 503 all along** — GSM
+leg answered (100/183 with real Dinstar SDP) then the network itself
+rejected within ~2s (`480 Temporarily not available`), consistent with the
+carrier not accepting that dial format on this SIM/line. National format
+avoids it. Worth carrying into Phase 1.4's digit-manipulation fix (Dinstar
+IP→Tel Advanced Rules: Digits to Delete=3, Prefix to Add=0).
+
+**New bug found, not yet fixed:** an agent's blind transfer via `REFER`
+to `+971544887712` is handled by the dialplan as **a second, brand-new
+outbound call through the same GSM trunk** — placed from the channel
+representing the *already-bridged* Dinstar leg, while the original call to
+`0504852446` was still up. The Dinstar correctly refused the overlapping
+INVITE with `503` (port already occupied). This is a real design gap for
+single/limited-port GSM trunks, not a config bug — blind-transferring an
+active GSM call to an external PSTN number can't be served by re-dialing
+through the same trunk. Deferred; needs its own design pass, not a
+quick fix. Flagged to the operator; not started.
+
+### Inbound fix attempted, applied cleanly, but root cause is one layer deeper (carrier-side)
+
+Root-caused via the Dinstar UI (no code changes) that inbound calls hit
+the gateway's own two-stage-dialing IVR: **Port 0 had no "To VOIP Hotline"
+set**, combined with **"Do Not Answer GSM Incoming Call for Hotline" =
+Yes** (Service Parameter) — that combination falls back to the device's own
+digit-collection prompt instead of forwarding. Fixed via the UI (Chrome,
+`claude-in-chrome`, driven directly by the agent):
+- Port Configuration → Port 0 → **To VOIP Hotline = `100`** (value is
+  cosmetic — Asterisk's `[from-dinstar]` context unconditionally
+  `Goto(s,1)` regardless of the digits it receives).
+- Service Parameter → **Do Not Answer GSM Incoming Call for Hotline = No**.
+- **First save silently didn't commit** — clicking Save immediately
+  navigated to the login page instead of the usual "Parameters OK" prompt,
+  and the value reverted after the required restart. Root cause not fully
+  understood (likely a session race); the fix was to redo it and confirm
+  the "Parameters OK, setting successfully." prompt appears **before**
+  restarting — that attempt persisted correctly across the restart.
+- **Both restarts required a native browser `confirm()` dialog the
+  automation could not dismiss programmatically** (`CDP
+  Input.dispatchMouseEvent`/`Runtime.evaluate` both hang while a JS dialog
+  blocks the renderer) — the operator dismissed it manually both times.
+  Flag for anyone automating this UI again.
+
+**After the fix, inbound got WORSE in a way that revealed the real cause.**
+4 live test calls (same caller number both before and after) each rang
+once and dropped — **no incoming-call notification in the agent UI at
+all**, a regression from the earlier "please dial extension" IVR
+behavior. Diagnosis, evidence-first:
+- `docker exec algo-asterisk asterisk -rx "core show channels"` / the full
+  SIP trace: **zero `INVITE` requests from `192.168.11.1` ever appeared**,
+  before or after the hotline fix, across the whole session. Asterisk was
+  never contacted for any of these calls.
+- Dinstar's own **GSM Event** log: every "Call in" event shows
+  **`FORBID CALL`, duration 1s**, caller `065426169` (national format).
+- Dinstar's own **SIP Call History**: **all zeros**, every port, both
+  directions. The device never attempted the Tel→IP leg at all — the
+  rejection happens purely at the GSM/mobile layer, before any Call
+  Configuration logic (routing, digit map, caller manipulation, hotline)
+  is ever consulted.
+- Ruled out via direct UI inspection (all confirmed empty/default, not the
+  cause): Call Limit, Tel→IP Caller Manipulation, Digit Map (`x.#|x.T`,
+  permissive), Call Forwarding (unset), Phone Number Learning (unset),
+  Phone Number Config (unset). **One false lead corrected in-session:**
+  "No Alerting Call Handle" was initially misread as `Hang Up` from a
+  flawed DOM query (grabbed `checked` without the matching `value`); a
+  corrected query confirmed it was already `Normal Handle` — not the cause.
+- **USSD query sent to the SIM** (`*#35#`, standard GSM "query barring of
+  all incoming calls" code) via the Dinstar's own USSD tool: network
+  replied **`UNKNOWN APPLICATION`** — the carrier's supplementary-service
+  subsystem itself isn't responding for this SIM/line.
+
+**Conclusion: this is a carrier-side restriction, not a Dinstar or Asterisk
+config problem.** Every configurable surface on the gateway has been
+checked and ruled out; the GSM layer accepts the call just long enough to
+log it, then kills it in ~1s, before the device even tries the SIP leg.
+**Next action is not code or gateway config — it needs a call to the SIM's
+carrier** to check for active incoming-call barring on the line or confirm
+the SIM's plan includes standard two-way voice service.
+
+### Messaging track — delegated in parallel (operator reversed "strictly last")
+
+Full current-state map done (`Explore` agent, no code changes yet):
+navbar badge staleness (`agent-shell.tsx`), no route/UI exists to start a
+new WhatsApp/SMS conversation (`ingest.ts`'s `conversation.create` is only
+reachable from inbound webhook/poll paths), no session-authenticated
+Contacts page (`/api/crm/contacts` is bearer-API-key-only, for external
+CRM sync), WhatsApp instance-error surfacing exists admin-side
+(`pairing/route.ts` persists `lastError`) but is invisible agent-side
+(`/api/me/whatsapp` doesn't select it), Dinstar SMS provider is explicitly
+marked unverified-against-hardware in its own header comment. Full detail
+in the plan file's Phase 6.
+
+**New, more specific findings from the operator this session** (not yet
+started): `POST http://openwa:2785/.../messages/send-text` returns **400**
+on send; the admin WhatsApp room UI shows only the last message instead of
+the full thread and needs a WhatsApp-Web-style layout (no status/settings
+buttons); voice messages aren't playable; the admin panel needs a manual
+refresh to see new inbound WhatsApp messages (no live update). All folded
+into Phase 6 of the plan for the next session.
+
+### Git — corrected and decided
+
+`handoff.md`'s "~110 uncommitted files" was **stale** — actual working
+tree this session had exactly 2 modified files (`LLM.md`, `handoff.md`);
+everything else was already in the 3 local commits. Secret hygiene
+verified clean (`.gitignore` excludes `.env`/`pbx_configs/keys`/
+`pbx_configs/generated`; the one alarming-looking tracked file,
+`.jetro/daemon/credentials.json`, is `{}`). **Found: `origin` is
+PUBLIC** (`github.com/deepakt369b-droid/algo-pbx`), remote `master` is an
+unrelated-history older snapshot of this same project (85 files, one
+`"commit"`-messaged push, 2026-08-24) — nothing unique to preserve. The
+exposure was raised explicitly (full deployment topology, firewall
+matrix, domain, Dinstar/Tailscale design would publish) and the operator
+confirmed proceeding anyway — **git work (delete `.jetro/` debris, commit,
+push `main` as a new branch alongside `master`) is queued, not yet
+executed this session.**
+
+### `DINSTAR_SIP_PORT` landmine — fixed and verified (delegated, `nextjs-developer` agent)
+
+The gap identified above is closed. `api/admin/dinstar/apply/route.ts`
+now persists `DINSTAR_SIP_PORT` via `setSetting` alongside the other four
+wizard settings; the wizard UI (`admin/dinstar/page.tsx`) gained a labeled
+port field on the link step (default `5060`) explaining the UC2000's
+own-local-port constraint. Validation logic factored into new
+`src/lib/dinstar-apply-schema.ts` (matches `settings/schema.ts`'s
+`DINSTAR_SIP_PORT` validator exactly, with a comment tying the two so they
+can't drift), with 6 new focused tests in
+`dinstar-apply-schema.test.ts`. **Independently re-verified, not just
+taken on the agent's word**: `npm run typecheck && npm run test && npm run
+lint && npm run build` all re-run and confirmed green (236/236 tests,
+zero lint warnings, full build with `/admin/dinstar` route intact) after
+reviewing the actual diff. `docker-compose.yml` was correctly left
+untouched — it already had `DINSTAR_SIP_PORT: "${DINSTAR_SIP_PORT:-5060}"`
+in `web`'s `environment:` block; the deployed container is just stale and
+needs `docker compose up -d --no-deps web` to pick it up (not done this
+session — no active calls were risked to do it).
+
+### `saharatechs.com` DNS — found pointing at an unrelated business, fixed
+
+Operator reported the domain loading `aceindustry.ae` on mobile/other
+networks. Root-caused via direct Cloudflare API inspection (read-only
+first): the zone's **A record pointed at `139.84.171.47`** — the exact
+same IP `aceindustry.ae` resolves to, almost certainly GoDaddy's default
+parked-domain landing IP (the zone also carries a `_domainconnect`
+CNAME to `domaincontrol.com`, GoDaddy's auto-provisioning artifact) — and
+was **`proxied=true`** (violating `DEPLOYMENT.md`'s explicit grey-cloud
+requirement, which would have broken SIP/RTP/WSS even with the right IP).
+Local browsing on this LAN was unaffected because of an existing Windows
+hosts-file override (`192.168.11.20 saharatechs.com`, from an earlier
+session) that bypassed public DNS entirely.
+
+**Fixed via the Cloudflare API** (token already present in
+`pbx_configs/generated/caddy.env` on the VM) after explicit operator
+confirmation: A record repointed to the office's current public IP
+(`217.165.236.207`, checked live via `ifconfig.me`), both the apex A
+record and the `www` CNAME switched to **DNS-only (`proxied=false`)**.
+Verified propagated via Cloudflare's own `1.1.1.1` resolver post-change.
+
+**Not fixed, expected next**: port 443 (and 8089/3478/RTP) is not yet
+reachable on `217.165.236.207` from outside — the router doesn't forward
+those ports to the VM yet. That's Phase 5 of the plan, not started. The
+realistic result right now is "can't connect" rather than the login page
+— a real improvement over redirecting to a stranger's website, but not
+yet a working public PBX.
+
+### Messaging track (E7–E9, D1–D2) — all five items completed, delegated to 5 parallel subagents
+
+Full Phase 6 of the plan executed in one pass, each agent given exclusive,
+non-overlapping file ownership so five parallel writers couldn't collide.
+**Every agent's diff was independently reviewed and the full verification
+suite (`typecheck && test && lint && build`) was re-run by hand on the
+final combined tree** — not just accepted on each agent's own report, same
+standard as the `DINSTAR_SIP_PORT` fix. Result: clean typecheck, **265/265
+tests passing** across 33 files, zero lint warnings, successful production
+build with the full route manifest (including every new route). No file
+collisions occurred — each changed file traced to exactly one agent's
+declared scope, confirmed via `git status --porcelain` before and after.
+
+- **E7 (badges)**: Voicemail badge was structurally incapable of being
+  "unread" (no seen-state existed anywhere — filesystem-spool voicemail
+  has no DB row to attach one to). Added `User.voicemailSeenAt`
+  (migration hand-written, **not applied to a live DB** — no
+  `DATABASE_URL` reachable in the agent's environment; needs
+  `npx prisma migrate deploy` against the real Postgres before this
+  ships), `GET/POST /api/voicemail` now round-trips it exactly like the
+  existing missed-calls pattern, badge counts only unseen messages via a
+  new pure `countUnseenVoicemail` helper. Missed-calls badge lag fixed by
+  adding a `MissedCallsRefreshContext` so the mark-read action triggers an
+  immediate badge re-fetch instead of waiting up to 20s for the next poll.
+- **E8 (start new conversation)**: `ingest.ts`'s inline find-then-create
+  extracted into an exported `findOrCreateConversation()` (preserving the
+  `waInstanceId: null`-is-never-equal Postgres behavior the original
+  comment already flagged), reused by both the inbound webhook/poll path
+  and a new `POST /api/messaging/conversations` for agent-initiated
+  threads. New compose UI lives inside `conversation-list.tsx`'s header.
+  Session-gated at agent level (`requireSession`), matching the
+  `[id]/messages` POST precedent, not admin-only.
+- **E9 (Contacts page)**: New `/admin/contacts` (staff-only —
+  `requireStaffSession`, matching every other `/admin/*` page; reasoned
+  explicitly that `middleware.ts` already blocks AGENT sessions from every
+  `/admin/*` route regardless, so gating the API more loosely than the
+  page is reachable would be dead code) with full CRUD, `DELETE` returns
+  409 rather than a raw FK-constraint throw when a contact still has
+  conversations. CDR caller numbers now resolve to `Contact.displayName`
+  via a new join in `api/cdr/route.ts` (flagged explicitly as outside the
+  original file list — nothing else claimed it, judged safe). Agent
+  missed-calls/voicemail caller-name resolution was deliberately **not**
+  done this pass to avoid a two-writer collision with E7 on the same
+  files — left as an explicit follow-up.
+- **D1 (WhatsApp)**: Found and fixed the actual cause of the live
+  `send-text` 400 — `openwa-client.ts` built request bodies keyed `to`,
+  but the real OpenWA DTO expects `chatId` (verified against the pinned
+  commit's actual SDK source fetched from GitHub, not guessed — flagged
+  honestly as code-level verification, not a live-call confirmation, since
+  the sidecar wasn't reachable from the agent's environment). Agent-facing
+  WhatsApp error surfacing fixed (`lastError` now selected and rendered on
+  the connection badge). The "last message only" thread view was a
+  flexbox bug (`min-h-0` missing on the scroll chain), not missing
+  iteration logic — fixed, plus a minimal WhatsApp-Web-style bubble layout
+  with **no status/settings button**, per the explicit instruction. Voice
+  messages now render via `<audio controls>` using the same trust/handling
+  level the pre-existing image rendering already had for `mediaUrl`.
+- **D2 (Dinstar SMS provider verification)**: Reached the **real, live**
+  UC2000 at `192.168.11.1` and found two concrete defects the code's own
+  "unverified" banner had flagged as risk: plain HTTP never actually
+  serves anything on this device, only redirects to HTTPS (fixed —
+  `baseUrl()`'s default scheme changed to `https://`); the device's
+  **self-signed TLS certificate causes `DEPTH_ZERO_SELF_SIGNED_CERT`** on
+  every request from this codebase as currently written — confirmed by
+  reproducing the exact `fetch()` call in a scratch script, not assumed.
+  **Not fixed** (deliberately, flagged as a required follow-up rather than
+  papered over): the TLS trust problem itself needs either a trusted cert
+  on the device or a narrowly-scoped opt-in on the shared HTTP client — a
+  blanket `NODE_TLS_REJECT_UNAUTHORIZED=0` was explicitly rejected as an
+  inappropriate unilateral fix (would weaken TLS for every other outbound
+  call in the process). Also flagged for whoever owns it: the device
+  redirects an unauthenticated request to an HTML `/enLogin.htm` session
+  page, not a `401 WWW-Authenticate: Basic` challenge — contradicts what
+  `dinstar-discovery.ts`'s `probeHost()` fingerprint assumes. Real
+  credentials were never available in-session; no credential guessing was
+  attempted. Test fixtures are honestly labeled best-effort constructed,
+  not real-captured, since an authenticated response was never obtained.
+
+**Net effect**: E7/E8/E9 are fully shippable pending the voicemail
+migration being applied to a live DB. D1's chatId fix and thread-view fix
+are shippable; the send-400 root cause is fixed with strong evidence but
+not live-confirmed. D2 revealed the SMS provider cannot work at all yet
+against this specific device until the TLS trust problem is resolved —
+this is now a known, well-understood blocker instead of an "unverified"
+question mark.
