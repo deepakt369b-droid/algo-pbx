@@ -11,9 +11,9 @@ import type {
 } from "./types";
 
 // ============================================================================
-// UNVERIFIED AGAINST A LIVE UC2000 — NEEDS LIVE TESTING
+// PARTIALLY LIVE-VERIFIED (2026-08-28) AGAINST A REAL UC2000 AT 192.168.11.1
 // ============================================================================
-// Dinstar UC2000 SMS over its HTTP/JSON API, reached at http://{DINSTAR_LAN_IP}
+// Dinstar UC2000 SMS over its HTTP/JSON API, reached at https://{DINSTAR_LAN_IP}
 // across the same Tailscale route the voice trunk already uses, with HTTP
 // Basic auth (DINSTAR_SMS_USERNAME / DINSTAR_SMS_PASSWORD).
 //
@@ -23,15 +23,64 @@ import type {
 //   inbound GET  /goip_get_sms.html?incoming=1&flag=unread
 //   status  GET  /goip_get_status.html
 //
+// WHAT WAS ACTUALLY CONFIRMED against the real box tonight (no admin
+// credentials were available — only the `change-me` placeholder in
+// .env.example — so this could only be probed unauthenticated; response
+// BODY shapes below, i.e. the DinstarSendResponse/DinstarSmsRow field
+// names, remain UNVERIFIED, same as before):
+//   - The device is reachable and answers as
+//     `Server: Web Server/2.1.0 MatrixSSL/4.3.0-OPEN` — consistent with a
+//     genuine Dinstar/GoIP-family embedded web server.
+//   - Every unauthenticated request to port 80 (`http://`), including to
+//     /goip_get_status.html itself, gets an unconditional
+//     `302 Redirect` to `https://<ip>:443/...`. Plain HTTP is not
+//     actually served — it only redirects. baseUrl() below has been
+//     changed to default to `https://` (was `http://`) to match this; a
+//     bare `DINSTAR_LAN_IP` host now goes straight to HTTPS instead of
+//     relying on a redirect hop.
+//   - The device's HTTPS certificate is self-signed. Node's fetch (via
+//     the shared requestJson() in ./http) throws
+//     `DEPTH_ZERO_SELF_SIGNED_CERT` and never reaches the application
+//     layer — confirmed with a local scratch script reproducing the same
+//     fetch() call this file makes. That failure is caught by every
+//     method below's try/catch and surfaces as a normal
+//     `status: "failed"` / `connected: false` with the error message
+//     attached — i.e. it fails LOUD, not silently — but it does mean
+//     this provider cannot successfully complete a single real request
+//     yet. Fixing that means either the device gets a certificate Node
+//     will trust, or ./http's requestJson() grows an explicit,
+//     narrowly-scoped opt-in to relax TLS verification for this one
+//     host — both are outside this file's ownership and are a follow-up,
+//     not something patched here with a blanket
+//     NODE_TLS_REJECT_UNAUTHORIZED=0 (that would weaken TLS for every
+//     other outbound call in the process, not just this device).
+//   - Unauthenticated GET to /goip_get_status.html over HTTPS (cert
+//     ignored, no Authorization header or query params — no real
+//     credentials were used or attempted; per task instructions, no
+//     credential guessing/brute forcing was attempted either) also
+//     redirects, this time to `/enLogin.htm`, an HTML session/cookie
+//     login page — NOT a `401` with `WWW-Authenticate: Basic`. That
+//     contradicts what src/lib/dinstar-discovery.ts's probeHost()
+//     fingerprint check assumes (a 401+Basic challenge) — flagged here
+//     as an FYI for whoever owns that file; not fixed here since it's
+//     out of this task's file scope. What this means for THIS file is
+//     genuinely open: it's unconfirmed whether authHeaders()/
+//     authQueryParams()'s two styles (Basic header vs
+//     `?username=&password=`) are honored by the JSON endpoints at all
+//     on this firmware, or whether they need the cookie-session flow
+//     the web UI redirect implies instead. Testing further required
+//     real credentials, which were not available, and the sandbox this
+//     was probed from declined even placeholder/fake-credential
+//     requests as an auth-guessing pattern — so this remains unresolved
+//     pending a session with real DINSTAR_SMS_USERNAME/PASSWORD values.
+//
 // Firmware revisions differ substantially in path names (some expose
-// /api/send_sms) and in response key casing — those remain unverified.
-// The auth-mechanism half of this caveat is resolved: the /admin/dinstar
-// setup wizard's probe step (src/lib/dinstar-discovery.ts) tries both
-// Basic auth and the `?username=&password=` query-string style against
-// the real device and persists which one worked as the DINSTAR_AUTH_STYLE
-// setting — authHeaders()/authQueryParams() below read it. Everything
-// else in this file must still be checked against the actual unit before
-// being trusted in production.
+// /api/send_sms) and in response key casing — those remain unverified,
+// same as the auth-mechanism question above. authHeaders()/
+// authQueryParams() below still read the wizard-persisted
+// DINSTAR_AUTH_STYLE setting (src/lib/dinstar-discovery.ts's
+// probeDinstarCredentials, run with real credentials) as the actual
+// source of truth once someone runs it against this box.
 //
 // PORT NUMBERING: the UC2000 HTTP API is 0-indexed (port 0..3) while
 // WaInstance.simPort in prisma/schema.prisma is 1-indexed (1..4) because
@@ -55,7 +104,12 @@ async function baseUrl(): Promise<string> {
   if (!ip) throw new Error("DINSTAR_LAN_IP is not configured");
   // Accept a bare IP or a full origin; reject anything with a path/query so
   // we can't be pointed at an arbitrary URL by a bad configured value.
-  const origin = /^https?:\/\//.test(ip) ? ip : `http://${ip}`;
+  // Default scheme is https: confirmed live against a real UC2000 that
+  // plain HTTP on this device only ever answers with a 302 redirect to
+  // https://<ip>:443/... (see the file header) — going straight to https
+  // avoids relying on that redirect (and the cross-origin header-dropping
+  // behavior fetch() applies on redirect) ever being followed correctly.
+  const origin = /^https?:\/\//.test(ip) ? ip : `https://${ip}`;
   const url = new URL(origin);
   if (url.pathname !== "/" || url.search) {
     throw new Error("DINSTAR_LAN_IP must be a host or origin, not a URL with a path");
@@ -74,7 +128,11 @@ async function authStyle(): Promise<"basic" | "query"> {
   return style === "query" ? "query" : "basic";
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
+/** Exported for dinstar-sms-provider.test.ts — the header/query building
+ * logic is the one piece of the two documented auth styles this file can
+ * unit-test without live credentials; live-testing which style the real
+ * device actually accepts is tracked in the file header above. */
+export async function authHeaders(): Promise<Record<string, string>> {
   if ((await authStyle()) === "query") return {};
   const [username, password] = await Promise.all([
     getSetting("DINSTAR_SMS_USERNAME"),
@@ -86,7 +144,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 /** Query-string auth params to append when DINSTAR_AUTH_STYLE is "query"
  * — empty otherwise, so callers can unconditionally spread this into
  * their URLSearchParams. */
-async function authQueryParams(): Promise<Record<string, string>> {
+export async function authQueryParams(): Promise<Record<string, string>> {
   if ((await authStyle()) !== "query") return {};
   const [username, password] = await Promise.all([
     getSetting("DINSTAR_SMS_USERNAME"),
