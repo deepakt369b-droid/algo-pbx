@@ -35,6 +35,7 @@ import BlockIcon from "@mui/icons-material/Block";
 import SupportAgentIcon from "@mui/icons-material/SupportAgent";
 import FactCheckIcon from "@mui/icons-material/FactCheck";
 import LanguageIcon from "@mui/icons-material/Language";
+import ContactsIcon from "@mui/icons-material/Contacts";
 import { HealthPill } from "./health-pill";
 import { ThemeToggleButton } from "./theme-toggle-button";
 
@@ -67,6 +68,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/admin/whatsapp", label: "WhatsApp", icon: <WhatsAppIcon fontSize="small" /> },
       { href: "/admin/sms", label: "SIM SMS", icon: <SmsIcon fontSize="small" /> },
       { href: "/admin/rooms", label: "Rooms", icon: <MeetingRoomIcon fontSize="small" /> },
+      { href: "/admin/contacts", label: "Contacts", icon: <ContactsIcon fontSize="small" /> },
     ],
   },
   {

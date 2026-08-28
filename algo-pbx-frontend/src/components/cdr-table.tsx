@@ -122,7 +122,7 @@ export function CdrTable() {
             {rows.map((row) => (
               <tr key={row.id} className="border-t border-border">
                 <td className="py-2">{new Date(row.startedAt).toLocaleString()}</td>
-                <td className="py-2">{row.callerNumber}</td>
+                <td className="py-2">{row.callerDisplayName ?? row.callerNumber}</td>
                 <td className="py-2">{row.destination}</td>
                 <td className="py-2">{row.direction}</td>
                 <td className="py-2">{row.durationSec}s</td>

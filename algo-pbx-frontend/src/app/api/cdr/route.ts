@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { emitEvent } from "@/lib/emit-event";
 import { withApiErrorHandler } from "@/lib/api-handler";
+import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,22 @@ export const GET = withApiErrorHandler(async function GET(req: NextRequest) {
     take: limit,
   });
 
-  return NextResponse.json({ rows });
+  // CallDetailRecord.callerNumber has no FK to Contact (it's a raw string
+  // off an Asterisk CDR event, per cdr-mapper.ts) — resolve a display name
+  // best-effort by normalizing each row's number and looking it up against
+  // the Contact table, same fallback rule conversation-list.tsx already
+  // uses for messaging (src/lib/contact-display.ts). This is an addition
+  // outside this route's original scope for this pass — flagged in the
+  // session report since no other in-flight change claims this file.
+  const contacts = await db.contact.findMany({ select: { numberE164: true, displayName: true } });
+  const contactsByE164 = buildContactDisplayMap(contacts);
+
+  return NextResponse.json({
+    rows: rows.map((row) => ({
+      ...row,
+      callerDisplayName: resolveContactDisplayName(row.callerNumber, contactsByE164),
+    })),
+  });
 });
 
 // POST /api/cdr — ingestion endpoint. Caller: scripts/ami-cdr-listener.mjs,

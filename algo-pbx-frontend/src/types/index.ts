@@ -13,6 +13,10 @@ export interface CdrRow {
   durationSec: number;
   agentExtension: string | null;
   recordingUrl: string | null;
+  // Best-effort Contact-resolved display name for callerNumber, added by
+  // GET /api/cdr's contact join — falls back to the raw callerNumber when
+  // there's no matching Contact (see src/lib/contact-display.ts).
+  callerDisplayName?: string;
 }
 
 export interface QueueSnapshot {
