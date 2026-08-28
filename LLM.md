@@ -2034,3 +2034,50 @@ not live-confirmed. D2 revealed the SMS provider cannot work at all yet
 against this specific device until the TLS trust problem is resolved —
 this is now a known, well-understood blocker instead of an "unverified"
 question mark.
+
+- 2026-08-28 — **Single-port-Dinstar blind/attended-transfer fix**, confirmed live via a real SIP trace: an agent transferring an active GSM call to an external number caused Asterisk to place a SECOND outbound Dial() through `dinstar-trunk` from the already-bridged Dinstar leg, which the gateway correctly rejected with `503` (only one SIM/port live) — the agent saw a bare failed transfer with no explanation. **Chose Option A (client-side rejection)**, not the dialplan-side option: `extensions.conf`'s `from-agent-common` has no clean way to detect "this channel's REFER target is retargeting an already-Dinstar-bridged leg" without bridge/`CHANNEL(peer)` introspection this repo has no live Asterisk to build or verify against, whereas rejecting before the REFER (and, for attended transfer, before the consult call's own `manager.call()` — itself a second outbound dial, independent of REFER) is strictly earlier, equally effective for the reported failure mode, and fully testable as pure logic today.
+  - New `src/lib/transfer-guard.ts`: `isInternalExtension()` mirrors `extensions.conf`'s `_1XXX`/`_2XXX` internal-routing patterns exactly (not `pjsip-config.ts`'s looser `\d{3,6}` provisioning validation — flagged in-file as a pre-existing dialplan gap, not something this guard should silently paper over); `evaluateTransferPermission()` blocks only "current call is Dinstar-trunk-originated AND target isn't a known internal extension", fails OPEN (allows) when the call's origin is untracked/unknown, same availability-over-blocking tradeoff already used by the DNC dialplan check. 11 tests, `transfer-guard.test.ts`.
+  - `src/contexts/sip-context.tsx`: new `primaryCallOriginRef` (`"trunk" | "internal" | null`) set on every call-establishment path (`makeCall` by destination pattern, `onCallReceived` by the inbound caller-id user part — a queue-distributed GSM call always presents the external caller's own number there, never an internal extension) and cleared on every teardown path (hangup, `onCallHangup`, the SessionManager-rebuild cleanup, a failed `makeCall`). `blindTransfer` and `startAttendedTransfer` both call `evaluateTransferPermission()` first and `throw` a clear message ("Can't transfer an active GSM call to another external number — this line only has one connection.") if blocked — this reuses `call-controls.tsx`'s existing `transferError` catch path (already wraps every transfer action in try/catch), not a new UI surface.
+  - Internal-to-internal, internal-to-external, and trunk-to-internal transfers (agent-to-agent/queue/voicemail) are completely unaffected by design — the guard only fires on the one combination that was actually confirmed to produce the 503.
+  - **Verified**: `npm run typecheck && npm run test && npm run lint && npm run build` — all four clean (278 tests passing, up from 267; build exits 0). **Not verified, and cannot be from this environment**: whether a real REFER from this softphone actually gets blocked client-side before hitting the wire, and whether the dialplan's existing behavior for the (now-guarded-against) case is exactly as SIP-traced — no live Asterisk/Dinstar in this session, same standing constraint as every other SIP code path in this repo. No `pbx_configs/*.conf` files were touched by this fix (Option A was entirely client-side), so no dialplan reload is needed.
+
+### Deployed to the live VM — and a correction to an earlier claim
+
+Tonight's code (both the `DINSTAR_SIP_PORT` fix and the full messaging
+track) is now **running live** on `192.168.11.20`, not just committed.
+
+The VM's `/home/pbx/algo-pbx` is a separate git checkout still on old
+`master`, carrying ~101 files of uncommitted local changes from prior
+sessions' direct SSH edits — never reconciled with this Windows clone's
+history. Rather than risk a `git pull`/reset across unrelated histories,
+every one of the 34 files tonight's commits touched was diffed against
+the VM's live content first: the 22 that already existed there were
+**byte-identical** to this repo's `a444f94` baseline, confirming the VM's
+tree is a clean superset with no local divergence in application source —
+safe to copy over directly, which is what was done (tar + scp, no `git`
+involved on the VM side).
+
+**Correction**: §19 claimed `docker-compose.yml` "already had
+`DINSTAR_SIP_PORT` correctly, just needed a container recreate." That was
+checked only against this Windows repo's copy — the VM's actual deployed
+`docker-compose.yml` **did not have the line at all**
+(`grep DINSTAR_SIP_PORT docker-compose.yml` on the VM: no match). Added it
+directly on the VM (backup kept at `docker-compose.yml.bak-sipport`,
+matching this repo's exact line/comment — should be folded into a real
+commit next session, currently only live on the VM, not in git). After
+recreating `algo-web`: `DINSTAR_SIP_PORT=5061` confirmed present in the
+container's actual environment for the first time ever. **This closes the
+whole landmine loop for real** — code fix + compose fix + live
+verification, not just the code half.
+
+Also applied live: the `voicemailSeenAt` migration (`ALTER TABLE`,
+confirmed via `\d "User"` before/after, and registered in
+`_prisma_migrations` with a computed checksum matching Prisma's own
+format, so a future `prisma migrate deploy` won't try to reapply it) —
+done only after explicit operator confirmation, since it's a direct write
+to the live database.
+
+Verified post-deploy: all 8 containers healthy (`caddy`'s known
+false-alarm aside), `/admin/contacts` and `/admin/dinstar` both return
+`307` (redirect to login — proof the routes exist and are correctly
+gated, not 404).

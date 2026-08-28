@@ -6,6 +6,7 @@ import { Web } from "sip.js";
 import type { Session } from "sip.js";
 import type { CallState, AgentStatus } from "@/types";
 import { extractCallQuality } from "@/lib/webrtc-stats";
+import { evaluateTransferPermission, isInternalExtension, type CallOrigin } from "@/lib/transfer-guard";
 
 // Phase F rewrite: migrated off Web.SimpleUser onto sip.js's official
 // Web.SessionManager. SimpleUser's own docblock says "it only handles a
@@ -113,6 +114,17 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   // separately and never conflated with this one.
   const primarySessionRef = useRef<Session | null>(null);
   const consultSessionRef = useRef<Session | null>(null);
+  // Single-port-Dinstar transfer guard (see src/lib/transfer-guard.ts's
+  // header comment for the full incident writeup) — tracks whether the
+  // CURRENT primary call's far end is only reachable through the Dinstar
+  // GSM trunk, so blindTransfer/startAttendedTransfer can refuse to send a
+  // REFER that the dialplan would otherwise turn into a second, doomed
+  // outbound Dial() through the same already-occupied GSM port. Set
+  // explicitly on both call directions (outbound in makeCall, inbound in
+  // onCallReceived below) and cleared on hangup — never inferred lazily at
+  // transfer time, since by then the only signal left is the (possibly
+  // stale) remote identity.
+  const primaryCallOriginRef = useRef<CallOrigin>(null);
   // A useRef instead of document.getElementById("remote-audio") (the
   // previous approach) — fragile under Suspense/streaming rendering where
   // an effect can run before the element the id refers to has actually
@@ -393,6 +405,17 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
           // Public API now (Session.remoteIdentity) — no more reaching into
           // a private field like the SimpleUser version had to.
           setIncomingCallerId(incoming.remoteIdentity.displayName || incoming.remoteIdentity.uri.toString());
+          // Transfer guard: an inbound call whose caller-id user part looks
+          // like an internal extension is another agent/extension dialing
+          // directly (never touches the Dinstar trunk); anything else
+          // (queue-distributed GSM calls always present the external
+          // caller's own number here) is trunk-originated. Best-effort —
+          // see transfer-guard.ts's CallOrigin doc comment for the fail-open
+          // behavior if this is ever wrong.
+          {
+            const callerUser = incoming.remoteIdentity.uri.user ?? "";
+            primaryCallOriginRef.current = isInternalExtension(callerUser) ? "internal" : "trunk";
+          }
         },
         onCallAnswered: (answered) => {
           if (answered === primarySessionRef.current) {
@@ -421,6 +444,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         onCallHangup: (ended) => {
           if (ended === primarySessionRef.current) {
             primarySessionRef.current = null;
+            primaryCallOriginRef.current = null;
             setCallState("idle");
             setIncomingCallerId(null);
             setIsMuted(false);
@@ -467,6 +491,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       manager.disconnect().catch(() => undefined);
       sessionManagerRef.current = null;
       primarySessionRef.current = null;
+      primaryCallOriginRef.current = null;
       consultSessionRef.current = null;
       setIsConnected(false);
       // The teardown previously left callState/consultState/isMuted at
@@ -581,6 +606,11 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
 
     setCallState("calling");
     const target = `sip:${destination}@${sipDomainRef.current}`;
+    // Transfer guard: an agent-dialed destination matching an internal
+    // extension pattern never reaches the Dinstar trunk; anything else
+    // does (see extensions.conf's from-agent-* cascade — every non-internal
+    // pattern eventually Dial()s PJSIP/${DIALNUM}@dinstar-trunk).
+    primaryCallOriginRef.current = isInternalExtension(destination) ? "internal" : "trunk";
     try {
       const outgoing = await manager.call(target);
       primarySessionRef.current = outgoing;
@@ -593,6 +623,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       console.error("Call failed:", err);
       setDialError("Call failed — see console for details.");
       setCallState("idle");
+      primaryCallOriginRef.current = null;
     }
   }, []);
 
@@ -619,6 +650,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     if (!manager || !target) return;
     await manager.hangup(target);
     primarySessionRef.current = null;
+    primaryCallOriginRef.current = null;
     setCallState("idle");
     setIncomingCallerId(null);
     setIsMuted(false);
@@ -658,6 +690,15 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     const manager = sessionManagerRef.current;
     const target = primarySessionRef.current;
     if (!manager || !target) return;
+    // Single-port-Dinstar transfer guard — reject BEFORE sending the REFER
+    // at all if this is a trunk call being sent to another external number
+    // (see transfer-guard.ts's header comment). Thrown here so it surfaces
+    // through the exact same catch/transferError path call-controls.tsx
+    // already uses for every other transfer failure — no new UI surface.
+    const permission = evaluateTransferPermission({ currentCallOrigin: primaryCallOriginRef.current, target: destination });
+    if (!permission.allowed) {
+      throw new Error(permission.reason ?? "Transfer not allowed.");
+    }
     // SessionManager.transfer(session, target): a string target means
     // blind transfer (plain REFER) — the public, documented equivalent of
     // the old private-`session.refer()` hack.
@@ -677,6 +718,14 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       const manager = sessionManagerRef.current;
       const target = primarySessionRef.current;
       if (!manager || !target || consultSessionRef.current) return;
+      // Single-port-Dinstar transfer guard — attended transfer's consult
+      // call IS itself a second outbound Dial() attempt (manager.call()
+      // below, before any REFER is even in play), so this must be checked
+      // here too, not just in blindTransfer. See transfer-guard.ts.
+      const permission = evaluateTransferPermission({ currentCallOrigin: primaryCallOriginRef.current, target: destination });
+      if (!permission.allowed) {
+        throw new Error(permission.reason ?? "Transfer not allowed.");
+      }
       if (callState === "active") {
         try {
           await manager.hold(target); // onCallHold delegate flips callState to "held"
