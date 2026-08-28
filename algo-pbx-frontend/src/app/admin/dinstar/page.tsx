@@ -79,6 +79,11 @@ export default function DinstarWizardPage() {
   const [host, setHost] = useState("");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
+  // The gateway's OWN local SIP port (not Asterisk's). Defaults to 5060,
+  // but the UC2000 refuses a trunk peer whose port equals its own local
+  // port, so any office where Asterisk also binds 5060 must move this
+  // (this office uses 5061) — see settings/schema.ts's DINSTAR_SIP_PORT.
+  const [sipPort, setSipPort] = useState("5060");
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -127,7 +132,7 @@ export default function DinstarWizardPage() {
     try {
       const data = await apiFetch<ApplyResult>("/api/admin/dinstar/apply", {
         method: "POST",
-        body: { host, username, password, writeAsteriskConfig },
+        body: { host, username, password, writeAsteriskConfig, sipPort },
       });
       setApplyResult(data);
       setStep("done");
@@ -267,6 +272,20 @@ export default function DinstarWizardPage() {
           <p className="text-xs text-slate-500">
             Save these settings, and optionally rewrite the Asterisk trunk config to point at {host} — no more SSH to change the gateway IP.
           </p>
+          <label className="flex flex-col gap-1 text-xs text-slate-500">
+            Dinstar&apos;s own local SIP port
+            <input
+              value={sipPort}
+              onChange={(e) => setSipPort(e.target.value)}
+              placeholder="5060"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan"
+            />
+            <span>
+              The gateway&apos;s own local SIP port (not Asterisk&apos;s). Default 5060 — but the UC2000 refuses a trunk peer
+              whose port equals its own local port, so if Asterisk also binds 5060 on this host, move the Dinstar&apos;s
+              local SIP port (e.g. 5061) and enter it here.
+            </span>
+          </label>
           <button onClick={() => link(true)} disabled={applying} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50">
             {applying ? "Applying…" : "Save settings and update Asterisk"}
           </button>

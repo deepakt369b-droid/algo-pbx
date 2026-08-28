@@ -1,19 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { setSetting } from "@/lib/settings/service";
 import { probeDinstarCredentials, assertProbeableHost } from "@/lib/dinstar-discovery";
 import { provisionDinstarConfig } from "@/lib/dinstar-provision";
+import { DinstarApplySchema } from "@/lib/dinstar-apply-schema";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
-
-const Schema = z.object({
-  host: z.string().min(1).max(64),
-  username: z.string().min(1),
-  password: z.string().min(1),
-  writeAsteriskConfig: z.boolean().default(false),
-});
 
 // POST /api/admin/dinstar/apply — the wizard's final step. Re-probes
 // (never trust stale client state for a credential/auth-style decision),
@@ -25,9 +18,9 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
 
-  const parsed = Schema.safeParse(await request.json().catch(() => null));
+  const parsed = DinstarApplySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
-  const { username, password, writeAsteriskConfig } = parsed.data;
+  const { username, password, writeAsteriskConfig, sipPort } = parsed.data;
 
   let host: string;
   try {
@@ -45,6 +38,7 @@ export async function POST(request: NextRequest) {
   await setSetting("DINSTAR_SMS_USERNAME", username, guard.session.user.id);
   await setSetting("DINSTAR_SMS_PASSWORD", password, guard.session.user.id);
   await setSetting("DINSTAR_AUTH_STYLE", probe.authStyle, guard.session.user.id);
+  await setSetting("DINSTAR_SIP_PORT", sipPort, guard.session.user.id);
 
   await db.auditLog.create({
     data: {
