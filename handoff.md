@@ -1,4 +1,107 @@
-# Handoff — Outbound GSM audio confirmed live. Inbound is carrier-side call barring (re-confirmed live; see RE-CORRECTION below).
+# Handoff — Production VPS is LIVE on real HTTPS. Inbound voice paused mid-diagnosis: carrier barring RULED OUT, now looks like a SIM/antenna seating issue on the gateway. Pick up here tomorrow.
+
+Last updated: 2026-08-28, end of session (production deploy day). Full
+detail in `LLM.md §19`/`§20`/`§21`/`§22` and the plan file
+`~/.claude/plans/the-navbar-voicemail-missed-chat-cheeky-pinwheel.md`.
+
+## STOP HERE FIRST TOMORROW — exact state the session was left in
+
+**The production stack is live and healthy. Nothing here is broken except
+inbound GSM voice, which is mid-diagnosis, not mid-outage.**
+
+### How to get back in (no new credentials needed)
+
+- **VPS**: `ssh root@187.53.128.252` — key-based auth already works from
+  this Windows PC (`~/.ssh/id_ed25519`, already trusted by the VPS). No
+  password exists or is needed. Repo is at `/opt/algo-pbx` on `main`
+  (GitHub's default branch is still the stale `master` — always
+  `git checkout main` after a fresh clone, never trust the default).
+- **App**: `https://pbx.saharatechs.com` — real Let's Encrypt cert, valid
+  through 2026-11-26. Admin account was created by the user directly
+  through `/setup` this session; this assistant never saw the password.
+- **Tailscale**: this Windows PC (`desktop-9k5i239`, `100.96.38.18`) is the
+  subnet router for the Dinstar's office LAN (advertises
+  `192.168.11.0/24`, approved in the Tailscale admin console already).
+  The VPS (`srv1936994`, `100.64.32.115`) reaches the gateway through it
+  — confirmed working (`ping 192.168.11.1` from the VPS succeeds,
+  ~150ms). If this PC is off or Tailscale isn't running on it, the VPS
+  loses the route to the gateway entirely — check that first if anything
+  Dinstar-related seems newly broken tomorrow.
+- **Dinstar gateway**: `https://192.168.11.1` (reachable directly from
+  this PC, which sits on that LAN via its `Ethernet` interface at
+  `192.168.11.50`/`.10`). Admin credentials were entered by the user
+  directly; not recorded here. This is a **UC2000-VE Business, 8 ports**,
+  not 4 — only port 0/1 (see below) has ever had a live SIM; ports 2–3
+  have modems but no SIM; ports 4–7 have no modem hardware
+  installed/powered.
+
+### Where the inbound-voice diagnosis actually landed (read this before
+### touching the Dinstar again)
+
+The chain of theories today, in order, each overturned by the next by
+**live testing against the real hardware**, not by re-reading docs:
+
+1. Carrier-side incoming-call barring (`§19`'s original conclusion).
+2. DISA/empty-hotline (`§20`'s correction) — overturned: fixed the
+   hotline on all 8 ports and the stale SIP trunk IP, live-retested twice,
+   still `FORBID CALL` both times with zero SIP traffic reaching Asterisk.
+3. Carrier barring again, re-confirmed (`§21`) — **overturned by the
+   single most useful test all day**: the user put the physical SIM into
+   an ordinary mobile phone and it received incoming calls normally, on
+   the same carrier, same number, even when the phone was forced onto
+   2G-only. A number that's actually barred by the carrier fails
+   everywhere, on every device — it did not. **Carrier-side barring is
+   ruled out, permanently, don't re-chase it.**
+4. Current leading theory, untested: **something specific to the Dinstar
+   module/antenna/SIM-seating**, not the carrier and not GSM config. When
+   the SIM went back into the gateway (now sitting in **port 1**, not
+   port 0 — the physical tray apparently got swapped), it took over 4
+   minutes to go from "searching network" to outright **"Mobile
+   Unregistered"**, with a visibly weak/near-empty signal-bar icon the
+   whole time — markedly worse than port 0's earlier "Mobile Registered,
+   full bars" reading before any of today's SIM-swapping happened. This
+   was never resolved — the session ended here.
+
+**Tomorrow, in this order:**
+1. Physically check the SIM card is fully seated in whichever port it's
+   now in, and that port's antenna cable is firmly connected — the user
+   was about to do this when the session ended. A loose antenna
+   connector is a completely mundane, very common cause of exactly this
+   symptom (weak signal, slow/failed registration) and costs nothing to
+   rule out before suspecting the module itself.
+2. Once registration shows **"Mobile Registered"** with real signal bars
+   again (whichever port), re-run the same live test from today: place a
+   real call to the SIM while watching `docker exec algo-asterisk
+   asterisk -rx 'pjsip set logger on'` + `ssh root@187.53.128.252 "docker
+   logs -f algo-asterisk"` on one side and the gateway's **GSM Event**
+   log + **Current Call Status** page on the other. `FORBID CALL` again
+   under a clean registration would newly implicate the module/firmware
+   itself (worth Dinstar support at that point); a real SIP INVITE
+   reaching Asterisk would mean today's hotline/trunk-IP fix was right
+   all along and this was purely a signal/registration problem the whole
+   time.
+3. If the SIM is now permanently in port 1 rather than port 0, no config
+   change is needed for that — confirmed this session that
+   `Port Group-0 <default>` already covers all 8 ports
+   (`0,1,2,3,4,5,6,7`), so the existing hotline/Tel→IP-routing/SIP-trunk
+   config applies to whichever port the SIM ends up in.
+
+### Also still open from today, lower priority than the above
+
+- Phase 4 (SMS: the undici/self-signed-cert bypass code change, and the
+  poller service) and Phase 5 (fail2ban, `ss -tulnp` audit, Hostinger
+  snapshots) from the deployment plan — not started.
+- The stale `192.168.1.0/24` default in `scripts/setup-tailscale-uae-
+  office.sh` / `scripts/setup-tailscale-cloud.sh` — flagged, not fixed;
+  irrelevant to today's actual bridge (a Windows client was used instead
+  of the Linux script) but should be corrected for future Linux
+  deployments.
+- Outbound calling was not re-tested against the new VPS this session
+  (no reason to expect a regression, but not independently confirmed
+  either).
+
+---
+
 
 Last updated: 2026-08-28 (production deploy session). Full detail in
 `LLM.md §19`/§20/§21 and the plan file

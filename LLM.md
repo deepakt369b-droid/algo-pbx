@@ -2500,3 +2500,114 @@ not independently confirmed against the new VPS either).
 code change and the poller service), Phase 5 (fail2ban, `ss -tulnp`
 audit, Hostinger snapshots), and the stale-subnet-default fix in the two
 Tailscale shell scripts noted above.
+
+
+## 22. Dinstar gateway config applied via browser automation; carrier-barring theory decisively ruled out; paused on a SIM/antenna registration issue (2026-08-28, same day, direct continuation of §21)
+
+Direct continuation of §21's Phase 3 work, same session. Logged into the
+Dinstar UC2000-VE's own web UI (`https://192.168.11.1`) via browser
+automation from this Windows PC — the user entered the gateway's admin
+credentials directly into the login form; this assistant never saw them.
+
+### Config applied, confirmed via screenshots at each step
+
+- **Port Configuration**: "To VOIP Hotline" was `100` on port 0 only,
+  empty on ports 1–7. Set to `100` on all 8 (the bulk "copy to all"
+  button on this firmware actually **clears** the target fields instead
+  of propagating them — discovered by watching it fail, then typed each
+  port's field individually instead). Saved, confirmed "Parameters OK".
+- **Tel→IP Routing**: appeared completely empty on first load ("Total:
+  entries", blank) — turned out to be a slow/stale AJAX render on that
+  specific page, not a real gap; a reload revealed a pre-existing rule
+  (`ToAlgoPBX`, Port Group-0 → Trunk-0, Allow) that had been there the
+  whole time. A duplicate rule added before catching this was deleted
+  again.
+- **SIP Trunk Configuration** — the actual load-bearing fix: Trunk 0
+  ("AlgoPBX") pointed at `192.168.11.20:5060`, the old local-office VM
+  from before this session's redeploy. Updated to `100.64.32.115:5060`
+  (the new VPS's Tailscale IP) via the trunk's Modify form.
+- **Port Group Configuration**: confirmed `port-group-0 <default>` — the
+  only group that exists — already covers all 8 physical ports
+  (`0,1,2,3,4,5,6,7`), so none of the above needed per-port duplication
+  and covers wherever the live SIM ends up.
+- No NAT-traversal toggle exists anywhere in this firmware to disable;
+  confirmed by reading `SIP Configuration` and `Network Configuration` in
+  full rather than assuming a checkbox exists because a plan mentioned
+  one.
+
+### Live re-test overturned §20's DISA-prompt correction, again
+
+With `pjsip set logger on` and a live `docker logs -f algo-asterisk`
+watch running on the VPS, the user placed two real calls to the SIM
+immediately after the fix above. Both logged `FORBID CALL` in the
+gateway's own GSM Event history (1s duration, identical to every other
+inbound attempt recorded that day) and produced **zero** SIP traffic on
+the Asterisk side. Re-checked every device-side setting that could
+plausibly cause a DISA-then-reject pattern — Call Limit (no rules),
+Phone Number Learning (no rules), Digit Map (permissive catch-all
+`x.#|x.T`), Basic Configuration's "No Alerting Call Handle" (Normal
+Handle), GSM incoming call limit (disabled) — all clean. Also checked two
+YouTube links the user offered mid-test as reference: a 30s Dinstar
+IP-PBX demo clip and a **Dinstar Analog Gateway** (FXO/FXS, not GSM)
+training video — neither applicable to a GSM carrier-barring question.
+`handoff.md` picked up a RE-CORRECTION section (not a silent rewrite):
+the DISA theory doesn't survive live re-testing; the original
+carrier-barring diagnosis was reinstated as current. Committed
+(`e6ec1f0`).
+
+### The decisive test: carrier barring ruled out for real
+
+The user physically moved the SIM card out of the Dinstar and into an
+ordinary mobile phone. **It received incoming calls normally** — same
+number, same carrier — including with the phone deliberately forced onto
+2G-only network mode. A number that is actually barred by the carrier
+fails on every device, unconditionally; this one didn't. **This
+permanently rules out carrier-side incoming-call barring** — overturning
+§19's original diagnosis and §21's re-confirmation of it, both of which
+this session had otherwise trusted. Also ruled out along the way (checked
+before the phone test, once §21's re-confirmation started looking shaky):
+a 2G-voice-sunset theory (`Mobile Configuration` shows the module is
+2G-only — `NetWork Mode`/`Band Type` both `Default(Auto)`, page's own note
+confirms "GSM module Only supports" pure-GSM band combinations, no real
+3G/4G capability) — also ruled out by the same phone test once forced to
+2G.
+
+### New leading theory, untested — hardware/seating, not carrier or config
+
+With every carrier- and config-side theory eliminated, tried one more
+diagnostic step: rebooted the whole gateway (`Tools → Restart`, user
+confirmed first since it drops all 8 ports for ~1–2 minutes, not just
+port 0) to rule out a stuck radio state despite the module showing
+"Registered". Discovered along the way that **`Tools → Module Recovery`
+is a firmware re-flash utility** (needs a firmware file, real risk of
+bricking a module if interrupted), not a soft reset as the label
+suggested — correctly did not run this without explicit confirmation.
+
+Post-reboot, the SIM came back on a **different physical port (1, not
+0)** — the tray apparently got swapped when the user moved the card
+between the phone and the gateway. Polled `Mobile Information` repeatedly
+over ~4.5 minutes: signal icon showed visibly weak/near-empty bars the
+entire time, status crawled from "searching network" to outright
+**"Mobile Unregistered"** — markedly worse than port 0's earlier "Mobile
+Registered, full signal" reading before any of today's SIM-swapping.
+This was never resolved before the session ended — asked the user to
+physically check the SIM seating and antenna connection on the gateway,
+which they were about to do when they had to leave for the day.
+
+**`handoff.md` given a full end-of-session rewrite of its own header**
+(not just another correction block — the whole "what to read first"
+section) recording the exact pickup state for tomorrow: VPS/Tailscale/
+gateway access details (no new credentials needed — SSH key auth and the
+Tailscale bridge are both already live), the full chain of overturned
+theories in order so nothing gets re-litigated from scratch, and the
+precise next three steps (check SIM/antenna seating → re-test live with
+both-sided log watching → no config change needed regardless of which
+port the SIM ends up in, since `port-group-0` already covers all 8).
+
+**Verified this session (in addition to §21's list):** Dinstar hotline and
+SIP trunk config changes saved and confirmed via the device's own
+"Parameters OK" / list-view responses, not assumed. **Not verified, and
+now blocked on a physical hardware check the assistant cannot perform
+remotely:** whether the SIM/antenna are actually seated correctly on
+whichever port it's now in — this is the literal next step, not a new
+open question found late.
