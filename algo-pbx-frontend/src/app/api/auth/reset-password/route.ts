@@ -41,7 +41,7 @@ export const POST = withApiErrorHandler(async (request: NextRequest) => {
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
   const now = new Date();
   await db.$transaction([
-    db.user.update({ where: { id: user.id }, data: { passwordHash, passwordChangedAt: now } }),
+    db.user.update({ where: { id: user.id }, data: { passwordHash, passwordPlain: parsed.data.newPassword, passwordChangedAt: now } }),
     db.auditLog.create({
       data: { action: "user.password_reset_self_service", actorId: user.id, targetId: user.id, metadata: {} },
     }),

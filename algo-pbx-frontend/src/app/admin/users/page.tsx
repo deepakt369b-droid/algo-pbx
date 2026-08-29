@@ -17,6 +17,8 @@ interface UserRow {
   phoneVerifiedByAdminId: string | null;
   photoPath: string | null;
   profileCompletedAt: string | null;
+  // Present only for ADMIN sessions (see GET /api/admin/users).
+  passwordPlain?: string | null;
 }
 
 interface WaInstanceOption {
@@ -85,7 +87,7 @@ export default function UsersPage() {
             name,
             role,
             password: mode === "password" ? password : undefined,
-            phoneE164: mode === "password" && phone ? phone : undefined,
+            phoneE164: phone.trim() || undefined,
             autoExtension: extensionMode === "auto",
             extensionNumber: extensionMode === "manual" ? extensionNumber : undefined,
             simPort: simPort === "" ? undefined : simPort,
@@ -202,7 +204,7 @@ export default function UsersPage() {
   };
 
   const deleteUser = async (u: UserRow) => {
-    if (!confirm(`Delete ${u.name} (${u.email})? The account is revoked, its extension and SIM port are released, and personal details are scrubbed. The audit history is kept. This cannot be undone.`)) return;
+    if (!confirm(`Permanently delete ${u.name} (${u.email})? The account and all of its history (audit log, login history, escalations, chat assignments) are removed. Its extension and SIM port are released. This cannot be undone.`)) return;
     try {
       const data = await apiFetch<{ warning?: string }>(`/api/admin/users/${u.id}`, { method: "DELETE" });
       setMessageKind(data.warning ? "error" : "ok");
@@ -266,22 +268,24 @@ export default function UsersPage() {
         </div>
 
         {mode === "password" && (
-          <>
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              type="text"
-              placeholder="Password (min 12 characters)"
-              className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
-            />
-            <input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Phone, e.g. +971544887712 (optional)"
-              className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
-            />
-          </>
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="text"
+            placeholder="Password (min 12 characters)"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
+          />
         )}
+
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="Agent phone, e.g. +971544887712 (for WhatsApp OTP)"
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
+        />
+        <p className="-mt-1 text-xs text-slate-600">
+          Optional. If set, it&apos;s marked admin-verified so the agent can receive a WhatsApp password-reset code right away.
+        </p>
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Extension</p>
@@ -463,6 +467,16 @@ export default function UsersPage() {
                     <span>{u.email}</span>
                     <span>{u.extension ? `ext. ${u.extension.number} (${u.extension.status})` : "no extension"}</span>
                   </div>
+                  {"passwordPlain" in u && (
+                    <p className="text-xs text-slate-500">
+                      Password:{" "}
+                      {u.passwordPlain ? (
+                        <code className="text-cyan">{u.passwordPlain}</code>
+                      ) : (
+                        <span className="text-slate-600">not set yet (invite not consumed)</span>
+                      )}
+                    </p>
+                  )}
                   {u.waInstance && (
                     <p className="text-xs text-slate-500">
                       WhatsApp: SIM {u.waInstance.simPort} · {u.waInstance.status}

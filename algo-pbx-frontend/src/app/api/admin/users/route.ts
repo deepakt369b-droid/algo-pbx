@@ -21,6 +21,11 @@ export const GET = withApiErrorHandler(async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
 
+  // Owner override (2026-08-29): plaintext passwords are surfaced to ADMIN
+  // sessions only — a SUPERVISOR who can list users still never sees them.
+  // See memory owner-overrides-security-model.
+  const isAdmin = guard.session.user.role === "ADMIN";
+
   const users = await db.user.findMany({
     select: {
       id: true,
@@ -29,6 +34,7 @@ export const GET = withApiErrorHandler(async function GET() {
       role: true,
       disabled: true,
       createdAt: true,
+      passwordPlain: isAdmin,
       extension: { select: { number: true, kind: true, status: true } },
       waInstance: { select: { id: true, label: true, simPort: true, status: true, phoneE164: true } },
       invite: { select: { consumedAt: true, expiresAt: true } },
@@ -162,6 +168,7 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
       name,
       role,
       passwordHash,
+      passwordPlain: password,
       ...(phoneE164
         ? {
             phoneE164,

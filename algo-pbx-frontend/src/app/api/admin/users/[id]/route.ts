@@ -165,6 +165,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (p.role && p.role !== target.role) { userData.role = p.role; changes.push("role"); }
   if (p.password) {
     userData.passwordHash = await bcrypt.hash(p.password, 12);
+    userData.passwordPlain = p.password;
     // Kills every other outstanding session on its next request — same
     // mechanism as a self-service reset (src/auth.ts jwt callback).
     userData.passwordChangedAt = new Date();
@@ -230,12 +231,15 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   return NextResponse.json({ ok: true, changes, warning: warnings.length ? warnings.join(" ") : undefined });
 }
 
-// DELETE /api/admin/users/[id] — ADMIN only. A raw row delete is not
-// possible (every AuditLog.actorId this user ever wrote is an enforced FK,
-// and deleting the audit trail is the wrong outcome for a compliance-
-// sensitive system). Instead: revoke, release every attached resource, and
-// scrub PII, keeping the row + history intact. This replaces
-// GO_LIVE_CHECKLIST.md's "remove test accounts via DB".
+// DELETE /api/admin/users/[id] — ADMIN only.
+//
+// Owner override (2026-08-29): this is a HARD delete. The original
+// soft-delete + PII-scrub (which kept the row and its audit trail) is
+// replaced — the operator wants a removed agent to leave no trace. Every
+// row that FK-references this user is removed or re-pointed inside one
+// transaction, then the User row itself is deleted. Extensions and SIM
+// ports are released (unlinked), not deleted — they are shared infra, not
+// personal data. See memory owner-overrides-security-model.
 export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
@@ -254,41 +258,41 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
   }
 
   const warnings: string[] = [];
-
   if (target.extension) {
     const w = await syncQueueMembership(target.extension.number, false);
     if (w) warnings.push(w);
-    // Unlink but keep the Extension row + its PJSIP config — an admin may
-    // want to hand the number to a replacement hire. Hard-deleting the
-    // extension is a separate action (DELETE /api/extensions/[number]).
-    await db.extension.update({ where: { number: target.extension.number }, data: { userId: null } });
-  }
-  if (target.waInstance) {
-    await db.waInstance.update({ where: { id: target.waInstance.id }, data: { assignedUserId: null } });
   }
 
-  await db.user.update({
-    where: { id: target.id },
-    data: {
-      disabled: true,
-      disabledAt: new Date(),
-      // Invalidate every session immediately.
-      passwordChangedAt: new Date(),
-      passwordHash: null,
-      // Scrub PII (PDPL data-minimisation) while keeping a stable, unique,
-      // non-routable email so the row and its audit references survive.
-      email: `deleted-${target.id}@deleted.invalid`,
-      name: "Deleted user",
-      phoneE164: null,
-      phoneVerifiedAt: null,
-      address: null,
-      photoPath: null,
-    },
-  });
+  const actorId = guard.session.user.id;
+  const id = target.id;
 
-  await db.auditLog.create({
-    data: { action: "user.deleted", actorId: guard.session.user.id, targetId: target.id, metadata: { originalEmail: target.email, role: target.role } },
-  });
+  await db.$transaction([
+    // Release shared infra (keep the rows).
+    db.extension.updateMany({ where: { userId: id }, data: { userId: null } }),
+    db.waInstance.updateMany({ where: { assignedUserId: id }, data: { assignedUserId: null } }),
+    db.waInstance.updateMany({ where: { pairedByAdminId: id }, data: { pairedByAdminId: null } }),
+    // Null every remaining nullable back-reference.
+    db.user.updateMany({ where: { phoneVerifiedByAdminId: id }, data: { phoneVerifiedByAdminId: null } }),
+    db.recording.updateMany({ where: { hiddenByUserId: id }, data: { hiddenByUserId: null } }),
+    db.conversation.updateMany({ where: { assignedAgentId: id }, data: { assignedAgentId: null } }),
+    db.smsAccessRequest.updateMany({ where: { decidedById: id }, data: { decidedById: null } }),
+    // Reassign DNC entries (their addedById is required and the list must
+    // survive the person who typed it) to the acting admin.
+    db.doNotCallEntry.updateMany({ where: { addedById: id }, data: { addedById: actorId } }),
+    // Delete rows whose FK to this user is required and which carry no
+    // value once the person is gone.
+    db.smsAccessRequest.deleteMany({ where: { requestedById: id } }),
+    db.escalationAttempt.deleteMany({ where: { agentId: id } }),
+    db.otpChallenge.deleteMany({ where: { userId: id } }),
+    db.trustedDevice.deleteMany({ where: { userId: id } }),
+    db.loginAttempt.deleteMany({ where: { userId: id } }),
+    db.invite.deleteMany({ where: { OR: [{ userId: id }, { createdById: id }] } }),
+    db.auditLog.deleteMany({ where: { OR: [{ actorId: id }, { targetId: id }] } }),
+    db.user.delete({ where: { id } }),
+    db.auditLog.create({
+      data: { action: "user.deleted", actorId, metadata: { originalEmail: target.email, role: target.role, userId: id } },
+    }),
+  ]);
 
   return NextResponse.json({ ok: true, warning: warnings.length ? warnings.join(" ") : undefined });
 }

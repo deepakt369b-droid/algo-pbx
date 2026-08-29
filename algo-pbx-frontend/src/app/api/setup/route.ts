@@ -71,6 +71,7 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
     data: {
       email: parsed.data.email,
       passwordHash,
+      passwordPlain: parsed.data.password,
       name: parsed.data.name,
       role: "ADMIN",
       // The first admin is created directly, not via the Invite flow —

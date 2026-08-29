@@ -54,6 +54,14 @@ model User {
   // completed onboarding; the login path (src/auth.ts) must treat null
   // the same as "credentials can never match", not as an open door.
   passwordHash      String?
+  // Owner override (2026-08-29): the operator wants agent passwords
+  // readable from the admin panel to recover locked-out agents without a
+  // reset round-trip. Kept in sync with passwordHash at every write site
+  // (setup, invite consume, admin create, admin PATCH, self-service
+  // reset). Returned by GET /api/admin/users for ADMIN sessions only.
+  // This deliberately breaks the original "an admin never learns the
+  // agent's password" property — see memory owner-overrides-security-model.
+  passwordPlain     String?
   // Loop C3 — set on every successful password change (self-service
   // reset via WhatsApp OTP, or an admin-triggered reset-link consumption
   // — NOT on initial invite consumption, since there's no prior session
