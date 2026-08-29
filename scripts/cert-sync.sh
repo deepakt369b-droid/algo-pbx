@@ -102,6 +102,39 @@ sync_cert() {
   docker restart algo-asterisk algo-coturn >/dev/null 2>&1 || log "restart of asterisk/coturn failed — check they're both running"
 }
 
+ensure_dtls_media_cert() {
+  # Every generated PJSIP endpoint (src/lib/pjsip-config.ts) references
+  # /etc/asterisk/keys/asterisk.crt + asterisk.key for DTLS-SRTP. This
+  # pair is deliberately self-signed — dtls_verify=fingerprint validates
+  # the SDP fingerprint exchanged in signaling, not the chain of trust —
+  # and is SEPARATE from the Let's Encrypt fullchain/privkey pair
+  # sync_cert() manages for the WSS transport. If it's absent, Asterisk
+  # silently rejects EVERY WebRTC endpoint stanza at config load ("Could
+  # not find dtls_cert_file"), only the auths/AORs survive, and no agent
+  # softphone can register — a failure mode that has cost multiple
+  # debugging sessions (endpoints simply "not there" in `pjsip show
+  # endpoints`). Generate it once if missing; cert-sync already has the
+  # only write access to this directory.
+  [ -f "$KEYS_DIR/asterisk.crt" ] && [ -f "$KEYS_DIR/asterisk.key" ] && return 0
+  if ! command -v openssl >/dev/null 2>&1; then
+    log "DTLS media cert missing and openssl unavailable — generate pbx_configs/keys/asterisk.{crt,key} by hand (see that dir's README)"
+    return 0
+  fi
+  log "DTLS media cert missing — generating a self-signed pair in $KEYS_DIR"
+  if ! openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -keyout "$KEYS_DIR/asterisk.key.new" -out "$KEYS_DIR/asterisk.crt.new" \
+    -subj "/CN=${DOMAIN:-algo-pbx}/O=Algo IT" >/dev/null 2>&1; then
+    log "openssl failed to generate the DTLS media cert"
+    rm -f "$KEYS_DIR/asterisk.key.new" "$KEYS_DIR/asterisk.crt.new"
+    return 0
+  fi
+  chmod 644 "$KEYS_DIR/asterisk.key.new" "$KEYS_DIR/asterisk.crt.new"
+  mv "$KEYS_DIR/asterisk.key.new" "$KEYS_DIR/asterisk.key"
+  mv "$KEYS_DIR/asterisk.crt.new" "$KEYS_DIR/asterisk.crt"
+  log "DTLS media cert generated — restarting asterisk so the endpoints load"
+  docker restart algo-asterisk >/dev/null 2>&1 || log "asterisk restart failed — restart it manually"
+}
+
 check_restart_marker() {
   [ -f "$RESTART_MARKER" ] || return 0
   log "restart marker present — recreating caddy"
@@ -113,6 +146,7 @@ check_restart_marker() {
 }
 
 log "starting, polling every ${POLL_INTERVAL}s (domain: ${DOMAIN:-<unset>})"
+ensure_dtls_media_cert
 while true; do
   check_restart_marker
   sync_cert

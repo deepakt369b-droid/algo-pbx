@@ -2671,6 +2671,34 @@ Verified live in-browser: `/agent` now loads fully. No DB surgery needed
 — the stuck agent recovers by filling the address on the (now-shown)
 form.
 
+**Agent softphone / call path (inbound + outbound) unblocked on the VPS.**
+`pjsip show endpoints` showed ONLY `dinstar-trunk` — extensions 1001/1002
+were in the generated `pjsip_dynamic.conf` but Asterisk was silently
+rejecting both endpoint stanzas because
+`/etc/asterisk/keys/asterisk.crt` / `asterisk.key` (the self-signed
+DTLS-SRTP media cert every generated endpoint references) **did not
+exist** on this VPS — only the Let's Encrypt `fullchain.pem`/`privkey.pem`
+had ever been placed there. `module reload res_pjsip.so` reported success
+but never loaded them (the known reload-unreliability). Fixes:
+(1) generated `pbx_configs/keys/asterisk.{crt,key}` on the VPS with
+`openssl req -x509` per that dir's README; (2) `docker compose restart
+asterisk` — 1001 + 1002 now load (`Unavailable`, i.e. waiting for a
+REGISTER, not rejected), queue member `PJSIP/1002` went `Invalid` ->
+`Unavailable`; (3) added an `ensure_dtls_media_cert()` bootstrap to
+`scripts/cert-sync.sh` (the one container with write access to that dir)
+so a fresh deploy self-heals instead of costing another session.
+Outbound dialplan (`from-agent-{local,national,international}` ->
+`from-agent-common` -> `Dial(PJSIP/<num>@dinstar-trunk)`) and inbound
+(`from-dinstar` -> `support_queue`) are both correct and loaded. **Two
+things still gate real calls:** the agent must finish registration (add
+an address — the redirect-loop fix above lets them reach the form) before
+`/api/me/sip-credentials` will hand the softphone its creds, and ext 1002
+is `dialPermission=LOCAL` (UAE numbers only) — bump it to NATIONAL in
+`/admin/extensions` to also reach India (+91), then restart asterisk.
+Inbound GSM still additionally depends on the Dinstar gateway actually
+delivering the INVITE (the separate SIM/registration "normal hangup"
+question).
+
 **Still open from this session:** the invite-email path — settings now
 hold `INVITE_FROM_EMAIL=algopbx@saharatechs.com` and a `RESEND_API_KEY`
 whose last 4 chars render as `.com` (suspicious — a real key is `re_…`;
