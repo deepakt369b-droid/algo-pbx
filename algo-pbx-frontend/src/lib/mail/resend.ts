@@ -37,7 +37,7 @@ async function getClient(): Promise<Resend> {
 export async function sendInviteEmail(to: string, name: string, inviteUrl: string): Promise<void> {
   const from = (await getSetting("INVITE_FROM_EMAIL")) || "invites@algopbx.local";
   const resend = await getClient();
-  await resend.emails.send({
+  const { error } = await resend.emails.send({
     from,
     to,
     subject: "You've been added to Algo PBX",
@@ -49,6 +49,7 @@ export async function sendInviteEmail(to: string, name: string, inviteUrl: strin
       be changed by you — contact an administrator if it needs to change.</p>
     `,
   });
+  throwOnResendError(error);
 }
 
 // Loop C3 — admin-triggered password reset. Reuses the exact same
@@ -60,7 +61,7 @@ export async function sendInviteEmail(to: string, name: string, inviteUrl: strin
 export async function sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
   const from = (await getSetting("INVITE_FROM_EMAIL")) || "invites@algopbx.local";
   const resend = await getClient();
-  await resend.emails.send({
+  const { error } = await resend.emails.send({
     from,
     to,
     subject: "Reset your Algo PBX password",
@@ -72,6 +73,19 @@ export async function sendPasswordResetEmail(to: string, name: string, resetUrl:
       your current password still works until you use this link.</p>
     `,
   });
+  throwOnResendError(error);
+}
+
+// The Resend SDK does NOT throw on an API-level failure (invalid key,
+// unverified sending domain, rejected recipient) — it resolves with
+// { data: null, error: {...} }. Callers that ignore the return value
+// therefore treat every failure as a success. Convert it back into a
+// thrown error so the /admin/settings "Test connection" check and the
+// invite/reset warnings surface the real reason.
+function throwOnResendError(error: { name?: string; message?: string } | null): void {
+  if (error) {
+    throw new Error(`Resend rejected the send: ${error.message ?? error.name ?? "unknown error"}`);
+  }
 }
 
 // Minimal HTML-escaping for the one interpolated field (name) that isn't
