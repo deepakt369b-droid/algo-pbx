@@ -84,7 +84,13 @@ export default function RegisterPage() {
         setName(data.name ?? "");
         setAddress(data.address ?? "");
         setPhone(data.phoneE164 ?? "");
-        if (data.phoneVerified) setStep(data.hasPhoto ? "done" : "photo");
+        // Only skip past the profile step if name AND address are already
+        // on file — an admin-created agent has a pre-verified phone but no
+        // address yet, and jumping straight to the photo step would let
+        // them "finish" with an incomplete profile and loop at /agent.
+        const profileFilled = Boolean(data.name && data.address);
+        if (profileFilled && data.phoneVerified) setStep(data.hasPhoto ? "done" : "photo");
+        else if (profileFilled && !data.phoneVerified) setStep("verify");
         setLoading(false);
       })
       .catch(() => setLoading(false));
