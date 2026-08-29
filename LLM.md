@@ -2858,3 +2858,211 @@ Plaintext password storage/display and hard user delete were deliberately
 left alone (owner's standing decision, memory `owner-overrides-security-model`).
 
 typecheck clean, **294/294 tests**, zero lint warnings, clean build.
+
+## 25. Hold/transfer/CDR bugs fixed and deployed; inbound routing gap found on the gateway; call logs and zero-config SIM insertion scoped (2026-08-29, later same day, follow-up to §24)
+
+Continuation of §24's session, prompted by the operator naming four more
+concrete symptoms after inbound still failed: hold ends the call, transfer
+doesn't work, no call logs anywhere, and SIM insertion should need zero
+config. Investigated with three parallel Explore agents plus live gateway
+access via Chrome, rather than working from hypothesis.
+
+### 25.1 Inbound root cause found on the gateway — Tel->IP Routing pointed at a nonexistent SIP Server
+
+Read live off the Dinstar UI (`https://192.168.11.1`, logged in via the
+documented credentials):
+
+| rule (index 63, "default") | Source | Destination |
+|---|---|---|
+| IP->Tel (outbound, works) | Trunk-0 | Port Group-0 |
+| Tel->IP (inbound, broken) | Port Group-0 | SIP Server |
+
+The gateway is in No Register mode, so "SIP Server" is not a thing that
+exists for it to route to — inbound calls had nowhere to go and were
+rejected as FORBID CALL at the GSM layer before any SIP was generated. This
+exactly matches Section 24's finding of 211/211 requests from the gateway
+being OPTIONS keepalives with zero INVITEs ever. The IP->Tel direction was
+fixed to use Trunk-0 in an earlier session (handoff.md's 2026-08-27
+section); Tel->IP never received the matching fix.
+
+Fixed live: Tel->IP Routing rule 63's Destination changed from SIP Server to
+sip-trunk-0 (AlgoPBX), saved, confirmed in the UI (list view now shows
+Port Group-0 -> Trunk-0). No device restart needed for a routing rule
+change. Not yet re-tested with a live call — a fresh call must be placed
+and the Asterisk SIP trace checked for a real INVITE, not just the OPTIONS
+keepalive, before this is considered proven.
+
+If it doesn't work, next untested suspects on the Service Configuration
+page (read live, both currently enabled): Enable Private Service = Yes
+(gates inbound against an allow-list on some firmware; empty list forbids
+everything) and Enable GSM Incoming Configuration = Yes. Also noted:
+Asterisk still answers the gateway's OPTIONS keepalive with 404 —
+[from-dinstar] matches only digits/s/hangup — worth fixing
+(`exten => heartbeat,1,Hangup()`) regardless, since a 404'd keepalive can
+make the gateway mark the trunk dead independent of the routing fix above.
+
+Also mapped the gateway's real HTTP API this session (a plain form-post
+device, not the Basic/query-auth model dinstar-discovery.ts assumed):
+login at `POST /goform/IADIdentityAuth` with a `devckie` session cookie;
+port config at `POST /goform/PortCfg`, one row per port 0-7 with fields
+`SipAccN`, `AuthenticateIDN`, `SipAccPswN`, `SipLocalPortN`, `RegisterN`,
+`TxGainN`, `RxGainN`, `OffhookAutodialN` (this is the "To VOIP Hotline"
+field), `PSTNHotlineN`; and group-level config at `POST /goform/PortGroup`.
+Read back live: `OffhookAutodial3=100`, all other ports empty — matches the
+operator's screenshot exactly. This settles the previously-unverified
+"which auth style" question in dinstar-discovery.ts: the device wants a
+cookie session, not Basic or query auth.
+
+### 25.2 Zero-config SIM insertion — mostly already true, confirmed by reading the dialplan and the live gateway
+
+Voice never selects a GSM port anywhere. Outbound is a single
+`Dial(PJSIP/${DIALNUM}@dinstar-trunk,60)` (extensions.conf:185) to one
+endpoint with one AOR — the gateway itself picks the port. Inbound funnels
+every called-number variant into one handler (extensions.conf:219-222).
+Every simPort reference anywhere in the codebase (WaInstance.simPort, the
+SIM-port board, the SMS provider's port mapping) is WhatsApp/SMS identity
+plumbing, unrelated to voice.
+
+Confirmed live: Port Group-0 "default" already spans ports 0 through 7 in
+Cyclic Ascending select mode, and both routing rules are port-group-wide.
+So "insert a SIM anywhere and it works" reduces to one per-port field (To
+VOIP Hotline, currently set on port 3 only) plus this session's routing
+fix — not a large feature. Two hardware facts no software change can
+remove: only ports 0-3 on this unit have modems installed/powered, and the
+modules only read SIM presence at power-on, not on hot-insertion (a reboot
+is still needed after inserting a SIM).
+
+Nothing today would ever notice a newly inserted SIM — `parsePorts()`
+(dinstar-discovery.ts:274) already returns per-port simPresent (and the
+gateway separately exposes per-port IMSI, which the parser discards), but
+it's request-scoped and never persisted. A small DinstarPortState table
+plus a poll (reusing the existing SMS-poller's cron pattern) would surface
+this without any device-side config — designed, not yet built.
+
+### 25.3 Hold silently ending the call — root cause found in the SDK, not the PBX config
+
+`asterisk -rx "moh show classes"` returned completely empty in production
+(the MOH audio directory is empty — see 25.5), which looked like the
+obvious cause, but a dedicated code exploration against the installed
+sip.js 0.21.2 source found the real bug and it's independent of MOH.
+
+`toggleHold` (sip-context.tsx) set `holdInFlightRef.current = true`, then
+cleared it in a plain `finally` after `await manager.hold(target)`. But
+SessionManager's `hold()`/`unhold()` promise resolves the instant the
+re-INVITE is sent (`Session.invite()` returns at
+`this.dialog.invite(...)`, confirmed against source) — not when Asterisk
+answers it. So if Asterisk 2xx'd the hold re-INVITE with an SDP answer
+Chrome's `setRemoteDescription` couldn't apply, sip.js auto-ACK-and-BYEs and
+transitions to Terminated — and by the time `onCallHangup` fires,
+`holdInFlightRef` was already false, so `classifyTermination` read it as an
+ordinary hangup and showed no message at all. The call vanished with no
+explanation, exactly the "pressing hold ends the call" report. A rejected
+re-INVITE cannot do this (the Web SDH's `rollbackOffer` is a no-op) — only
+an accepted one with a bad answer can, which is why this reads as
+config-adjacent but isn't.
+
+Fixed (commit a2f03a2, deployed): the flag is now cleared only when the
+real outcome is known — `onCallHold` firing (confirmed success) or
+`onCallHangup` reading it (confirmed failure) — with a 10s safety timeout in
+`toggleHold` for the case where neither delegate ever fires. The identical
+bug existed twice more in attended transfer: `startAttendedTransfer`'s
+`await manager.hold(target)` and `cancelAttendedTransfer`'s
+`await manager.unhold(primary)` both had the same early-resolution problem,
+so their "abort if hold fails" guards could never actually fire. Fixed via
+a new `holdWithConfirmation()` helper that waits on the delegate instead of
+the SDK promise, used in both places.
+
+Not yet re-tested live — place a real hold, on both a plain call and
+mid-attended-transfer, before trusting this closed.
+
+### 25.4 Transfer — the block is by design, but the premise is stale and has two unguarded siblings
+
+`src/lib/transfer-guard.ts` deliberately blocks transferring a
+Dinstar-trunk-originated call to an external number — a live SIP trace
+(documented in the file's own header) showed a REFER placing a second
+outbound call through the same, already-occupied GSM port, correctly 503'd
+by the Dinstar. This is real hardware-limit handling, not a bug, for the
+scenario it covers. But two things follow from 25.2's port-group finding:
+
+1. The guard's one-port premise is now stale — Port Group-0 already spans
+   all 8 ports, so a second registered SIM makes external transfer possible.
+   The guard should read live port state (from 25.2's planned polling) and
+   allow the transfer when more than one SIM is available, fail closed when
+   unknown. Not yet implemented — waits on 25.2's port-state table.
+2. The same hole is open, completely unguarded, on two other paths.
+   `POST /api/calls/conference` originates a third party with no equivalent
+   check at all. Manager escalation (escalation-picker.tsx) reuses the same
+   client-side `blindTransfer`, so it is blocked by this exact guard for any
+   manager who has only a phoneE164 and no internal extension — meaning
+   escalation is currently impossible on inbound GSM calls to an external
+   manager, which is precisely the case escalation exists for. Neither
+   fixed yet; both scoped in the plan file below.
+
+### 25.5 CDR mapping — two real bugs, confirmed against live production rows, now fixed and deployed
+
+Production rows for an outbound GSM call from 1002 showed
+`direction = "internal"` and an empty `agentExtension` — both traced to
+code, not data:
+
+- `scripts/ami-cdr-listener.ts` read `event.Context` to determine dialplan
+  direction. A real Asterisk Cdr event has no Context field — the CDR's
+  `dcontext` is serialized as `DestinationContext`. Every call was silently
+  falling through `inferDirection`'s default to "internal".
+- `src/lib/cdr-mapper.ts` never assigned `agentExtension` anywhere. Now
+  derived from the PJSIP channel name Asterisk reports — `event.Channel`
+  (PJSIP/1002-...) for a call the agent originated, `event.DestinationChannel`
+  for one they answered after the queue bridge.
+- `callerNumber` also preferred `CallerID` (the full display string
+  `"Algo Call Center" <1002>`, exactly what production showed stored) over
+  `Source` (the bare number) — inverted; Source now wins, with CallerID
+  parsed as a fallback only.
+
+This single pair of bugs explains both of the operator's reports: no call
+logs in the agent UI, and a permanently stale /admin/reports — every
+agent-/report-facing query filters on agentExtension and/or direction
+(/api/me/missed-calls, /api/admin/reports/agent-hours, /api/recordings's
+agent scoping), while /admin/cdr's unfiltered query kept showing real data,
+which is why only that one page ever looked correct.
+
+Fixed and deployed (commit a2f03a2, 5 new regression tests using the real
+production field shapes). Not yet fixed: there is still no call-log page in
+the agent UI at all (never built, not merely broken) — scoped for
+/agent/calls plus an own-extension /api/me/calls; the missed-calls "missed"
+definition needs to move from a disposition-string match to
+`billsecSec === 0`/`answeredAt: null`, since [from-dinstar] answers every
+inbound call before queueing it, so a genuinely missed call is recorded
+ANSWERED. Also noticed live: `docker logs algo-cdr-listener` showed
+repeated "AMI connection lost, reconnecting..." cycles — any Cdr event
+during a gap is lost outright, a second, independent contributor to missing
+call data.
+
+### 25.6 MOH and ringtone audio are absent in production — root cause is .gitignore
+
+`asterisk -rx "moh show classes"` returns nothing; the MOH default
+directory is empty in the container and on the host, even though
+musiconhold.conf's absolute directory= and res_musiconhold.so are both
+correct. .gitignore excludes moh/default/*, the frontend's public/sounds/*,
+and pbx_configs/sounds/* — the dev machine has the audio files, the VPS
+(deployed from a fresh clone) has none of them. Same cause explains why
+inbound calls would ring silently in the agent UI. Not yet fixed — needs
+either committed audio (the ignore rules were added for
+licensing-provenance reasons, see each directory's README) or a deploy step
+that fetches pinned files, plus a loud startup check instead of the current
+silent failure.
+
+### Deployed this session
+
+Commits d1ef7b9 (agent-to-admin session takeover, from Section 24, not yet
+on the VPS at the start of this session) and a2f03a2 (hold/transfer/CDR
+fixes) were pushed to the VPS by syncing the 14 changed frontend files
+directly (the VPS's git checkout has diverged local-only commits and
+live-generated pbx_configs/pjsip_dynamic.conf state, so a plain git pull
+was avoided), then `docker compose build web` plus
+`up -d --no-deps --force-recreate web cdr-listener`. Both containers came
+up healthy; cdr-listener reconnected to AMI cleanly. typecheck clean,
+299/299 tests (5 new), zero lint, clean build, all before deploy.
+
+Full plan for the remaining work (inbound re-test, MOH provisioning, the
+agent call-log page, the dynamic transfer guard, the Dinstar admin-page
+config feature) is in
+`~/.claude/plans/see-the-ui-currently-hashed-codd.md`.
