@@ -24,10 +24,14 @@ function assertSafe(value: string, field: string): void {
  * itself validate shape beyond the injection guard shared with pjsip-config.ts.
  *
  * `sipPort` is the Dinstar's OWN local SIP port (where Asterisk sends
- * outbound INVITEs). It defaults to 5060 but the UC2000 must be moved off
- * 5060 if Asterisk's transport-udp also binds 5060 on the same host — the
- * device refuses a trunk peer whose port equals its own local port. This
- * office's gateway is on 5061 (DINSTAR_SIP_PORT). */
+ * outbound INVITEs). It defaults to 5060 (the UC2000 factory default,
+ * correct for the normal split-host / Tailscale topology). Only move it if
+ * Asterisk's transport-udp ALSO binds 5060 on the SAME host — the device
+ * refuses a trunk peer whose port equals its own local port; then the
+ * GATEWAY's port is changed in its web UI and DINSTAR_SIP_PORT matched to
+ * it. The prod VPS gateway is on 5060 — an earlier note here said 5061,
+ * left over from a same-host local-VM setup, and that stale value silently
+ * black-holed every outbound INVITE. */
 export function renderDinstarConf(ip: string, sipPort = 5060): string {
   assertSafe(ip, "ip");
   const port = Number.isInteger(sipPort) && sipPort >= 1 && sipPort <= 65535 ? sipPort : 5060;

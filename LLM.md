@@ -2699,6 +2699,26 @@ Inbound GSM still additionally depends on the Dinstar gateway actually
 delivering the INVITE (the separate SIM/registration "normal hangup"
 question).
 
+**Outbound GSM: `DINSTAR_SIP_PORT` was `5061`, gateway is on `5060` —
+every outbound INVITE was black-holed.** Live SIP capture on the VPS
+showed Asterisk retransmitting `INVITE sip:...@192.168.11.1:5061` six
+times with ZERO packets back (32s -> "NO ANSWER"). A raw OPTIONS probe
+proved the gateway answers `200 OK` on `:5060` and is silent on `:5061` —
+the `5061` value was left over from the old same-host local-VM setup
+(where Asterisk also bound 5060 on the same box) and never applied to the
+split-host VPS/Tailscale topology. Fixed on the VPS
+(`pbx_configs/pjsip_dinstar.conf` contact -> `:5060`, `.env`
+`DINSTAR_SIP_PORT=5060`, asterisk restarted) and in the repo
+(`.env.example` default, seed `pjsip_dinstar.conf`, and the now-corrected
+`5061` comments in `src/lib/dinstar-config.ts` + `settings/schema.ts`).
+**After the fix the gateway responds** — `100 Trying` then
+`503 Service Unavailable` on the GSM leg. `503` from the UC2000 on
+outbound almost always means the SIM's GSM module isn't registered to the
+mobile network (the handoff §22 open item: "Mobile Unregistered" / weak
+signal after the physical port swap) or a gateway-side IP->Tel routing
+rule. Needs the gateway web UI (office LAN only) — its admin password is
+not recorded here, so this session could not check GSM status directly.
+
 **Still open from this session:** the invite-email path — settings now
 hold `INVITE_FROM_EMAIL=algopbx@saharatechs.com` and a `RESEND_API_KEY`
 whose last 4 chars render as `.com` (suspicious — a real key is `re_…`;

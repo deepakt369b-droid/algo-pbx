@@ -130,7 +130,7 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
     key: "DINSTAR_SIP_PORT",
     section: "sms_dinstar",
     label: "Dinstar SIP Port",
-    help: "The gateway's OWN local SIP port (where Asterisk sends outbound INVITEs). Default 5060; must be moved (this office uses 5061) if Asterisk also binds 5060 on the same host — the UC2000 rejects a trunk peer on its own local port.",
+    help: "The gateway's OWN local SIP port (where Asterisk sends outbound INVITEs). 5060 is the UC2000 factory default and is correct whenever Asterisk and the gateway are on different hosts. Only change it if both share a host and both bind 5060 — the UC2000 rejects a trunk peer on its own local port. Confirm with an OPTIONS probe: the gateway answers 200 OK on the right port and is silent on the wrong one.",
     secret: false,
     envFallback: "DINSTAR_SIP_PORT",
     validator: z.string().regex(/^\d{2,5}$/),
