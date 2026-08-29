@@ -2646,9 +2646,19 @@ rebuilt + recreated, healthy):
 
 typecheck + 294 tests + lint + build all clean before deploy.
 
-**Still open from this session:** the invite-email path (`RESEND_API_KEY`
-+ `INVITE_FROM_EMAIL=projects@saharaedoc.com` both in the settings DB) —
-not confirmed working; depends on `saharaedoc.com` being a verified
-Resend sending domain. Inbound GSM call: agent 1001 was unregistered and
+**Resend mail helpers were reporting false success** (commit after
+`58e9c21`, deployed): the Resend SDK resolves with `{ error }` instead of
+throwing on an API failure, and `sendInviteEmail`/`sendPasswordResetEmail`
+ignored the return — so a failed send (bad key, unverified domain) showed
+as a green "Test email sent". Now checked and re-thrown, so
+`/admin/settings` "Test connection" and the invite/reset warnings surface
+the real reason.
+
+**Still open from this session:** the invite-email path — settings now
+hold `INVITE_FROM_EMAIL=algopbx@saharatechs.com` and a `RESEND_API_KEY`
+whose last 4 chars render as `.com` (suspicious — a real key is `re_…`;
+an email may have been pasted into the key field). Operator to re-run
+"Test connection" post-deploy for the now-truthful error and re-paste the
+real key. Inbound GSM call: agent 1001 was unregistered and
 zero CDRs exist; a live trace was armed but no call came through the
 window. Both need a follow-up.
