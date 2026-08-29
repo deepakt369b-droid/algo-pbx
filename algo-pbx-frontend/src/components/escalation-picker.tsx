@@ -59,7 +59,25 @@ export function EscalationPicker() {
         setResult({ text: `Transferred to ${target.name}.`, tone: "ok" });
       }
     } catch (err) {
-      setResult({ text: err instanceof Error ? err.message : "Escalation failed.", tone: "error" });
+      // blindTransfer() runs transfer-guard.ts's evaluateTransferPermission
+      // internally and throws its reason verbatim. Confirmed live
+      // 2026-08-29: escalating an inbound GSM call (origin "trunk") to a
+      // manager with only a phoneE164 (no internal extension) hits this
+      // guard every time — a REFER to an external number would dial a
+      // second leg through the same, already-occupied GSM port. That is
+      // real hardware-limit protection working as designed, but the raw
+      // transfer-guard wording ("this line only has one connection") gives
+      // no indication this was an ESCALATION attempt or what to do about
+      // it. Recognize that specific message here and give the admin a
+      // concrete, actionable next step instead.
+      const message = err instanceof Error ? err.message : "Escalation failed.";
+      const isSinglePortGuard = message.includes("only has one connection");
+      setResult({
+        text: isSinglePortGuard
+          ? `Can't reach ${target.name} — they have no internal extension, and this GSM line can't place a second outside call while a customer is on it. Add an internal extension for ${target.name}, or a second registered SIM, to enable this.`
+          : message,
+        tone: "error",
+      });
     } finally {
       setBusy(false);
     }

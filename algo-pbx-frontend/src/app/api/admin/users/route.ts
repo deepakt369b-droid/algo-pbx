@@ -86,7 +86,10 @@ const CreateUserSchema = z.object({
   // under login-form UX pressure.
   password: z.string().min(12).max(200).optional(),
   phoneE164: z.string().min(6).optional(),
-  extensionNumber: z.string().regex(/^\d{3,6}$/).optional(),
+  // Tightened from \d{3,6} 2026-08-29 to match the dialplan's actual
+  // internal-dialing pattern (_1XXX/_2XXX only) — see extensions/route.ts's
+  // matching comment for the full reasoning.
+  extensionNumber: z.string().regex(/^[12]\d{3}$/, "extension must be a 4-digit number starting with 1 or 2").optional(),
   // "auto" allocates the lowest free number in the webrtc range
   // (1001-1999) rather than requiring the admin to know what's free.
   autoExtension: z.boolean().default(false),

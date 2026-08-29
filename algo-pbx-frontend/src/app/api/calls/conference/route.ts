@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getAmiClient } from "@/lib/ami-client";
 import { requireSession } from "@/lib/auth-guard";
 import { findChannelsToRedirect } from "@/lib/conference-orchestration";
+import { isInternalExtension } from "@/lib/transfer-guard";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,25 @@ export async function POST(req: NextRequest) {
     const toRedirect = findChannelsToRedirect(channels, agentExtension);
     if (toRedirect.length === 0) {
       return NextResponse.json({ error: "No active call found for this extension" }, { status: 404 });
+    }
+
+    // Same single-port-Dinstar hazard `src/lib/transfer-guard.ts` exists
+    // for, confirmed unguarded here live 2026-08-29: Originating a third,
+    // external party while the agent's current call is itself bridged
+    // through dinstar-trunk places a SECOND outbound call on the same,
+    // possibly-already-occupied GSM port — the exact scenario that
+    // produces a Dinstar 503 the transfer guard was built specifically to
+    // pre-empt on the client side. That guard is client-side only and this
+    // route has its own, independent AMI path with no equivalent check.
+    // transfer-guard.ts's own header explains why server-side dialplan
+    // enforcement isn't attempted there; this route already talks to AMI
+    // directly, so checking here is cheap and catches this one path.
+    const currentCallIsOnTrunk = toRedirect.some((ch) => ch.startsWith("PJSIP/dinstar-trunk-"));
+    if (currentCallIsOnTrunk && !isInternalExtension(targetNumber)) {
+      return NextResponse.json(
+        { error: "Can't add an external number to a call already on the GSM trunk — this line only has one connection." },
+        { status: 409 }
+      );
     }
 
     // The conference id is just a dialplan extension in the [conference]

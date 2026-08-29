@@ -39,8 +39,10 @@ const ProfileUpdateSchema = z
     // null clears the SIM-port assignment; a number (1-4) assigns it.
     simPort: z.number().int().min(1).max(4).nullable().optional(),
     // null unlinks the current extension from this user; a number links an
-    // existing orphan extension (created with no user).
-    extensionNumber: z.string().regex(/^\d{3,6}$/).nullable().optional(),
+    // existing orphan extension (created with no user). Tightened from
+    // \d{3,6} 2026-08-29 to match POST /api/extensions' own pattern — see
+    // that route's comment.
+    extensionNumber: z.string().regex(/^[12]\d{3}$/, "extension must be a 4-digit number starting with 1 or 2").nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "No fields to update" });
 

@@ -43,7 +43,16 @@ export const GET = withApiErrorHandler(async function GET() {
 // route's comment used to describe (DB-only writes with no effect on
 // Asterisk). See src/lib/pjsip-provision.ts and pjsip-config.ts.
 const CreateExtensionSchema = z.object({
-  number: z.string().regex(/^\d{3,6}$/),
+  // Tightened from \d{3,6} 2026-08-29: pbx_configs/extensions.conf's
+  // [from-agent-local] only ever matches `_1XXX`/`_2XXX` for internal
+  // dialing (confirmed by reading the dialplan directly). A provisioned
+  // number outside that shape — "100", "10001" — would register and take
+  // calls fine, but be UNDIALABLE by any other internal extension, and
+  // src/lib/transfer-guard.ts's isInternalExtension() would misclassify it
+  // as "external" and refuse transfers to it with a confusing message.
+  // Matching the dialplan's actual pattern here closes that gap at
+  // provisioning time rather than leaving it to be discovered per-symptom.
+  number: z.string().regex(/^[12]\d{3}$/, "extension must be a 4-digit number starting with 1 or 2"),
   kind: z.enum(["webrtc", "hardware"]).default("webrtc"),
   // Loop C2 — defaults to the Prisma column's own default (LOCAL) when
   // omitted, matching Zod's own optional-with-default semantics.
