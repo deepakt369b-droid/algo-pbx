@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { useSession } from "next-auth/react";
 import { Web } from "sip.js";
 import type { Session } from "sip.js";
+import { SessionState, Invitation } from "sip.js";
 import type { CallState, AgentStatus } from "@/types";
 import { extractCallQuality } from "@/lib/webrtc-stats";
 import { evaluateTransferPermission, isInternalExtension, type CallOrigin } from "@/lib/transfer-guard";
@@ -48,9 +49,18 @@ interface SIPContextType {
    * "unmute" affordance calling retryAudioPlayback when this is true. */
   audioBlocked: boolean;
   retryAudioPlayback: () => void;
+  /** True when the browser blocked the incoming-call ringtone's autoplay
+   * and the agent has not yet unlocked it — surface a loud, unmissable
+   * banner when this is true, never leave a blocked ringtone invisible. */
+  ringtoneBlocked: boolean;
+  retryRingtone: () => void;
   makeCall: (destination: string) => Promise<void>;
   answerCall: () => Promise<void>;
   hangupCall: () => Promise<void>;
+  /** Reject an unanswered inbound call with 486 Busy Here, distinct from
+   * hangupCall's 480 — see declineCall's own comment for why this matters
+   * for reading Asterisk's logs/CDR. */
+  declineCall: () => Promise<void>;
   toggleMute: () => void;
   toggleHold: () => Promise<void>;
   sendDtmf: (digit: string) => Promise<void>;
@@ -224,6 +234,9 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   const [callError, setCallError] = useState<string | null>(null);
   const clearCallError = useCallback(() => setCallError(null), []);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  // Ringtone-specific — see the priming effect and the ringing effect below
+  // for why this is separate from audioBlocked (remote call audio).
+  const [ringtoneBlocked, setRingtoneBlocked] = useState(false);
 
   // Step 0: fetch the runtime SIP domain/WS server — unauthenticated,
   // fires immediately on mount rather than waiting on session status,
@@ -496,11 +509,26 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         },
         onCallReceived: async (incoming) => {
           if (primarySessionRef.current) {
-            // Call waiting is out of scope for this UI (there is exactly
-            // one "current call" slot) — decline rather than silently
-            // dropping the caller with no response at all.
-            await manager.decline(incoming).catch(() => undefined);
-            return;
+            // Last-resort safety net: primarySessionRef can, in principle,
+            // still be pointing at a session sip.js itself already
+            // considers Terminated (a lost NOTIFY/BYE racing a UI action —
+            // see completeAttendedTransfer's timeout branch, the main
+            // place this used to leak permanently). A stale non-null ref
+            // here means every future call gets silently declined forever
+            // with no way for the agent to recover short of a reload, so
+            // treat an already-dead session as no session at all rather
+            // than trusting the ref's mere non-nullness.
+            if (primarySessionRef.current.state === SessionState.Terminated) {
+              primarySessionRef.current = null;
+              primaryCallOriginRef.current = null;
+              setCallState("idle");
+            } else {
+              // Call waiting is out of scope for this UI (there is exactly
+              // one "current call" slot) — decline rather than silently
+              // dropping the caller with no response at all.
+              await manager.decline(incoming).catch(() => undefined);
+              return;
+            }
           }
           primarySessionRef.current = incoming;
           setCallState("ringing");
@@ -675,7 +703,20 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     if (!el) return;
     if (callState === "ringing") {
       el.currentTime = 0;
-      el.play().catch(() => undefined);
+      // Confirmed live 2026-08-29: this rejection used to be swallowed
+      // entirely (`.catch(() => undefined)`), which is exactly how a real
+      // inbound call rang for the full RINGNOANSWER window with the agent
+      // never hearing it — Chrome's autoplay policy blocks play() called
+      // from a SIP delegate with no preceding user gesture, and there was
+      // no signal anywhere that it had happened. The priming effect below
+      // unlocks this element on the agent's first click/keypress/touch, so
+      // in practice this should now almost always succeed; ringtoneBlocked
+      // is the fallback for the cases it still doesn't (a tab reloaded and
+      // never touched again before a call arrives, browsers that don't
+      // honor the unlock).
+      el.play()
+        .then(() => setRingtoneBlocked(false))
+        .catch(() => setRingtoneBlocked(true));
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
         try {
           const n = new Notification("Incoming call", { body: incomingCallerId ?? "Unknown caller", tag: "algopbx-incoming-call" });
@@ -695,6 +736,41 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     // effect — and re-notifying — on an unrelated caller-id update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callState]);
+
+  // Unlocks the ringtone element on the agent's very first interaction with
+  // the page, so the "ringing" effect above's programmatic play() call —
+  // which has no user gesture of its own, since it fires from a SIP
+  // delegate — is not blocked by the browser's autoplay policy. Chrome (and
+  // most browsers) permit later programmatic play() on an element once
+  // ANY interaction has occurred on the page, even one unrelated to that
+  // element; play-then-immediately-pause on the ringtone itself is the
+  // standard unlock idiom (WhatsApp Web and most other calling UIs do the
+  // same). Runs once; agents sign in and interact with the page before any
+  // call can arrive, so in practice this fires long before it matters.
+  useEffect(() => {
+    let done = false;
+    const unlock = () => {
+      if (done) return;
+      done = true;
+      const el = ringtoneElementRef.current;
+      if (el) {
+        el.play()
+          .then(() => {
+            el.pause();
+            el.currentTime = 0;
+          })
+          .catch(() => undefined); // still locked; the ringing effect's own attempt will report it
+      }
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   // WebRTC quality telemetry (src/lib/webrtc-stats.ts) — previously there
   // was no visibility anywhere into jitter/loss/RTT for a live call, so an
@@ -802,6 +878,35 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     setIncomingCallerId(null);
     setIsMuted(false);
   }, []);
+
+  // A genuine reject, distinct from hangupCall. SessionManager.hangup()'s
+  // own terminate() calls Invitation.reject() with NO options for a
+  // ringing (Initial/Establishing) session, which sip.js hardcodes to
+  // `480 Temporarily Unavailable` — indistinguishable in Asterisk's own
+  // logs/CDR from a dead or unreachable endpoint. The Decline button used
+  // to reuse hangupCall for exactly this case, so every declined call and
+  // every genuinely-unreachable-agent call produced the identical trace.
+  // Calling Invitation.reject({statusCode: 486}) directly (bypassing
+  // manager.hangup entirely — SessionManager exposes no way to pass reject
+  // options through) sends the correct, standard "the person you called
+  // doesn't want to talk to you right now" response instead.
+  const declineCall = useCallback(async () => {
+    const target = primarySessionRef.current;
+    if (!target) return;
+    if (target instanceof Invitation && target.state !== SessionState.Established) {
+      await target.reject({ statusCode: 486, reasonPhrase: "Busy Here" });
+      primarySessionRef.current = null;
+      primaryCallOriginRef.current = null;
+      setCallState("idle");
+      setIncomingCallerId(null);
+      setIsMuted(false);
+      return;
+    }
+    // Not an unanswered inbound invitation (e.g. already answered, or an
+    // outbound Inviter being cancelled) — hangupCall's ordinary path
+    // already does the right thing for those.
+    await hangupCall();
+  }, [hangupCall]);
 
   const toggleMute = useCallback(() => {
     const manager = sessionManagerRef.current;
@@ -1068,6 +1173,35 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         // actually known to be true. Both sessions are left exactly as
         // they are (still in the consult UI) so the agent can act on
         // whatever Asterisk reports next, or retry.
+        //
+        // EXCEPT: if either session has already reached Terminated by this
+        // point, "leave them exactly as they are" is precisely the bug this
+        // comment used to not account for. sip.js's own termination
+        // delegate (onCallHangup, above) only fires for a session it still
+        // considers live; a REFER whose NOTIFY got lost but which DID
+        // complete leaves both real SIP dialogs gone while these refs stay
+        // set — and onCallReceived declines every future inbound INVITE
+        // while primarySessionRef is non-null. Without this check the
+        // softphone would silently 480 every call thereafter, with the UI
+        // reading "No active call" (primary) or the stale consult panel
+        // (this branch), and no user action could ever recover it short of
+        // a full reload. Checking .state here, once, is enough — a session
+        // that is NOT yet Terminated when this fires is exactly the
+        // legitimate "genuinely unconfirmed, still possibly live" case the
+        // comment above describes, and is left alone as intended.
+        const primaryDead = primary.state === SessionState.Terminated;
+        const consultDead = consult.state === SessionState.Terminated;
+        if (primaryDead || consultDead) {
+          if (primaryDead) primarySessionRef.current = null;
+          if (consultDead) consultSessionRef.current = null;
+          primaryCallOriginRef.current = null;
+          setCallState("idle");
+          setConsultState("idle");
+          setIncomingCallerId(null);
+          setCallError("Transfer status unconfirmed, but the call has ended — the line is now free for new calls.");
+          resolve();
+          return;
+        }
         setCallError("Transfer status unconfirmed — no response from the server in time. The call may or may not have transferred; check before assuming either way.");
         resolve();
       }, ATTENDED_TRANSFER_NOTIFY_TIMEOUT_MS);
@@ -1190,6 +1324,24 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       .catch(() => setAudioBlocked(true));
   }, []);
 
+  // Manual escape hatch for ringtoneBlocked — clicking the "Enable call
+  // sounds" banner (see incoming-call-banner.tsx / call-controls.tsx) is
+  // itself a user gesture, so this retry should succeed even if the
+  // priming effect above somehow never ran.
+  const retryRingtone = useCallback(() => {
+    const el = ringtoneElementRef.current;
+    if (!el) return;
+    el.play()
+      .then(() => {
+        setRingtoneBlocked(false);
+        if (callState !== "ringing") {
+          el.pause();
+          el.currentTime = 0;
+        }
+      })
+      .catch(() => setRingtoneBlocked(true));
+  }, [callState]);
+
   return (
     <SIPContext.Provider
       value={{
@@ -1203,6 +1355,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         clearCallError,
         completeAttendedTransfer,
         consultState,
+        declineCall,
         dialError,
         hangupCall,
         incomingCallerId,
@@ -1210,6 +1363,8 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         isMuted,
         makeCall,
         retryAudioPlayback,
+        retryRingtone,
+        ringtoneBlocked,
         sendDtmf,
         setAgentStatus,
         startAttendedTransfer,

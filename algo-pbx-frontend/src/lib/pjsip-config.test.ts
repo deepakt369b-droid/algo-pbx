@@ -45,6 +45,11 @@ describe("renderPjsipConf", () => {
     expect(output).toContain("type=aor");
     expect(output).toContain("max_contacts=2");
     expect(output).toContain("remove_existing=yes");
+    // Added 2026-08-29: without this, Asterisk never health-checks a WebRTC
+    // contact (confirmed live — every contact showed "NonQual" in
+    // `pjsip show aor`), so a dead browser tab leaves a permanent zombie
+    // contact that later calls still fork to.
+    expect(output).toContain("qualify_frequency=30");
   });
 
   it("renders a hardware extension matching the hand-written template shape", () => {

@@ -12,6 +12,7 @@ export function CallControls() {
     incomingCallerId,
     answerCall,
     hangupCall,
+    declineCall,
     toggleMute,
     toggleHold,
     blindTransfer,
@@ -66,7 +67,7 @@ export function CallControls() {
           <button onClick={answerCall} aria-label="Answer call" className="rounded-lg bg-cyan px-4 py-2 font-medium text-background">
             Answer
           </button>
-          <button onClick={hangupCall} aria-label="Decline call" className="rounded-lg bg-red-500/80 px-4 py-2 font-medium text-white">
+          <button onClick={declineCall} aria-label="Decline call" className="rounded-lg bg-red-500/80 px-4 py-2 font-medium text-white">
             Decline
           </button>
         </div>

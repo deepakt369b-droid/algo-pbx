@@ -126,6 +126,17 @@ password=${ext.sipSecret}
 type=aor
 max_contacts=2
 remove_existing=yes
+; Was missing entirely — confirmed live on production (pjsip show aor):
+; every WebRTC contact shows "NonQual" forever, because Asterisk never
+; OPTIONS-pings a contact with no qualify_frequency and so never notices
+; one has died. A closed tab/dead WSS connection then leaves a permanent
+; zombie contact that a later Dial() still forks to alongside the real
+; one — extra ring latency at best, a dead branch eating the whole ring
+; timeout at worst. 30s matches this endpoint's own rtp_timeout/keepalive
+; cadence; qualify_timeout keeps a slow-to-answer OPTIONS from blocking
+; qualification indefinitely.
+qualify_frequency=30
+qualify_timeout=3
 `;
 }
 

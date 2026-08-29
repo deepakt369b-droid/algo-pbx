@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useSIP } from "@/contexts/sip-context";
 import { countUnseenVoicemail } from "@/lib/voicemail-unread";
 import { useSessionIdentityGuard } from "@/lib/use-session-identity-guard";
+import { IncomingCallBanner } from "@/components/incoming-call-banner";
 
 const BASE_TITLE = "Algo PBX — Agent Workspace";
 
@@ -90,7 +91,7 @@ export function AgentShell({
   role?: "AGENT" | "SUPERVISOR" | "ADMIN";
   signOutAction: () => Promise<void>;
 }) {
-  const { isConnected, callState } = useSIP();
+  const { isConnected, callState, ringtoneBlocked, retryRingtone } = useSIP();
   const pathname = usePathname();
   // The "Admin" link below is drawn from `role`, which the server layout read
   // from a browser-wide cookie that a second sign-in can replace at any time.
@@ -202,6 +203,23 @@ export function AgentShell({
           </button>
         </form>
       </header>
+      {/* Confirmed live 2026-08-29: an inbound call rang for its full 15s
+          RINGNOANSWER window with no audible alert, because a blocked
+          ringtone play() was previously swallowed silently. A blocked
+          ringtone must never again be invisible — clicking this banner is
+          itself the user gesture that unlocks it. */}
+      {ringtoneBlocked && (
+        <div className="sticky top-[57px] z-20 flex items-center justify-center gap-2 border-b border-yellow-500/40 bg-yellow-500/10 px-4 py-2 text-xs text-yellow-400">
+          <span>🔔 Call sounds are blocked by your browser — you may miss incoming calls.</span>
+          <button onClick={retryRingtone} className="underline hover:text-yellow-300">
+            Enable call sounds
+          </button>
+        </div>
+      )}
+      {/* Only hidden on /agent itself — CallControls there already renders
+          its own ringing card, and showing both at once would be a
+          confusing duplicate rather than a helpful redundancy. */}
+      <IncomingCallBanner hidden={pathname === "/agent"} />
       <MissedCallsRefreshContext.Provider value={refreshMissedCalls}>{children}</MissedCallsRefreshContext.Provider>
     </div>
   );
