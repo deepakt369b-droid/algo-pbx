@@ -1,4 +1,87 @@
-# Handoff — Production VPS is LIVE on real HTTPS. Inbound voice paused mid-diagnosis: carrier barring RULED OUT, now looks like a SIM/antenna seating issue on the gateway. Pick up here tomorrow.
+# Handoff — Outbound one-way audio FIXED and verified with packet evidence. Remaining blockers are the agent's own mic/speakers and one Dinstar UI field. Session-takeover bug fixed in code, NOT yet deployed.
+
+Last updated: 2026-08-29. Full technical detail in `LLM.md §24`.
+
+## Deployed and verified live this session
+
+**Outbound one-way audio is fixed** (commit `4aed624`, live on the VPS).
+Root cause: Asterisk advertised `c=IN IP4 100.64.32.115` to the Dinstar, but
+the Tailscale subnet router SNATs tailnet→LAN traffic and the gateway has no
+route into `100.64.0.0/10`, so its return RTP was black-holed by the office
+router. SIP survived only because `force_rport` makes replies go to the
+received source; RTP follows the SDP. The universal 30s call length was
+`rtp_timeout=30` firing on a leg receiving nothing.
+Fix: `external_media_address=192.168.11.10` on `[transport-udp]` in
+`pbx_configs/pjsip-base.conf`.
+Proof, before → after: `dinstar-trunk` **0 rx / 893 tx → 1283 rx / 1287 tx**;
+a 2342-packet return flow that did not exist before; call length 30s → 59s;
+`CallQualitySample.packetsReceived` NULL → 2157 at MOS 4.33.
+**No WebRTC regression** — SDP still shows `187.53.128.252` on the SAVPF legs,
+`192.168.11.10` only on the `RTP/AVP` Dinstar leg.
+
+**TURN relay ports opened.** `scripts/setup-firewall.sh:48-54` intends to open
+`3478/tcp`, `5349/tcp`, `20001:30000/udp`; none existed on the live VPS.
+coturn is `network_mode: host`, so ufw was really blocking the relay range.
+Added live. Only affected agents behind symmetric NAT (direct media on
+`10000:20000/udp` was always open).
+
+## Do these next, in this order
+
+1. **Dinstar UI → Port Group-0 → "To VOIP Hotline" = `100`.** This is the
+   whole reason inbound calls ask the caller to dial an extension: with the
+   field empty the UC2000 answers and plays its own DISA second-dial-tone.
+   Asterisk is NOT the source — `[from-dinstar]` is `Answer()` → `Queue()`
+   with no digit collection anywhere, and no `[default]` context exists to
+   fall into. This field has now regressed to empty **three times**; check it
+   first whenever inbound misbehaves. (`s` also works — `extensions.conf:222`
+   defines it — but `100` is numeric and known to pass the firmware's
+   validation.)
+2. **Check the agent workstation's audio devices.** The PBX media path is
+   proven healthy end to end, but the browser is sending packets containing
+   pure digital silence (every a-law byte `0xD5`, peak=8, for 47 straight
+   seconds) while real far-end speech arrives and decodes at MOS 4.33.
+   Check: the softphone's `audioBlocked` warning, Chrome mic permission for
+   `pbx.saharatechs.com`, and the selected Windows input/output devices.
+   The mic worked at 09:03 and was silent at 10:19 — if the browser, tab,
+   headset or machine changed between those, that is the whole story.
+3. **Deploy the auth fixes** (commit `d1ef7b9`, code only, not on the VPS):
+   `docker compose up -d --build web` — never a plain `restart`.
+4. **Re-test outbound from a real agent in India.** Today's test agent was in
+   the UAE office, and ICE selected the LAN path
+   (`192.168.11.10 ↔ 100.64.32.115`), i.e. media went over Tailscale. A
+   remote agent will use the public path (`187.53.128.252`), which is open
+   and correctly advertised but has **not** carried verified media yet.
+
+## Fixed in code, awaiting deploy
+
+**The agent→admin account switch** (commit `d1ef7b9`). Not a broken
+permission check — all 35 `/api/admin/**` routes independently call
+`requireAdminSession()`. The app had no notion of per-tab identity: one
+`authjs.session-token` at `path=/` shared by every tab, a login page that
+never checked for an existing session, and `signIn()` overwriting that cookie
+in place. The agent tab then re-rendered against the admin cookie and drew
+`agent-shell.tsx:185-189`'s ADMIN-only "Admin" link, which genuinely worked.
+Also fixed: `sip-context` kept the previous user's extension and **plaintext
+SIP secret** registered to Asterisk after a swap (its effect was keyed on
+`sessionStatus`, which never changes on an account switch); a `callbackUrl`
+open redirect; and `admin/layout.tsx` now checks the role itself rather than
+relying solely on middleware.
+typecheck clean, 294/294 tests, zero lint, clean build.
+
+## Diagnostics left running on the VPS (clean these up)
+
+- `pjsip set logger on` + a `logger add channel` writing
+  `/var/log/asterisk/sipdebug*.log` — **turn off before this fills the disk**
+  (`asterisk -rx "pjsip set logger off"`).
+- `/root/capture-call.sh` + `/root/callcap/` (tcpdump pcaps, channelstats).
+- `/root/rtp_rms.py` — decodes an a-law RTP flow from a pcap and prints
+  per-second RMS. Genuinely useful: it is what separated "packets are
+  arriving" from "audio is arriving". Worth keeping.
+- `/root/pjsip-base.conf.bak-*` — pre-change backup.
+
+---
+
+# Previous session — Production VPS is LIVE on real HTTPS. Inbound voice paused mid-diagnosis: carrier barring RULED OUT, now looks like a SIM/antenna seating issue on the gateway.
 
 Last updated: 2026-08-28, end of session (production deploy day). Full
 detail in `LLM.md §19`/`§20`/`§21`/`§22` and the plan file

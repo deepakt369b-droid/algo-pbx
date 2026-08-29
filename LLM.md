@@ -2729,3 +2729,132 @@ real key. Also: inbound GSM call still untested (agent 1001 unregistered,
 zero CDRs). Inbound GSM call: agent 1001 was unregistered and
 zero CDRs exist; a live trace was armed but no call came through the
 window. Both need a follow-up.
+
+## 24. One-way audio root-caused and FIXED with live packet evidence; agent→admin session takeover fixed (2026-08-29, follow-up to §23)
+
+Two operator reports this session, both chased to hard evidence rather than
+theory, plus the inbound extension prompt re-identified.
+
+### 24.1 Outbound one-way audio — FIXED (commit `4aed624`, deployed)
+
+**Symptom:** outbound GSM calls connected, the far end could hear the agent,
+the agent heard nothing, and every answered call ended at exactly 30s.
+
+**Evidence chain** (all captured live on the prod VPS, not inferred):
+
+1. The reported call was identified exactly: recording `1787994215.0.wav`,
+   epoch 1787994215 = 09:03:35 UTC = **13:03:35 UAE**, matching the
+   operator's "1:03:35 PM". CDR: `0504852446`, ANSWERED, 30s / 19s billsec.
+2. `pjsip show channelstats` during a live reproduction:
+   `1002` channel **897 rx / 0 tx**, `dinstar-trunk` **0 rx / 893 tx**.
+   Zero RTP from the gateway; therefore zero to the browser.
+3. `tcpdump -i tailscale0` had no `192.168.11.1 -> 100.64.32.115` flow at
+   all — the return direction was absent, not merely dropped.
+4. `pjsip set logger on` showed the outbound INVITE carrying
+   **`c=IN IP4 100.64.32.115`** (the tailscale0 source address).
+5. `CallQualitySample` rows for those calls had **every `inbound-rtp` field
+   NULL** (packetsReceived/packetsLost/jitter/jitterBufferDelay) while
+   `candidate-pair` RTT was populated — ICE connected, no inbound stream
+   ever existed. `src/lib/webrtc-stats.ts:36-46` was read and confirmed
+   correct first, so this was real absence, not a collection bug.
+
+**Root cause:** the Tailscale subnet router SNATs tailnet→LAN traffic to its
+own LAN address, and the Dinstar has no route into `100.64.0.0/10`. SIP
+survived the asymmetry only because `force_rport` makes the gateway reply to
+the source it actually received from; RTP follows the SDP `c=` line and was
+black-holed by the office router. The 30s teardown was `rtp_timeout=30` on
+`dinstar-trunk` firing on a leg receiving nothing.
+
+**Fix:** `external_media_address=192.168.11.10` on `[transport-udp]` in
+`pbx_configs/pjsip-base.conf`. Only `dinstar-trunk` uses that transport.
+
+**Verified after deploy:** `dinstar-trunk` **1283 rx / 1287 tx**, agent leg
+**1291 rx / 1283 tx**, a 2342-packet `192.168.11.1:8012 ->
+100.64.32.115:14062` flow where there had been none, call survived 59s
+(vs. the old hard 30s), and `CallQualitySample.packetsReceived` climbed
+171→2157 with 0.7% loss and MOS 4.33. **No regression on the WebRTC leg:**
+the SIP trace shows `c=IN IP4 187.53.128.252` on the SAVPF media lines and
+`c=IN IP4 192.168.11.10` only on the `RTP/AVP` Dinstar leg — remote agents
+are unaffected.
+
+Commit `69194e4`'s `rtp_symmetric=yes` is **necessary but insufficient**, not
+a bug: it governs where Asterisk sends and what it accepts, never where the
+gateway transmits. It is what turned "no audio at all" into "one-way". Keep it.
+
+### 24.2 Agent microphone is silent — NOT a PBX bug (open, workstation-side)
+
+After 24.1, the operator reported neither side heard anything. Decoding the
+a-law RTP payloads straight out of the pcap (`/root/rtp_rms.py` on the VPS):
+
+- **Gateway → Asterisk: real speech** (RMS bursts 2118/1978/1762/1115 at
+  t=4-7, 29-37, 40-42, 45-46s).
+- **Asterisk → gateway: pure digital silence for all 47s** — every packet
+  a-law `0xD5`, constant peak=8. Not quiet speech; a dead capture.
+- The MixMonitor recording (`extensions.conf:146`, agent channel) contains
+  the gateway's bursts and **none of the agent's voice**.
+
+So the media path is healthy end to end and the browser is sending packets
+(Asterisk counted 1291) that contain nothing. Both remaining symptoms —
+far end hears nothing, agent hears nothing despite 2157 packets arriving and
+decoding at MOS 4.33 — point at the agent workstation's audio devices
+(muted/absent input, output to an inactive device) or a blocked autoplay
+(`sip-context.tsx` already tracks `audioBlocked` + a retry control).
+Note the mic DID work at 09:03 (that recording's loud audio was the agent,
+since the gateway sent nothing then) and was silent at 10:19.
+
+### 24.3 Inbound "dial an extension" prompt — the gateway, not Asterisk
+
+`[from-dinstar]` (`extensions.conf:219-251`) is `Answer()` → `MixMonitor()` →
+`Queue(support_queue,...)`. A repo-wide grep for `DISA|Background(|Read(|
+WaitExten` finds nothing on the inbound path, and **no `[default]` context
+exists anywhere**, so a mis-identified call would 404, never prompt.
+`pjsip_dinstar.conf` correctly identifies `192.168.11.1` into `[from-dinstar]`
+(verified live). The prompt is the UC2000's own DISA/second-dial-tone,
+triggered by an empty **"To VOIP Hotline"** — a field that has now regressed
+to empty three times. Set it to `100` on Port Group-0 (matches
+`extensions.conf:220`'s `_X.` → `Goto(s,1)`; `s` also works via line 222).
+This supersedes §21's RE-CORRECTION, which concluded the DISA theory was dead
+because it could not be reproduced that night.
+
+### 24.4 TURN relay was firewalled off — fixed on the VPS
+
+`scripts/setup-firewall.sh:48-54` intends to open `3478/tcp`, `5349/tcp` and
+the coturn relay range `20001:30000/udp`. **None of the three existed on the
+live VPS** — the firewall had drifted from the repo's own script. coturn is
+`network_mode: host`, so ufw genuinely blocked them and the TURN *relay*
+fallback was dead (control on 3478/udp was open, so allocations appeared to
+work). Direct media was unaffected — `10000:20000/udp` is open — so this only
+ever bit agents behind a symmetric NAT. Rules added live; the script already
+had them, so no code change was needed.
+
+### 24.5 Agent→admin session takeover — FIXED (commit `d1ef7b9`, not yet deployed)
+
+Operator reproduced an "Admin" switch inside the agent workspace with both
+accounts open in one browser. **Not a broken permission check** — all 35
+`/api/admin/**` routes were read and each independently calls
+`requireAdminSession()`/`requireStaffSession()`. The app simply had no notion
+of "this rendered page belongs to user X":
+
+- `auth.config.ts` declares no `cookies:` block → ONE `authjs.session-token`
+  at `path=/`, shared by every tab.
+- `login/page.tsx` never called `auth()`; `signIn()` overwrites that cookie
+  in place, browser-wide, with no sign-out.
+- Layouts read `await auth()` once, so an open `/agent` tab re-rendered
+  against the admin cookie and drew `agent-shell.tsx:185-189`'s ADMIN-only
+  "Admin" link — which worked, because the cookie really was the admin's
+  (`middleware.ts:72` only role-gates `/admin`).
+
+Fixed: login page refuses to render the form over a live session;
+`useSessionIdentityGuard` reloads a shell whose rendered user id no longer
+matches the live session (sessionStorage-debounced against reload loops);
+`sip-context`'s credential effect keyed on the user id (it was keyed on
+`sessionStatus`, which never changes on an account swap — so a tab kept the
+previous user's extension and **plaintext sipSecret** registered to Asterisk
+over WSS, invisible to every server-side ACL); `SessionProvider
+refetchInterval=60`; `admin/layout.tsx` checks the role itself; `callbackUrl`
+open redirect closed; TEMP host-header diagnostic removed from middleware.
+
+Plaintext password storage/display and hard user delete were deliberately
+left alone (owner's standing decision, memory `owner-overrides-security-model`).
+
+typecheck clean, **294/294 tests**, zero lint warnings, clean build.
