@@ -181,7 +181,13 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
             // blocked on a WhatsApp instance that may not be paired yet.
             phoneVerifiedAt: new Date(),
             phoneVerifiedByAdminId: guard.session.user.id,
-            profileCompletedAt: new Date(),
+            // profileCompletedAt is NOT set here: this form has no address
+            // field, and isProfileComplete() (which middleware and
+            // /api/me/sip-credentials recompute live from the fields)
+            // requires one. Stamping the timestamp without an address
+            // desyncs the two checks into a /register <-> /agent redirect
+            // loop. The agent supplies the address on first login; the
+            // pre-verified phone just spares them the OTP step.
           }
         : {}),
       ...(extensionNumber

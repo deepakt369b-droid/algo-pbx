@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
-import { maybeCompleteProfile } from "@/lib/registration";
+import { isProfileComplete, maybeCompleteProfile } from "@/lib/registration";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
 export const dynamic = "force-dynamic";
@@ -96,6 +96,11 @@ export const GET = withApiErrorHandler(async function GET() {
     phoneE164: user?.phoneE164 ?? "",
     phoneVerified: Boolean(user?.phoneVerifiedAt),
     hasPhoto: Boolean(user?.photoPath),
-    profileComplete: Boolean(user?.profileCompletedAt),
+    // Recompute from the fields rather than trusting profileCompletedAt —
+    // middleware and /api/me/sip-credentials both gate on the live
+    // isProfileComplete() check, and a stale/incorrectly-stamped
+    // timestamp here would put the page and middleware into a
+    // /register <-> /agent redirect loop.
+    profileComplete: Boolean(user) && isProfileComplete(user!),
   });
 });
