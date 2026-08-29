@@ -135,16 +135,25 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     }
   }
 
-  let simPortConflict = false;
   if (simPort) {
-    const existing = await db.waInstance.findUnique({ where: { simPort } });
+    const existing = await db.waInstance.findUnique({
+      where: { simPort },
+      include: { assignedUser: { select: { name: true, email: true } } },
+    });
     if (!existing) {
       return NextResponse.json({ error: `SIM port ${simPort} has no paired WhatsApp instance yet — pair it in /admin/whatsapp first.` }, { status: 409 });
     }
-    if (existing.assignedUserId) simPortConflict = true;
-  }
-  if (simPortConflict) {
-    return NextResponse.json({ error: `SIM port ${simPort} is already assigned to another agent.` }, { status: 409 });
+    if (existing.assignedUserId && existing.assignedUser) {
+      // Confirmed live 2026-08-29: this used to say only "already assigned
+      // to another agent" with no way to tell WHO to revoke it from —
+      // naming the holder is the one real gap in an otherwise-correct
+      // exclusive/revoke-only assignment model (see PATCH
+      // /api/admin/users/[id] for the matching fix on reassignment).
+      return NextResponse.json(
+        { error: `SIM port ${simPort} is already assigned to ${existing.assignedUser.name} (${existing.assignedUser.email}).` },
+        { status: 409 }
+      );
+    }
   }
 
   let extensionNumber = requestedExtension;

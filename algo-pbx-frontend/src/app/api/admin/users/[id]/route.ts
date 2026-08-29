@@ -179,10 +179,17 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       await db.waInstance.update({ where: { simPort: current }, data: { assignedUserId: null } });
       changes.push("simPort:cleared");
     } else if (p.simPort !== null && p.simPort !== current) {
-      const port = await db.waInstance.findUnique({ where: { simPort: p.simPort }, select: { id: true, assignedUserId: true } });
+      const port = await db.waInstance.findUnique({
+        where: { simPort: p.simPort },
+        select: { id: true, assignedUserId: true, assignedUser: { select: { name: true, email: true } } },
+      });
       if (!port) return NextResponse.json({ error: `SIM port ${p.simPort} has no paired WhatsApp instance.` }, { status: 409 });
       if (port.assignedUserId && port.assignedUserId !== target.id) {
-        return NextResponse.json({ error: `SIM port ${p.simPort} is already assigned to another agent.` }, { status: 409 });
+        // Confirmed live 2026-08-29: naming the current holder is the one
+        // real gap in an otherwise-correct exclusive/revoke-only model —
+        // see POST /api/admin/users for the matching fix on creation.
+        const holder = port.assignedUser ? `${port.assignedUser.name} (${port.assignedUser.email})` : "another agent";
+        return NextResponse.json({ error: `SIM port ${p.simPort} is already assigned to ${holder}.` }, { status: 409 });
       }
       if (current !== null) await db.waInstance.update({ where: { simPort: current }, data: { assignedUserId: null } });
       await db.waInstance.update({ where: { simPort: p.simPort }, data: { assignedUserId: target.id } });
