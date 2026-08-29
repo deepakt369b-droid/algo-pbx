@@ -165,6 +165,7 @@ export function AgentShell({
             to otherwise show where you are. */}
         <span className="flex items-center gap-3 text-xs text-slate-400">
           {[
+            { href: "/agent/calls", label: "Calls", count: 0, title: "Recent call history" },
             { href: "/agent/voicemail", label: "Voicemail", count: voicemailCount, title: "Unread voicemail" },
             {
               href: "/agent/missed",

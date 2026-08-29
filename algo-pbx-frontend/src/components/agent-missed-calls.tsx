@@ -59,6 +59,13 @@ export function AgentMissedCalls() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calls.length]);
 
+  // Rendering nothing at all for BOTH "still loading" and "genuinely zero
+  // missed calls" made the two indistinguishable on screen — confirmed
+  // live 2026-08-29 alongside the agentExtension/direction CDR bugs, which
+  // meant this list was ALWAYS empty and looked identical to "the
+  // component is broken" the entire time. Loading still renders nothing
+  // (a flash of "No missed calls" on every page load would be worse), but
+  // a confirmed-empty result now says so explicitly.
   if (loading && calls.length === 0 && !error) return null;
   if (error && calls.length === 0) {
     return (
@@ -67,7 +74,14 @@ export function AgentMissedCalls() {
       </div>
     );
   }
-  if (calls.length === 0) return null;
+  if (calls.length === 0) {
+    return (
+      <div className="glass-card w-full max-w-2xl p-6">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Missed Calls</h2>
+        <p className="text-xs text-slate-500">No missed calls.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="glass-card w-full max-w-2xl p-6">

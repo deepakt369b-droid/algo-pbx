@@ -12,10 +12,19 @@ export const dynamic = "force-dynamic";
 // agent who owned the extension. Own-extension-only, same ownership rule
 // GET /api/voicemail already uses for AGENT sessions.
 //
-// "Missed" here means inbound + not answered — an outbound call that
-// failed isn't a call the caller experienced as unanswered by this agent,
-// so it's deliberately excluded.
-const MISSED_DISPOSITIONS = ["NO ANSWER", "BUSY", "FAILED"];
+// "Missed" here means inbound + not actually connected to this agent — an
+// outbound call that failed isn't a call the caller experienced as
+// unanswered by this agent, so it's deliberately excluded.
+//
+// NOT a disposition-string match (`NO ANSWER`/`BUSY`/`FAILED`) — confirmed
+// live 2026-08-29 that `[from-dinstar]` calls `Answer()`
+// (pbx_configs/extensions.conf) BEFORE `Queue(support_queue,...)`, so a
+// call that rang and nobody picked up is recorded `ANSWERED` at the
+// Asterisk CDR level regardless of whether any agent ever spoke. The only
+// signal that actually distinguishes "an agent talked to this caller" is
+// billable seconds: `billsecSec === 0` (equivalently `answeredAt: null`)
+// means the queue leg to an agent's phone never connected, independent of
+// what disposition string Asterisk chose to write.
 const LIMIT = 50;
 
 export async function GET() {
@@ -30,7 +39,7 @@ export async function GET() {
 
   const [calls, user, contacts] = await Promise.all([
     db.callDetailRecord.findMany({
-      where: { agentExtension: extension, direction: "inbound", disposition: { in: MISSED_DISPOSITIONS } },
+      where: { agentExtension: extension, direction: "inbound", billsecSec: 0 },
       orderBy: { startedAt: "desc" },
       take: LIMIT,
       select: { id: true, callerNumber: true, startedAt: true, disposition: true },
