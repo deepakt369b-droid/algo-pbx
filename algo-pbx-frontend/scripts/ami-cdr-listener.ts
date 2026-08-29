@@ -53,10 +53,13 @@ if (!AMI_SECRET || !CDR_INGEST_SECRET) {
 
 async function ingest(event: AmiEvent) {
   // The dialplan context the call originated from determines direction
-  // (see cdr-mapper.ts's inferDirection) — Asterisk's Cdr event exposes
-  // this as `Context` in standard CDR field naming.
+  // (see cdr-mapper.ts's inferDirection). There is NO `Context` field on a
+  // real Cdr event — verified live against production 2026-08-29, this was
+  // reading a field that does not exist and silently classified 100% of
+  // calls as "internal". The CDR field is `dcontext`, serialized as
+  // `DestinationContext`.
   const payload = mapCdrEventToIngestPayload(event, {
-    sourceContext: event.Context,
+    sourceContext: event.DestinationContext,
     recordingUrlBase: RECORDING_URL_BASE,
   });
 

@@ -141,10 +141,35 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   // a side effect of one of those in-flight operations (see
   // src/lib/call-termination.ts's header for why that distinction matters
   // and why it can only be inferred this way, not read off sip.js's own
-  // termination reason). Always cleared in a finally so a thrown error
-  // never leaves a stale in-flight flag behind.
+  // termination reason).
+  //
+  // NOT cleared in toggleHold's own finally (that used to be the whole
+  // mechanism, and it was a bug): SessionManager.hold()/unhold() resolve the
+  // instant the re-INVITE is SENT (sip.js's Session.invite() returns at
+  // `this.dialog.invite(...)`, before any response), not when Asterisk
+  // answers it. A finally keyed to that promise clears the flag long before
+  // the 200 OK — or a 2xx whose SDP the browser can't apply — ever arrives,
+  // so the exact failure this flag exists to catch (a hold re-INVITE that
+  // silently kills the call) went undetected: onCallHangup ran with the flag
+  // already false, classifyTermination saw an ordinary hangup, and the call
+  // vanished with no explanation. Cleared instead by whichever of these
+  // actually resolves the attempt: onCallHold firing (confirmed success),
+  // onCallHangup reading it (confirmed failure), or the safety timeout in
+  // toggleHold (SDK promise rejects with no delegate callback at all).
   const holdInFlightRef = useRef(false);
   const transferInFlightRef = useRef(false);
+  // Registered by holdWithConfirmation() (below) while a caller needs to know
+  // the REAL outcome of a hold/unhold attempt — not just that the SDK's
+  // promise resolved, which happens the instant the re-INVITE is sent and
+  // says nothing about whether Asterisk ever answered it (see
+  // holdInFlightRef's comment for the full history). Resolved by onCallHold
+  // firing for this session (confirmed success) or rejected by onCallHangup
+  // firing for it first (the re-INVITE killed the call before answering it).
+  const holdOutcomeWaiterRef = useRef<{
+    session: Session;
+    resolve: () => void;
+    reject: (err: Error) => void;
+  } | null>(null);
   // A useRef instead of document.getElementById("remote-audio") (the
   // previous approach) — fragile under Suspense/streaming rendering where
   // an effect can run before the element the id refers to has actually
@@ -530,6 +555,16 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
               transferInFlight: transferInFlightRef.current,
             });
             if (verdict.message) setCallError(verdict.message);
+            // Resolve the in-flight flag here too, not just in onCallHold:
+            // this is the "attempt failed" branch that flag exists to catch
+            // in the first place (a hold re-INVITE Asterisk 2xx'd with an
+            // SDP the browser couldn't apply, which sip.js reports as an
+            // ordinary session termination, not a hold rejection).
+            holdInFlightRef.current = false;
+            if (holdOutcomeWaiterRef.current?.session === ended) {
+              holdOutcomeWaiterRef.current.reject(new Error("call ended before the hold attempt was confirmed"));
+              holdOutcomeWaiterRef.current = null;
+            }
             primarySessionRef.current = null;
             primaryCallOriginRef.current = null;
             setCallState("idle");
@@ -558,6 +593,17 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         onCallHold: (holdSession, isHeld) => {
           if (holdSession === primarySessionRef.current) {
             setCallState(isHeld ? "held" : "active");
+            // The hold/unhold re-INVITE Asterisk was asked about has now
+            // actually been answered (this delegate only fires once a real
+            // response comes back, unlike manager.hold()'s own promise —
+            // see holdInFlightRef's comment). The attempt is resolved:
+            // clear the flag so a LATER, unrelated hangup on this same call
+            // isn't misread as a hold failure.
+            holdInFlightRef.current = false;
+            if (holdOutcomeWaiterRef.current?.session === holdSession) {
+              holdOutcomeWaiterRef.current.resolve();
+              holdOutcomeWaiterRef.current = null;
+            }
           }
         },
       },
@@ -766,6 +812,53 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     setIsMuted(!isMuted);
   }, [isMuted]);
 
+  // Waits for the REAL outcome of a hold/unhold attempt, not the SDK
+  // promise's premature resolution. Used by startAttendedTransfer and
+  // cancelAttendedTransfer, which both had the same bug as toggleHold used
+  // to: `await manager.hold(target)` returning the instant the re-INVITE is
+  // sent let them proceed (dial the consult leg / assume "active" again)
+  // before Asterisk had actually answered, so a hold failure there tore down
+  // the primary mid-flight while the UI had already moved on.
+  const holdWithConfirmation = useCallback((session: Session, wantHeld: boolean, timeoutMs = 8_000): Promise<void> => {
+    const manager = sessionManagerRef.current;
+    if (!manager) return Promise.reject(new Error("No active SIP session manager"));
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        if (holdOutcomeWaiterRef.current?.session === session) holdOutcomeWaiterRef.current = null;
+        reject(new Error("Timed out waiting for the hold to be confirmed."));
+      }, timeoutMs);
+      holdOutcomeWaiterRef.current = {
+        session,
+        resolve: () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(err);
+        },
+      };
+      const invite = wantHeld ? manager.hold(session) : manager.unhold(session);
+      invite.catch((err) => {
+        // The SDK rejected the promise directly — a pre-flight guard or
+        // RequestPendingError, with no delegate callback coming at all.
+        // Nothing else will ever settle this waiter, so do it here.
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (holdOutcomeWaiterRef.current?.session === session) holdOutcomeWaiterRef.current = null;
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
+    });
+  }, []);
+
   const toggleHold = useCallback(async () => {
     const manager = sessionManagerRef.current;
     const target = primarySessionRef.current;
@@ -777,13 +870,29 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     // has no rollbackDescription, so sip.js's rollbackOffer is a no-op) —
     // but an ACCEPTED one whose answer SDP the browser can't apply DOES
     // terminate it, from inside sip.js's own Session.invite(), and reports
-    // through the same onCallHangup delegate as an ordinary hangup. This
-    // try/catch/finally exists to (a) never leave an unhandled rejection —
-    // there used to be no .catch anywhere on this path, at either this
-    // function or call-controls.tsx's onClick — and (b) mark the window
-    // onCallHangup checks (see call-termination.ts) so that failure reads
-    // as "hold failed" instead of "call ended" with no explanation.
+    // through the same onCallHangup delegate as an ordinary hangup.
+    //
+    // holdInFlightRef is set here and deliberately NOT cleared in a finally
+    // on this function — manager.hold()/unhold()'s own promise resolves the
+    // instant the re-INVITE is sent, well before Asterisk answers it, so a
+    // finally here would clear the flag before the failure this whole
+    // mechanism exists to catch can even happen (see the ref's own comment
+    // for the full history). onCallHold clears it on confirmed success;
+    // onCallHangup clears it after reading the verdict on confirmed failure.
+    // This effect's own catch only covers the SDK's promise rejecting
+    // directly with no delegate callback at all (a pre-flight guard,
+    // RequestPendingError) — in which case nothing else will ever clear the
+    // flag, so it must be cleared here too.
+    //
+    // Safety timeout: if the re-INVITE is dropped somewhere (a lost
+    // WebSocket frame, a gateway that never responds) neither onCallHold nor
+    // onCallHangup ever fires, and without this the flag would stay stuck
+    // "in flight" and mis-attribute the NEXT unrelated hangup on this call
+    // as a hold failure.
     holdInFlightRef.current = true;
+    const safetyTimer = setTimeout(() => {
+      holdInFlightRef.current = false;
+    }, 10_000);
     try {
       if (callState === "held") {
         await manager.unhold(target);
@@ -793,20 +902,9 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     } catch (err) {
       console.error("Hold/unhold failed:", err);
       setCallError("Hold failed. If the call ended, the other party may still be on the line.");
-      // No further correction attempted here deliberately: for a session
-      // that SURVIVES (a re-INVITE rejected with a final response),
-      // SessionManager.setHold's own requestDelegate.onReject
-      // (session-manager.js) already flips its internal `managedSession
-      // .held` back and fires onCallHold with the corrected value BEFORE
-      // this catch runs — which is what keeps callState in sync in that
-      // case, same as any other hold attempt. This catch only additionally
-      // covers invite() rejecting the promise itself with no requestDelegate
-      // callback at all (a pre-flight guard, RequestPendingError, or — the
-      // scenario this whole file exists for — the session terminating out
-      // from under the call, which onCallHangup's own classifyTermination
-      // check handles separately).
-    } finally {
       holdInFlightRef.current = false;
+    } finally {
+      clearTimeout(safetyTimer);
     }
   }, [callState]);
 
@@ -876,13 +974,22 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         throw new Error(permission.reason ?? "Transfer not allowed.");
       }
       if (callState === "active") {
+        holdInFlightRef.current = true;
         try {
-          await manager.hold(target); // onCallHold delegate flips callState to "held"
+          // Waits for onCallHold to actually fire, not just for the
+          // re-INVITE to be sent (see holdWithConfirmation's comment) — the
+          // previous `await manager.hold(target)` here resolved immediately
+          // and could not have aborted on a hold failure even though the
+          // comment above claimed it did; the consult leg was dialed before
+          // Asterisk had answered the hold attempt at all.
+          await holdWithConfirmation(target, true); // onCallHold delegate flips callState to "held"
         } catch {
-          // The hold re-INVITE was rejected — proceeding used to dial the
-          // consult leg anyway, putting TWO live sessions on one shared
-          // <audio> element (both audible at once). Abort instead and tell
-          // the agent via the same surface the Dialpad uses for call errors.
+          // The hold re-INVITE was rejected, or it killed the call outright
+          // — either way, proceeding would dial the consult leg with no
+          // primary safely on hold (best case: two live sessions sharing one
+          // <audio> element, both audible at once; worst case: the primary
+          // is already gone). Abort instead and tell the agent via the same
+          // surface the Dialpad uses for call errors.
           console.error("Hold failed — attended transfer aborted.");
           // CallControls, not Dialpad — this failure happens mid-call
           // (there IS an active call, that's the whole premise of a
@@ -892,6 +999,8 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
           // the agent, looking at CallControls, could simply never see it.
           setCallError("Could not hold the current call — attended transfer aborted.");
           return;
+        } finally {
+          holdInFlightRef.current = false;
         }
       }
       setConsultState("calling");
@@ -906,7 +1015,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         throw err; // caller surfaces it in the UI
       }
     },
-    [callState]
+    [callState, holdWithConfirmation]
   );
 
   // How long to wait for a transfer-result NOTIFY before giving up on
@@ -1023,9 +1132,23 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       setConsultState("idle");
     }
     if (primary && callState === "held") {
-      await manager.unhold(primary); // onCallHold delegate flips callState back to "active"
+      // Same reasoning as startAttendedTransfer: manager.unhold()'s own
+      // promise resolves on send, not on Asterisk's answer, so a plain
+      // `await manager.unhold(primary)` here could not actually confirm the
+      // primary came back before this function returns. Errors are
+      // swallowed deliberately (unlike the hold-before-transfer case, there
+      // is no further action to abort here — the consult leg is already
+      // torn down above, so this is best-effort resumption of the primary).
+      holdInFlightRef.current = true;
+      try {
+        await holdWithConfirmation(primary, false); // onCallHold delegate flips callState back to "active"
+      } catch (err) {
+        console.error("Unhold after cancelling attended transfer failed:", err);
+      } finally {
+        holdInFlightRef.current = false;
+      }
     }
-  }, [callState]);
+  }, [callState, holdWithConfirmation]);
 
   const setAgentStatus = useCallback(
     async (status: AgentStatus) => {

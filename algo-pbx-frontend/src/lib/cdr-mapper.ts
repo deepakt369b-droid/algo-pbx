@@ -5,12 +5,29 @@
 // point of the CDR listener process (scripts/ami-cdr-listener.mjs) is that
 // it CANNOT be exercised any other way in an environment with no live infra.
 //
-// Field names below (UniqueID, LinkedID, Source, Destination, CallerID,
-// StartTime, AnswerTime, EndTime, Duration, BillableSeconds, Disposition)
-// are Asterisk's conventional Cdr-event field names, consistent with
-// manager.conf's `read = cdr` class — NOT verified against a live capture.
-// Treat as probable-not-proven until checked against a real Asterisk 20 Cdr
-// event.
+// Verified live against production 2026-08-29 (real calls, real Cdr events
+// read off `docker exec algo-postgres psql` rows and the listener's own
+// logs) after the header comment's own "UNVERIFIED against a live capture"
+// caveat turned out to hide two real bugs:
+//
+// 1. There is NO `Context` field on a `Cdr` event — `dcontext` (the
+//    dialplan's own name for it) is serialized as `DestinationContext`.
+//    `sourceContext` must be read from that field, never from `Context`
+//    (see ami-cdr-listener.ts). Reading a field that doesn't exist made
+//    `inferDirection` fall through to `"internal"` on 100% of calls,
+//    inbound and outbound alike — confirmed on production rows.
+// 2. `agentExtension` was never assigned anywhere in this file. It is
+//    derived below from the channel name Asterisk puts on the event
+//    (`PJSIP/1002-00000123` -> `1002`) — `Channel` for a call the agent
+//    ORIGINATED (outbound/internal), `DestinationChannel` for one the agent
+//    ANSWERED (inbound, after the queue bridge).
+//
+// `callerNumber` also used to prefer `CallerID` over `Source`. `CallerID` is
+// the full display form (`"Algo Call Center" <1002>`, per
+// extensions.conf's `Set(CALLERID(name)=...)`), which is what production
+// rows showed stored verbatim — breaking every downstream contact-name
+// match. `Source` (the CDR `src` field) is the bare number and is preferred
+// now, with `CallerID` parsed as a fallback only.
 
 export interface AmiCdrEvent {
   Event?: string;
@@ -18,6 +35,9 @@ export interface AmiCdrEvent {
   LinkedID?: string;
   Source?: string;
   Destination?: string;
+  DestinationContext?: string;
+  Channel?: string;
+  DestinationChannel?: string;
   CallerID?: string;
   Disposition?: string;
   StartTime?: string;
@@ -66,6 +86,44 @@ function inferDirection(sourceContext: string | undefined): "inbound" | "outboun
   return "internal";
 }
 
+// Matches the endpoint-name portion of a PJSIP channel name, e.g.
+// "PJSIP/1002-00000123" -> "1002". Endpoint names are the extension numbers
+// themselves (src/lib/pjsip-config.ts provisions `[1002]` etc.), so this is
+// the extension, not an opaque channel id.
+const PJSIP_CHANNEL_PATTERN = /^PJSIP\/(\d{3,6})-/;
+
+function extractExtension(channel: string | undefined): string | undefined {
+  return channel?.match(PJSIP_CHANNEL_PATTERN)?.[1];
+}
+
+/** Which channel actually names the agent's extension depends on direction:
+ * for an outbound/internal call the agent ORIGINATED it, so their extension
+ * is on `Channel`; for an inbound call the agent ANSWERED it after the
+ * `[from-dinstar]` -> Queue() bridge, so their extension is on
+ * `DestinationChannel` (the leg Asterisk dialed out to reach them).
+ * `Channel`/`DestinationChannel` are always PJSIP for this deployment (no
+ * other endpoint technology is provisioned), so a non-matching value simply
+ * yields undefined rather than a wrong extension. */
+function extractAgentExtension(
+  event: Pick<AmiCdrEvent, "Channel" | "DestinationChannel">,
+  direction: "inbound" | "outbound" | "internal"
+): string | undefined {
+  if (direction === "inbound") return extractExtension(event.DestinationChannel);
+  return extractExtension(event.Channel) ?? extractExtension(event.DestinationChannel);
+}
+
+/** `CallerID` is the full display-name form Asterisk builds from
+ * CALLERID(name)/CALLERID(num) (e.g. `"Algo Call Center" <1002>`), not a
+ * bare number — extensions.conf sets that name on every agent-originated
+ * call. `Source` (CDR `src`) is the bare number and is always preferred;
+ * this only parses `CallerID` as a fallback for the rare event missing
+ * `Source` entirely. */
+function extractCallerNumber(event: Pick<AmiCdrEvent, "Source" | "CallerID">): string {
+  if (event.Source) return event.Source;
+  const angleMatch = event.CallerID?.match(/<([^>]+)>/);
+  return angleMatch?.[1] ?? event.CallerID ?? "unknown";
+}
+
 /** Asterisk's Cdr `StartTime`/`AnswerTime`/`EndTime` are typically
  * `YYYY-MM-DD HH:MM:SS` (space-separated, no timezone) — convert to an ISO
  * string `Date` can parse unambiguously across the wire to the ingestion
@@ -85,16 +143,21 @@ export function mapCdrEventToIngestPayload(
   const startedAt = toIso(event.StartTime);
   if (!uniqueId || !startedAt) return null; // can't ingest a row with no key or no start time
 
+  const direction = inferDirection(opts.sourceContext);
+
   const payload: CdrIngestPayload = {
     uniqueId,
-    callerNumber: event.CallerID ?? event.Source ?? "unknown",
+    callerNumber: extractCallerNumber(event),
     destination: event.Destination ?? "unknown",
-    direction: inferDirection(opts.sourceContext),
+    direction,
     disposition: event.Disposition ?? "UNKNOWN",
     startedAt,
     durationSec: Number(event.Duration ?? 0),
     billsecSec: Number(event.BillableSeconds ?? 0),
   };
+
+  const agentExtension = extractAgentExtension(event, direction);
+  if (agentExtension) payload.agentExtension = agentExtension;
 
   const answeredAt = toIso(event.AnswerTime);
   if (answeredAt) payload.answeredAt = answeredAt;
