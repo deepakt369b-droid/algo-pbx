@@ -2654,11 +2654,30 @@ as a green "Test email sent". Now checked and re-thrown, so
 `/admin/settings` "Test connection" and the invite/reset warnings surface
 the real reason.
 
+**`/register` <-> `/agent` redirect loop (regression from the §23 admin
+changes, found + fixed + deployed same session).** Admin user creation
+stamped `profileCompletedAt` whenever a phone was supplied, but the form
+has no address field and `isProfileComplete()` — which `src/middleware.ts`
+and `/api/me/sip-credentials` recompute live from the fields — requires
+one. `GET /api/register` trusted the timestamp and told the page to
+`router.replace("/agent")`; middleware saw the empty address and bounced
+back to `/register`; the page renders "Loading..." while redirecting, so
+the loop showed as a permanently stuck loading screen. Three fixes:
+(1) admin create no longer sets `profileCompletedAt` (pre-verified phone
+just skips the OTP step); (2) `GET /api/register` derives `profileComplete`
+from `isProfileComplete()`, not the timestamp; (3) the register page only
+skips the profile step when name AND address are already on file.
+Verified live in-browser: `/agent` now loads fully. No DB surgery needed
+— the stuck agent recovers by filling the address on the (now-shown)
+form.
+
 **Still open from this session:** the invite-email path — settings now
 hold `INVITE_FROM_EMAIL=algopbx@saharatechs.com` and a `RESEND_API_KEY`
 whose last 4 chars render as `.com` (suspicious — a real key is `re_…`;
-an email may have been pasted into the key field). Operator to re-run
-"Test connection" post-deploy for the now-truthful error and re-paste the
-real key. Inbound GSM call: agent 1001 was unregistered and
+an email may have been pasted into the key field). Resend mail helpers
+now surface the real error (they were reporting false success). Operator
+to re-run "Test connection" for the now-truthful error and re-paste the
+real key. Also: inbound GSM call still untested (agent 1001 unregistered,
+zero CDRs). Inbound GSM call: agent 1001 was unregistered and
 zero CDRs exist; a live trace was armed but no call came through the
 window. Both need a follow-up.
