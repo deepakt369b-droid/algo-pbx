@@ -21,6 +21,9 @@ const QualitySampleSchema = z.object({
   roundTripTimeMs: z.number().nullable().optional(),
   jitterBufferDelayMs: z.number().nullable().optional(),
   mosEstimate: z.number().nullable().optional(),
+  packetsSent: z.number().int().nullable().optional(),
+  audioLevel: z.number().nullable().optional(),
+  totalAudioEnergy: z.number().nullable().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -42,6 +45,9 @@ export async function POST(request: NextRequest) {
       roundTripTimeMs: parsed.data.roundTripTimeMs ?? null,
       jitterBufferDelayMs: parsed.data.jitterBufferDelayMs ?? null,
       mosEstimate: parsed.data.mosEstimate ?? null,
+      packetsSent: parsed.data.packetsSent ?? null,
+      audioLevel: parsed.data.audioLevel ?? null,
+      totalAudioEnergy: parsed.data.totalAudioEnergy ?? null,
     },
   });
 

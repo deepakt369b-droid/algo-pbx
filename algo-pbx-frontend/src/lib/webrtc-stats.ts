@@ -18,6 +18,21 @@ export interface CallQualitySample {
   roundTripTimeMs: number | null;
   jitterBufferDelayMs: number | null;
   mosEstimate: number | null;
+  /** Confirmed packets leaving the agent's browser toward Asterisk. Was
+   * entirely unrecorded before 2026-08-29 — "is the mic actually producing
+   * sound" required decoding a live packet capture by hand, twice, in one
+   * session. Present whenever an outbound audio track exists, independent
+   * of whether the network ever delivers the packets anywhere. */
+  packetsSent: number | null;
+  /** The sender's OWN mic level (RTCAudioSourceStats.audioLevel, 0-1) —
+   * read from `media-source`, i.e. before encoding/network, so this is the
+   * one number that answers "is the microphone itself producing audio"
+   * independent of every network-layer question. */
+  audioLevel: number | null;
+  /** Cumulative energy since the track started — a mic gated to silence
+   * for most of a call shows this barely climbing sample to sample, which
+   * is a much stronger signal than a single audioLevel snapshot. */
+  totalAudioEnergy: number | null;
 }
 
 // Extracts the numbers we care about from getStats()'s report. Written
@@ -31,6 +46,9 @@ export function extractCallQuality(report: RTCStatsReport): CallQualitySample {
   let packetsReceived: number | null = null;
   let jitterBufferDelayMs: number | null = null;
   let roundTripTimeMs: number | null = null;
+  let packetsSent: number | null = null;
+  let audioLevel: number | null = null;
+  let totalAudioEnergy: number | null = null;
 
   report.forEach((stat) => {
     if (stat.type === "inbound-rtp" && (stat.kind === "audio" || stat.mediaType === "audio")) {
@@ -44,6 +62,19 @@ export function extractCallQuality(report: RTCStatsReport): CallQualitySample {
     if (stat.type === "candidate-pair" && stat.state === "succeeded" && typeof stat.currentRoundTripTime === "number") {
       roundTripTimeMs = stat.currentRoundTripTime * 1000;
     }
+    // outbound-rtp: confirms packets actually left the browser toward
+    // Asterisk — the direction inbound-rtp/candidate-pair above cannot see
+    // at all.
+    if (stat.type === "outbound-rtp" && (stat.kind === "audio" || stat.mediaType === "audio")) {
+      if (typeof stat.packetsSent === "number") packetsSent = stat.packetsSent;
+    }
+    // media-source: the mic's own signal, captured BEFORE encoding or the
+    // network — the only stat that can distinguish "mic is silent" from
+    // "mic is fine but the network/server dropped it".
+    if (stat.type === "media-source" && stat.kind === "audio") {
+      if (typeof stat.audioLevel === "number") audioLevel = stat.audioLevel;
+      if (typeof stat.totalAudioEnergy === "number") totalAudioEnergy = stat.totalAudioEnergy;
+    }
   });
 
   return {
@@ -54,6 +85,9 @@ export function extractCallQuality(report: RTCStatsReport): CallQualitySample {
     roundTripTimeMs,
     jitterBufferDelayMs,
     mosEstimate: estimateMos({ jitterMs, packetsLost, packetsReceived, roundTripTimeMs }),
+    packetsSent,
+    audioLevel,
+    totalAudioEnergy,
   };
 }
 

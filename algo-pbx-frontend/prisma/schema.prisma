@@ -433,6 +433,17 @@ model CallQualitySample {
   roundTripTimeMs   Float?
   jitterBufferDelayMs Float?
   mosEstimate       Float?
+  // Added 2026-08-29: extractCallQuality() previously read ONLY
+  // inbound-rtp/candidate-pair, so there was no record of the agent's OWN
+  // outgoing audio — "is the mic actually producing sound" could only be
+  // answered by decoding a live packet capture by hand, which happened
+  // twice in one session. audioLevel/totalAudioEnergy come from the
+  // sender's `media-source` stats (the local mic, before encoding) so they
+  // reflect what the mic itself is producing independent of whether the
+  // network ever delivers it.
+  packetsSent       Int?
+  audioLevel        Float?
+  totalAudioEnergy  Float?
   createdAt         DateTime @default(now())
 
   @@index([callId])

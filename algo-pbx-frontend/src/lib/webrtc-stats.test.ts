@@ -47,4 +47,47 @@ describe("extractCallQuality", () => {
     const q = extractCallQuality(report);
     expect(q.roundTripTimeMs).toBeNull();
   });
+
+  // Regression tests for 2026-08-29: this file used to read ONLY
+  // inbound-rtp/candidate-pair, so nothing here could ever confirm the
+  // agent's own outgoing audio — the exact question that twice this
+  // session could only be answered by decoding a live packet capture by
+  // hand (the far end heard nothing while Asterisk's own packet counters
+  // for the agent's leg looked perfectly healthy).
+
+  it("extracts packetsSent from outbound-rtp", () => {
+    const report = fakeReport([{ type: "outbound-rtp", kind: "audio", packetsSent: 1234 }]);
+    const q = extractCallQuality(report);
+    expect(q.packetsSent).toBe(1234);
+  });
+
+  it("extracts audioLevel and totalAudioEnergy from media-source", () => {
+    const report = fakeReport([{ type: "media-source", kind: "audio", audioLevel: 0.42, totalAudioEnergy: 3.7 }]);
+    const q = extractCallQuality(report);
+    expect(q.audioLevel).toBe(0.42);
+    expect(q.totalAudioEnergy).toBe(3.7);
+  });
+
+  it("distinguishes a healthy network from a silent mic on otherwise-identical packet counts", () => {
+    // packetsSent climbing normally, but the mic's own media-source stat
+    // shows near-zero level/energy — this is exactly the failure mode
+    // that Asterisk's channel counters alone could not reveal.
+    const report = fakeReport([
+      { type: "outbound-rtp", kind: "audio", packetsSent: 5000 },
+      { type: "media-source", kind: "audio", audioLevel: 0.0001, totalAudioEnergy: 0.0002 },
+      { type: "candidate-pair", state: "succeeded", currentRoundTripTime: 0.03 },
+    ]);
+    const q = extractCallQuality(report);
+    expect(q.packetsSent).toBe(5000);
+    expect(q.audioLevel).toBeLessThan(0.01);
+    expect(q.totalAudioEnergy).toBeLessThan(0.01);
+  });
+
+  it("returns null for the new fields when their stat types are absent", () => {
+    const report = fakeReport([{ type: "inbound-rtp", kind: "audio", jitter: 0.01 }]);
+    const q = extractCallQuality(report);
+    expect(q.packetsSent).toBeNull();
+    expect(q.audioLevel).toBeNull();
+    expect(q.totalAudioEnergy).toBeNull();
+  });
 });
