@@ -102,6 +102,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     if (!conversation.waInstance) {
       return NextResponse.json({ error: "This WhatsApp conversation has no instance assigned." }, { status: 409 });
     }
+    // A calls-only instance (MessageProviderKind.NONE) should never reach
+    // this point — conversations/route.ts already refuses to create one
+    // against it — but guard here too rather than trusting that
+    // invariant, since getProvider("NONE") has no adapter and would throw.
+    if (conversation.waInstance.provider === "NONE") {
+      return NextResponse.json({ error: "This SIM port is calls-only and has no WhatsApp identity." }, { status: 409 });
+    }
     providerKind = conversation.waInstance.provider as "OPENWA" | "META_CLOUD";
     if (providerKind === "OPENWA") {
       if (!conversation.waInstance.openwaSessionId) {

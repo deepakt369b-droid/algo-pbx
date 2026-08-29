@@ -526,6 +526,17 @@ enum MessageProviderKind {
   OPENWA
   META_CLOUD
   DINSTAR_SMS
+  // Added 2026-08-29: a GSM port assignment with no messaging identity
+  // attached. Before this, a port could only be assigned to an agent by
+  // first creating a WaInstance row, and creating one with provider=OPENWA
+  // unconditionally starts a real OpenWA WhatsApp pairing session
+  // (src/app/api/admin/whatsapp/instances/route.ts) — so a purely
+  // calls-only port (the operator's actual request) could not be assigned
+  // at all without dragging WhatsApp pairing along with it. NONE never
+  // reaches getProvider() — every send/conversation-creation path must
+  // reject it explicitly (see conversations/route.ts and
+  // conversations/[id]/messages/route.ts).
+  NONE
 }
 
 enum WaInstanceStatus {

@@ -31,7 +31,11 @@ export async function GET() {
 const CreateSchema = z.object({
   label: z.string().min(1).max(100),
   simPort: z.number().int().min(1).max(4),
-  provider: z.enum(["OPENWA", "META_CLOUD"]).default("OPENWA"),
+  // NONE = "calls-only" — reserve this port for an agent with no
+  // messaging identity attached at all (see the schema comment on
+  // MessageProviderKind.NONE for why this needs to be a distinct kind
+  // rather than reusing META_CLOUD as a workaround).
+  provider: z.enum(["OPENWA", "META_CLOUD", "NONE"]).default("OPENWA"),
 });
 
 function errorMessage(err: unknown): string {
@@ -58,7 +62,10 @@ export async function POST(request: NextRequest) {
       label: parsed.data.label,
       simPort: parsed.data.simPort,
       provider: parsed.data.provider,
-      status: "PAIRING",
+      // A calls-only port never pairs — "PAIRING" forever would be a
+      // permanently misleading status for something that was never going
+      // to connect at all.
+      status: parsed.data.provider === "NONE" ? "DISCONNECTED" : "PAIRING",
       pairedByAdminId: guard.session.user.id,
     },
   });

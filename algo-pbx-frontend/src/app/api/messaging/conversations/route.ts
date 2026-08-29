@@ -93,10 +93,17 @@ export async function POST(request: NextRequest) {
       if (!instance) {
         return NextResponse.json({ error: "Unknown WhatsApp instance" }, { status: 400 });
       }
+      // A "calls-only" port (MessageProviderKind.NONE — see its schema
+      // comment) has no messaging identity attached at all; never let one
+      // be selected as a WhatsApp conversation's instance, which would
+      // fail unhelpfully at send time via getProvider("NONE").
+      if (instance.provider === "NONE") {
+        return NextResponse.json({ error: "This SIM port is calls-only and has no WhatsApp identity." }, { status: 409 });
+      }
       waInstanceId = instance.id;
     } else {
       const instance = await db.waInstance.findUnique({ where: { assignedUserId: userId } });
-      if (!instance) {
+      if (!instance || instance.provider === "NONE") {
         return NextResponse.json(
           { error: "No WhatsApp instance is assigned to you. Provide waInstanceId or ask an admin to assign one." },
           { status: 409 }

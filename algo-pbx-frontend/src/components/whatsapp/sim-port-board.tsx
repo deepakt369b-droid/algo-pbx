@@ -9,7 +9,7 @@ export interface WaInstance {
   simPort: number;
   phoneE164: string | null;
   pushName: string | null;
-  provider: "OPENWA" | "META_CLOUD" | "DINSTAR_SMS";
+  provider: "OPENWA" | "META_CLOUD" | "DINSTAR_SMS" | "NONE";
   status: "PAIRING" | "CONNECTED" | "DISCONNECTED" | "LOGGED_OUT";
   lastError: string | null;
   sessionName: string | null;
@@ -206,7 +206,10 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
   const [phoneInput, setPhoneInput] = useState("");
   const [codeBusy, setCodeBusy] = useState(false);
 
-  const style = STATUS_STYLE[instance.status];
+  // A calls-only port (provider NONE) is always DISCONNECTED — it never
+  // pairs — so STATUS_STYLE's red "Disconnected" dot would misleadingly
+  // read as a fault rather than the intended, permanent state.
+  const style = instance.provider === "NONE" ? { dot: "bg-slate-500", label: "Calls only" } : STATUS_STYLE[instance.status];
   const lastError = poll?.lastError ?? instance.lastError;
   const qrAge = poll?.qrAgeSeconds ?? null;
   const qrExpired = qrAge !== null && qrAge > QR_WINDOW_SECONDS;
@@ -348,13 +351,13 @@ function EmptySlot({ simPort, onCreated }: EmptySlotProps) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const create = async () => {
+  const create = async (provider: "OPENWA" | "NONE") => {
     setCreating(true);
     setError(null);
     try {
       await apiFetch("/api/admin/whatsapp/instances", {
         method: "POST",
-        body: { label: label.trim(), simPort, provider: "OPENWA" },
+        body: { label: label.trim(), simPort, provider },
       });
       onCreated();
     } catch (err) {
@@ -381,11 +384,22 @@ function EmptySlot({ simPort, onCreated }: EmptySlotProps) {
         className="w-full max-w-xs rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
       />
       <button
-        onClick={create}
+        onClick={() => create("OPENWA")}
         disabled={creating || !label.trim()}
         className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
       >
         {creating ? "Starting…" : "Start pairing"}
+      </button>
+      {/* Reserves this port for an agent with NO WhatsApp identity attached
+          — before this existed, assigning a port at all required first
+          pairing WhatsApp on it (creating a real OpenWA session), so a
+          purely calls-only agent could never be given a port. */}
+      <button
+        onClick={() => create("NONE")}
+        disabled={creating || !label.trim()}
+        className="text-xs text-slate-500 underline hover:text-slate-300 disabled:opacity-50"
+      >
+        Reserve as calls-only (no WhatsApp)
       </button>
       {error && <p className="text-xs text-red-400">{error}</p>}
     </div>
