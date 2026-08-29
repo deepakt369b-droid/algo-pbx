@@ -222,6 +222,16 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   const [consultState, setConsultState] = useState<"idle" | "calling" | "active">("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [agentStatus, setAgentStatusState] = useState<AgentStatus>("OFFLINE");
+  // The agent's own last DELIBERATE choice (via setAgentStatus, below) —
+  // distinct from `agentStatus`, which onServerDisconnect also overwrites
+  // to "OFFLINE" as a transient, honest reflection of the transport being
+  // down (see that delegate's own comment). Confirmed live: without this,
+  // onServerConnect's reconnect handler hardcoded "AVAILABLE", so any
+  // WebSocket blip silently un-broke an agent who had deliberately set
+  // themselves BREAK/BUSY/OFFLINE — the queue would start ringing them
+  // again with no action on their part. Read on reconnect instead of the
+  // hardcoded literal.
+  const deliberateStatusRef = useRef<AgentStatus>("AVAILABLE");
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null);
   const [dialError, setDialError] = useState<string | null>(null);
   // Distinct from dialError: dialError is rendered by Dialpad (dial-time
@@ -495,9 +505,12 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         onServerConnect: () => {
           setIsConnected(true);
           manager.register().catch((err) => console.error("Re-register after reconnect failed:", err));
+          // Restore the agent's own last deliberate choice, not a
+          // hardcoded "AVAILABLE" — see deliberateStatusRef's own comment.
           // Sync the DB-backed status too — wallboard/queue views read
           // Extension.status, and a reconnect previously left them stale.
-          patchServerStatus("AVAILABLE");
+          setAgentStatusState(deliberateStatusRef.current);
+          patchServerStatus(deliberateStatusRef.current);
         },
         onServerDisconnect: () => {
           // The UI must show this honestly rather than staying on stale
@@ -1287,6 +1300,8 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   const setAgentStatus = useCallback(
     async (status: AgentStatus) => {
       const previous = agentStatus;
+      const previousDeliberate = deliberateStatusRef.current;
+      deliberateStatusRef.current = status;
       setAgentStatusState(status); // optimistic — revert below if the PATCH fails
 
       const extension = session?.user.extension;
@@ -1308,6 +1323,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       } catch (err) {
         console.error("Failed to persist agent status:", err);
         setAgentStatusState(previous);
+        deliberateStatusRef.current = previousDeliberate;
         // Rethrow so the UI (AgentStatusSelector) can show the failure —
         // the optimistic revert alone made the click look accepted, then
         // silently undo itself with zero feedback.

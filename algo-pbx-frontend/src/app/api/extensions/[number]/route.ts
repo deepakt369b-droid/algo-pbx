@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { requireAdminSession, requireSession, requireStaffSession } from "@/lib/auth-guard";
 import { regeneratePjsipConfigAndReload } from "@/lib/pjsip-provision";
 import { getAmiClient } from "@/lib/ami-client";
-import { removeQueueMember } from "@/lib/queue-membership";
+import { pauseQueueMember, removeQueueMember } from "@/lib/queue-membership";
 
 export const dynamic = "force-dynamic";
 
@@ -139,6 +139,24 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
     where: { number: params.number },
     data: { status: parsed.data.status, lastSeenAt: new Date() },
   });
+
+  // Confirmed live 2026-08-29: this used to write ONLY the DB column, with
+  // nothing anywhere calling pauseQueueMember (src/lib/queue-membership.ts)
+  // — an agent who set themselves "On Break" kept receiving real calls
+  // through support_queue regardless, because Asterisk's own queue-member
+  // pause state never changed. AVAILABLE unpauses; BUSY/BREAK/OFFLINE all
+  // pause, since "on an outbound call" and "stepped away" both mean "don't
+  // ring me from the queue right now" — Asterisk already stops offering a
+  // genuinely-busy channel a second call regardless of pause state, so
+  // pausing on BUSY is a no-op safety measure, not a behavior change.
+  // Failure here is deliberately non-fatal: the DB write (what the UI
+  // reads) already succeeded, and an AMI hiccup shouldn't block an agent
+  // from changing their own status.
+  try {
+    await pauseQueueMember(getAmiClient(), params.number, parsed.data.status !== "AVAILABLE");
+  } catch (err) {
+    console.error(`Failed to sync queue pause state for extension ${params.number}:`, err);
+  }
 
   return NextResponse.json({ extension: updated });
 }
