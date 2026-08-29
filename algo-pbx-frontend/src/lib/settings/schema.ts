@@ -160,6 +160,32 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
     secret: false,
     validator: z.enum(["basic", "query"]),
   },
+  // Deliberately SEPARATE from DINSTAR_SMS_USERNAME/PASSWORD above, despite
+  // that pair's own label saying "Dinstar Admin Username/Password" — those
+  // two authenticate against the DIFFERENT goip_get_status.html SMS/status
+  // API (Basic or query-string auth, no cookies), confirmed live 2026-08-29
+  // to be a distinct surface from the actual admin WEB UI
+  // (https://<ip>/enLogin.htm), which uses a cookie-session login via
+  // POST /goform/IADIdentityAuth instead. Conflating the two would have
+  // been a real, silent bug: this VPS's .env carries
+  // DINSTAR_SMS_PASSWORD=change-me, a placeholder never actually valid for
+  // either surface, which the port-config writer (src/lib/dinstar/) must
+  // never trust as if it were the real web-UI credential.
+  {
+    key: "DINSTAR_WEBUI_USERNAME",
+    section: "sms_dinstar",
+    label: "Dinstar Web UI Username",
+    help: "Login for the gateway's own admin web UI (https://<ip>/enLogin.htm) — used only to write port/hotline configuration from /admin/dinstar. Separate from the SMS API credentials above.",
+    secret: false,
+    validator: z.string().min(1),
+  },
+  {
+    key: "DINSTAR_WEBUI_PASSWORD",
+    section: "sms_dinstar",
+    label: "Dinstar Web UI Password",
+    secret: true,
+    validator: z.string().min(1),
+  },
 
   // --- OTP routing ---
   {

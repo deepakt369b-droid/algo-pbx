@@ -92,6 +92,11 @@ export default function DinstarWizardPage() {
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
 
+  const [hotline, setHotline] = useState("100");
+  const [portsApplying, setPortsApplying] = useState(false);
+  const [portsResult, setPortsResult] = useState<{ ok: boolean; ports?: number[] } | null>(null);
+  const [portsError, setPortsError] = useState<string | null>(null);
+
   const scan = async () => {
     setScanning(true);
     setScanError(null);
@@ -123,6 +128,22 @@ export default function DinstarWizardPage() {
       setProbeError(err instanceof ApiError ? err.message : "Could not reach the gateway.");
     } finally {
       setProbing(false);
+    }
+  };
+
+  const applyPortConfig = async () => {
+    setPortsApplying(true);
+    setPortsError(null);
+    try {
+      const data = await apiFetch<{ ok: boolean; ports: number[] }>("/api/admin/dinstar/ports", {
+        method: "POST",
+        body: { username, password, hotline },
+      });
+      setPortsResult(data);
+    } catch (err) {
+      setPortsError(err instanceof ApiError ? err.message : "Could not apply the port configuration.");
+    } finally {
+      setPortsApplying(false);
     }
   };
 
@@ -310,12 +331,43 @@ export default function DinstarWizardPage() {
             </div>
           )}
           <div className="rounded-lg border border-border p-3 text-xs text-slate-400">
+            <p className="mb-1 font-medium text-slate-300">Apply standard SIM config</p>
+            <p className="mb-2">
+              Writes a hotline to every port with real modem hardware on this gateway, so inserting a SIM
+              just works — no manual Dinstar UI steps. This writes to the gateway&apos;s admin web UI directly
+              (a different login than the SMS API above) and cannot read current values back first — see{" "}
+              <span className="text-slate-300">Apply</span> below for what it will overwrite.
+            </p>
+            <label className="mb-2 flex flex-col gap-1">
+              To VOIP Hotline value
+              <input
+                value={hotline}
+                onChange={(e) => setHotline(e.target.value)}
+                placeholder="100"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan"
+              />
+              <span>Matches extensions.conf&apos;s [from-dinstar] handler — &quot;100&quot; or the literal &quot;s&quot; both work.</span>
+            </label>
+            <button
+              onClick={applyPortConfig}
+              disabled={portsApplying || !hotline.trim()}
+              className="w-full rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+            >
+              {portsApplying ? "Applying…" : "Apply standard SIM config"}
+            </button>
+            {portsError && <p className="mt-2 text-red-400">{portsError}</p>}
+            {portsResult?.ok && (
+              <p className="mt-2 text-green-400">
+                Applied to port{portsResult.ports && portsResult.ports.length !== 1 ? "s" : ""}{" "}
+                {portsResult.ports?.map((p) => p + 1).join(", ")}. Insert a SIM in any of those ports and it
+                should register without any further gateway configuration.
+              </p>
+            )}
+          </div>
+          <div className="rounded-lg border border-border p-3 text-xs text-slate-400">
             <p className="mb-1 font-medium text-slate-300">Still manual — configure on the Dinstar itself:</p>
             <ul className="list-disc pl-4">
-              <li>SIP registration target: this Asterisk host, port 5060/UDP</li>
-              <li>Codec: alaw/ulaw</li>
-              <li>DTMF mode: RFC 4733 (unless your firmware requires SIP INFO)</li>
-              <li>Insert SIM cards and any PIN they require</li>
+              <li>Insert SIM cards and any PIN they require (this device only reads SIM presence at power-on, not on hot-insertion — a reboot may be needed)</li>
               <li>Change the gateway&apos;s admin password if it&apos;s still the factory default</li>
             </ul>
           </div>
