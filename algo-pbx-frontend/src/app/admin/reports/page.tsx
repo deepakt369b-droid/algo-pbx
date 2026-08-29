@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface AgentHoursRow {
   extension: string;
@@ -31,15 +31,40 @@ function formatHours(seconds: number): string {
 // (answered talk time, not ring/hold time) grouped by agent extension.
 // See that route's own header comment for the one caveat worth knowing:
 // this is reporting/monitoring, not a payroll-grade number.
+// Confirmed live 2026-08-29: this page fetched only on period change, with
+// no polling and no error surfacing. Combined with the CDR mapper bugs
+// fixed the same session (agentExtension always NULL), the page always
+// looked stale/empty with nothing to tell an admin watching it whether that
+// meant "no calls" or "broken" — the exact D7 failure pattern (see
+// agent-missed-calls.tsx / agent-call-log.tsx for the same fix applied
+// there). A supervisor watching this during a shift needs it to update on
+// its own, not just when they happen to click a period button again.
+const POLL_INTERVAL_MS = 30_000;
+
 export default function AgentHoursReportPage() {
   const [period, setPeriod] = useState<(typeof PERIODS)[number]["value"]>("day");
   const [rows, setRows] = useState<AgentHoursRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback((p: string) => {
+    setError(null);
+    fetch(`/api/admin/reports/agent-hours?period=${p}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`Load failed (${r.status})`);
+        return r.json();
+      })
+      .then((data) => setRows(data.rows ?? []))
+      .catch(() => setError("Could not load report data."))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
-    fetch(`/api/admin/reports/agent-hours?period=${period}`)
-      .then((r) => r.json())
-      .then((data) => setRows(data.rows ?? []));
-  }, [period]);
+    setLoading(true);
+    load(period);
+    const interval = setInterval(() => load(period), POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [period, load]);
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
@@ -61,8 +86,9 @@ export default function AgentHoursReportPage() {
       </div>
 
       <div className="glass-card w-full max-w-2xl overflow-x-auto p-6">
+        {error && <p className="mb-3 text-xs text-red-400">{error}</p>}
         {rows.length === 0 ? (
-          <p className="text-slate-500">No answered calls in this period.</p>
+          <p className="text-slate-500">{loading ? "Loading…" : "No answered calls in this period."}</p>
         ) : (
           <table className="w-full text-sm text-slate-200">
             <thead>
