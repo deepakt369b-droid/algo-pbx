@@ -16,8 +16,18 @@ export default async function AgentLayout({ children }: { children: React.ReactN
     await signOut({ redirectTo: "/login" });
   }
 
+  // userId is passed so AgentShell can detect the session cookie being
+  // replaced underneath an already-rendered page — see
+  // @/lib/use-session-identity-guard. Without it, an admin signing in on the
+  // same browser left this agent workspace rendering ADMIN chrome (including
+  // agent-shell's "Admin" link) against the admin's cookie.
   return (
-    <AgentShell userEmail={session?.user.email} role={session?.user.role} signOutAction={signOutAction}>
+    <AgentShell
+      userId={session?.user.id}
+      userEmail={session?.user.email}
+      role={session?.user.role}
+      signOutAction={signOutAction}
+    >
       {children}
     </AgentShell>
   );

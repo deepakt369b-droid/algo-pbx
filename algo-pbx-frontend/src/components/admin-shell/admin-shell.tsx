@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useSessionIdentityGuard } from "@/lib/use-session-identity-guard";
 import {
   AppBar,
   Box,
@@ -130,15 +131,23 @@ function NavList({ pathname, onNavigate }: { pathname: string; onNavigate?: () =
 
 export function AdminShell({
   children,
+  userId,
   userEmail,
   signOutAction,
 }: {
   children: React.ReactNode;
+  userId?: string | null;
   userEmail?: string | null;
   signOutAction: () => Promise<void>;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // An agent signing in on this same browser replaces the session cookie for
+  // every tab. Without this, an already-rendered admin page keeps its
+  // painted DOM — including the /admin/users table, which by the owner's
+  // deliberate design shows plaintext passwords — on screen for whoever uses
+  // the browser next. See @/lib/use-session-identity-guard.
+  useSessionIdentityGuard(userId);
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>

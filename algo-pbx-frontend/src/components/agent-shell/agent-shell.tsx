@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSIP } from "@/contexts/sip-context";
 import { countUnseenVoicemail } from "@/lib/voicemail-unread";
+import { useSessionIdentityGuard } from "@/lib/use-session-identity-guard";
 
 const BASE_TITLE = "Algo PBX — Agent Workspace";
 
@@ -78,17 +79,23 @@ function Badge({ count }: { count: number }) {
 // but nothing ever rendered.
 export function AgentShell({
   children,
+  userId,
   userEmail,
   role,
   signOutAction,
 }: {
   children: React.ReactNode;
+  userId?: string | null;
   userEmail?: string | null;
   role?: "AGENT" | "SUPERVISOR" | "ADMIN";
   signOutAction: () => Promise<void>;
 }) {
   const { isConnected, callState } = useSIP();
   const pathname = usePathname();
+  // The "Admin" link below is drawn from `role`, which the server layout read
+  // from a browser-wide cookie that a second sign-in can replace at any time.
+  // This forces a re-render for whoever the cookie now belongs to.
+  useSessionIdentityGuard(userId);
 
   const [voicemailCount] = useBadgeCount("/api/voicemail", (d) => {
     const { messages, lastSeenAt } = d as {

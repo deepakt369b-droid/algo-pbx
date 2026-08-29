@@ -260,7 +260,19 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       cancelled = true;
     };
-  }, [sessionStatus]);
+    // Keyed on the user's ID as well as the status, NOT status alone. All
+    // tabs in a browser share one `authjs.session-token` cookie, and
+    // sessionStatus stays "authenticated" straight through an account swap —
+    // it only transitions on sign-out. Keyed on status alone this effect
+    // never re-fired, so `credentials` (extension + plaintext sipSecret)
+    // stayed on the PREVIOUS user's values and the SessionManager below kept
+    // the old extension registered to Asterisk: that tab went on receiving
+    // the old user's inbound calls and could originate from their extension,
+    // with their SIP secret still readable in JS memory. Server-side ACLs
+    // cannot see any of this — WebRTC registration is browser->Asterisk over
+    // WSS directly. Including the ID makes an identity change refetch, which
+    // changes `credentials`, which rebuilds the SessionManager in Step 2.
+  }, [sessionStatus, session?.user?.id]);
 
   // Re-attach the primary call's remote audio to the shared <audio>
   // element after some OTHER session (the attended-transfer consult call)

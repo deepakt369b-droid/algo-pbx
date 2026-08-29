@@ -50,18 +50,11 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
-  // TEMP DIAGNOSTIC — remove once the AGENT-login bounce (handoff.md
-  // 2026-08-26) is confirmed fixed on a real deploy. If req.nextUrl.origin
-  // ever disagrees with the real Host header below, that's independent
-  // confirmation the sealed-NextURL bug reaches middleware too.
-  if (!session?.user) {
-    console.log("[middleware:auth-diag]", {
-      pathname,
-      nextUrlOrigin: req.nextUrl.origin,
-      hostHeader: req.headers.get("host"),
-      xForwardedHost: req.headers.get("x-forwarded-host"),
-    });
-  }
+  // The TEMP diagnostic that logged host headers on every unauthenticated
+  // request is removed: the AGENT-login bounce it was added to investigate
+  // (handoff.md 2026-08-26) is confirmed fixed on the production VPS —
+  // agents sign in and reach /agent normally — and absoluteUrl() above is
+  // the permanent fix.
 
   if (!session?.user) {
     const loginUrl = absoluteUrl("/login", req);

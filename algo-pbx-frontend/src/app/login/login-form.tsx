@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { workspaceForRole } from "@/lib/workspace-for-role";
 
 // Two-phase login (Workstream 6 — new-device/new-IP 2FA). Converted from
 // a server-action form (formerly ./actions.ts's loginAction, deleted —
@@ -17,12 +18,21 @@ import { useRouter } from "next/navigation";
 // requires that cookie for any user with a verified phone number.
 type Phase = "credentials" | "otp";
 
-// Where each role lands after sign-in. One login page serves everyone;
-// the DESTINATION is what differs, decided by the role the pre-login
-// response reports for this account (no more hardcoded /admin followed by
-// a middleware bounce for agents).
-function workspaceForRole(role: string | null | undefined): string {
-  return role === "AGENT" ? "/agent" : "/admin";
+// workspaceForRole lives in @/lib/workspace-for-role so the login PAGE (a
+// server component, which now refuses to render this form over a live
+// session) can route by the same rule without crossing the client boundary.
+
+// `callbackUrl` arrives from the query string and is therefore
+// attacker-supplied. src/middleware.ts only ever sets a pathname, but
+// nothing stopped `/login?callbackUrl=https://evil.example/` (or the
+// protocol-relative `//evil.example/`) from bouncing a user off-site the
+// instant their sign-in succeeded — a credible phishing pivot against
+// exactly the admin account. Accept only a same-origin absolute path.
+function safeCallbackUrl(callbackUrl: string | undefined, role: string | null | undefined): string {
+  if (callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")) {
+    return callbackUrl;
+  }
+  return workspaceForRole(role);
 }
 
 export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
@@ -49,7 +59,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
       setPhase("credentials");
       return;
     }
-    router.push(callbackUrl || workspaceForRole(roleRef.current));
+    router.push(safeCallbackUrl(callbackUrl, roleRef.current));
     router.refresh();
   };
 
