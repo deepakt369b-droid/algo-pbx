@@ -2611,3 +2611,44 @@ now blocked on a physical hardware check the assistant cannot perform
 remotely:** whether the SIM/antenna are actually seated correctly on
 whichever port it's now in — this is the literal next step, not a new
 open question found late.
+
+## 23. Admin overrides: agent phone at creation, plaintext password display, hard user delete (2026-08-29, deployed to prod VPS)
+
+Operator-directed changes to `/admin/users`, **deployed live** (commit
+`58e9c21`, migration `20260829000000_add_password_plain` applied, `web`
+rebuilt + recreated, healthy):
+
+- **Agent phone box in account creation** — the phone field now shows in
+  BOTH "Email invite" and "Set password now" modes (was password-mode
+  only). Backend already accepted `phoneE164` for either path; only the
+  form was withholding it. When set, the number is stamped
+  admin-verified (`phoneVerifiedByAdminId`) + `profileCompletedAt`, so a
+  WhatsApp password-reset code works for that agent immediately.
+  Root cause of the operator's "reset not sending" report: the test
+  accounts had NO phone on file, so `/api/auth/forgot-password`'s
+  `phoneE164 && phoneVerifiedAt` guard silently sent nothing. The OpenWA
+  instance itself was connected and healthy the whole time.
+- **`User.passwordPlain`** (new nullable column) — kept in sync with
+  `passwordHash` at every write site (setup, invite consume, admin create,
+  admin PATCH, self-service reset). `GET /api/admin/users` returns it for
+  ADMIN sessions only; the user list shows `Password: <value>` per row.
+  **Deliberately breaks the original "an admin never learns the agent's
+  password" property** — owner's call, see memory
+  `owner-overrides-security-model`. Pre-existing users show blank until
+  their next password change.
+- **Hard `DELETE /api/admin/users/[id]`** — replaced the soft-delete +
+  PII-scrub with a real transactional hard delete: removes the `User` row
+  plus all FK-referencing rows (auditLog, otpChallenge, trustedDevice,
+  loginAttempt, invite, escalationAttempt, smsAccessRequest, chat
+  assignments); extensions/SIM ports are released (unlinked, not deleted);
+  DNC entries reassigned to the acting admin. Audit trail for that person
+  is gone by design.
+
+typecheck + 294 tests + lint + build all clean before deploy.
+
+**Still open from this session:** the invite-email path (`RESEND_API_KEY`
++ `INVITE_FROM_EMAIL=projects@saharaedoc.com` both in the settings DB) —
+not confirmed working; depends on `saharaedoc.com` being a verified
+Resend sending domain. Inbound GSM call: agent 1001 was unregistered and
+zero CDRs exist; a live trace was armed but no call came through the
+window. Both need a follow-up.
