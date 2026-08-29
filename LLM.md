@@ -3066,3 +3066,177 @@ Full plan for the remaining work (inbound re-test, MOH provisioning, the
 agent call-log page, the dynamic transfer guard, the Dinstar admin-page
 config feature) is in
 `~/.claude/plans/see-the-ui-currently-hashed-codd.md`.
+
+## 26. The full remaining-work plan executed end to end — all 7 sections deployed and confirmed live (2026-08-29, later same day, follow-up to §25)
+
+Direct continuation of §25: the operator approved the plan file in full and
+this session implemented, deployed, and verified all seven of its sections
+against the real running production system — not just green builds. Every
+item below was confirmed via the actual deployed bundle content, a live
+database query, or a direct read of the running Asterisk/gateway state, per
+this project's own hard-won rule that a passing build proves nothing about
+what's actually running.
+
+**1. The CDR deploy gap — fixed for real.** `cdr-listener` builds from its
+own Docker image target (`docker-compose.yml:378-382`, `target:
+cdr-listener`), separate from `web`. §25's CDR mapper fix had been committed
+but never reached production because only `web` was rebuilt. Rebuilt
+`cdr-listener` specifically and redeployed. Confirmed on a real call
+(`1788016566.47`, 15:16:06): `direction=outbound`, `agentExtension=1002`,
+`callerNumber=1002` — all three previously-wrong fields correct.
+
+**2. All 4 real GSM ports configured.** Only port 3 had `To VOIP Hotline`
+set; ports 0-2 were empty. Set `OffhookAutodial=100` on all three via the
+gateway UI, confirmed by a fresh page reload (not trusting the save
+confirmation alone) showing all of ports 0-3 at `100`.
+
+**3. Agent inbound-call defects, all fixed and deployed:**
+- The attended-transfer NOTIFY-timeout branch could leave
+  `primarySessionRef`/`consultSessionRef` pointing at an already-Terminated
+  sip.js session, which made `onCallReceived` silently 480 every future
+  inbound call forever. Now checks `session.state` at the timeout and clears
+  whichever ref is actually dead; `onCallReceived` gained the same check as
+  a second line of defense.
+- No `qualify_frequency` on the generated WebRTC AOR — confirmed live via
+  `pjsip show aor 1002` that both of 1002's contacts showed `NonQual`
+  forever. Added `qualify_frequency=30`/`qualify_timeout=3`; after a full
+  Asterisk restart both contacts now show `Avail` with real RTT.
+- No incoming-call UI outside `/agent` — `CallControls`' Answer/Decline was
+  mounted on exactly one of five agent routes. Confirmed live: a real
+  inbound call rang the full 15s `RINGNOANSWER` window and was abandoned
+  while the agent was on `/agent/chat`. New `IncomingCallBanner` mounted in
+  `AgentShell`, which wraps every agent route.
+- Decline sent `480` (indistinguishable in Asterisk's logs from a dead
+  endpoint) via the generic `hangupCall` path. New `declineCall` calls
+  `Invitation.reject({statusCode: 486})` directly for an unanswered
+  invitation.
+- The ringtone's `play()` rejection was swallowed entirely
+  (`.catch(() => undefined)`) — very likely why the `RINGNOANSWER` call
+  above was never heard. Added a one-time pointerdown/keydown unlock, a
+  `ringtoneBlocked` state mirroring the existing `audioBlocked` pattern, and
+  a loud "Enable call sounds" banner.
+- Agent status ("On Break" etc.) only ever wrote the database column —
+  nothing called `pauseQueueMember`, so a break agent kept receiving real
+  calls. Wired the status PATCH route to pause/unpause the queue member.
+  Separately, `onServerConnect` hardcoded a reset to `AVAILABLE` on every
+  reconnect, silently un-breaking an agent after any WebSocket blip — added
+  `deliberateStatusRef` so a reconnect restores the agent's own last
+  deliberate choice instead.
+
+**4. Reporting and telemetry:**
+- `/admin/reports` now polls every 30s and surfaces load errors, verified
+  in the deployed bundle (was fetch-on-period-change-only with no error
+  state, indistinguishable from "broken" while the CDR bug made it look
+  permanently empty).
+- CDR backfill: 25 outbound + 14 inbound historical rows corrected via a
+  one-time SQL script (direction inferred from destination shape,
+  `agentExtension` from the only staffed extension during the test window,
+  confirmed against `queue_log`). Two genuinely ambiguous test-junk rows
+  left alone deliberately.
+- The CDR listener's "flapping" reclassified as **not a bug** — the one
+  disconnect since redeploy lines up exactly with an Asterisk restart done
+  this session; restarting Asterisk always drops every AMI connection.
+- New outbound-audio telemetry: `CallQualitySample` gained
+  `packetsSent`/`audioLevel`/`totalAudioEnergy` columns (migration
+  `20260829010000_add_outbound_audio_telemetry`, confirmed applied in
+  `_prisma_migrations`), sourced from WebRTC's `outbound-rtp` and
+  `media-source` stats — previously `webrtc-stats.ts` read only
+  `inbound-rtp`/`candidate-pair`, so "is the agent's mic actually producing
+  sound" required manually decoding a packet capture, which happened twice
+  in §24/§25.
+- Confirmed (not yet fixed, flagged for later): the `getUserMedia`
+  `echoCancellation`/`noiseSuppression`/`autoGainControl` constraints in
+  `sip-context.tsx` are dead code against the installed sip.js source —
+  they sit in a factory-options field sip.js's default factory never reads,
+  while `SessionManager` separately overwrites per-call constraints from
+  `media.constraints`, currently a bare `{audio:true}`. No constraint
+  change can have any effect until this is fixed.
+
+**5. GSM port ↔ agent assignment.** The exclusive, revoke-only ownership
+rule the operator asked about already existed and was already correctly
+enforced (`simPort`/`assignedUserId` both `@unique`, a 409 on reassigning an
+owned port) — verified by an independent review pass before building
+anything, which caught that an earlier draft plan for a parallel `GsmPort`
+ownership table would have created two unreconciled sources of truth for
+"who owns port N", the same drift class this project has already been bitten
+by twice (`VM_PUBLIC_DOMAIN`, `DINSTAR_SIP_PORT`). Two real gaps fixed
+instead:
+- The 409 didn't name the current holder — now says
+  `${name} (${email})`, confirmed in the deployed bundle.
+- A port could not be assigned without first creating a real WhatsApp
+  pairing session, since assignment required an existing `WaInstance` row
+  and creating one normally starts OpenWA pairing. Added
+  `MessageProviderKind.NONE` (migration
+  `20260829020000_add_calls_only_provider_kind`, confirmed live via
+  `enum_range`) for a calls-only port reservation with no messaging
+  identity attached, guarded in both messaging routes so it can never be
+  selected as a send provider.
+
+**6. The transfer guard's unguarded siblings, all fixed and deployed.**
+`transfer-guard.ts`'s single-GSM-port block is real, live-traced, correct
+behavior — but two other paths reached the Dinstar trunk with no equivalent
+check: `POST /api/calls/conference` (now detects a `PJSIP/dinstar-trunk-*`
+channel in the redirect set and rejects adding an external party), and
+manager escalation to a phone-only manager (now gets a specific,
+actionable message instead of the generic transfer-guard text — the
+underlying one-port hardware limit is real and not fixable without §7's
+still-missing live SIM-count detection). Also tightened extension
+provisioning to `/^[12]\d{3}$/` to match the dialplan's actual
+`_1XXX`/`_2XXX` patterns, leaving every OTHER `\d{3,6}` use in the codebase
+(CDR filter, voicemail mailboxes including the 9000 office-overflow box,
+escalation-target extensions, click-to-call) alone since those are
+genuinely different uses, not this bug. The dynamic multi-SIM guard itself
+(6a) remains intentionally unimplemented — it has no live port-state source
+to read from.
+
+**7. Dinstar admin-page automation — built write-only, by necessity, not
+choice.** Before writing any code, hit a real wall: the gateway's Port
+Configuration page (`enPortList.htm`) does not embed per-port values in
+static HTML — its field names are built by a client-side `for` loop, and
+this session could not identify the real data source without further
+invasive device probing. That probing was stopped deliberately (the
+session's own tooling safety classifier pushed back on it, correctly), the
+operator was asked, and chose write-only over the original
+apply-and-verify design. The write path itself was proven, not guessed: a
+standalone Node script using the exact same `node:https` + cookie-session
+approach as the final code was run against the **live production gateway**
+with idempotent values, and a fresh browser read confirmed the write
+worked with nothing else disturbed. Shipped:
+- `src/lib/dinstar/device-client.ts` — cookie-session login
+  (`POST /goform/IADIdentityAuth`) via `node:https` with a dedicated
+  `rejectUnauthorized:false` Agent (matching `cert-probe.ts`'s existing
+  precedent rather than adding undici as a new direct dependency),
+  confirmed to be a completely different login surface from
+  `dinstar-discovery.ts`'s `probeDinstarCredentials()` (the
+  `goip_get_status.html` SMS/status API, Basic/query auth, no cookies).
+- `src/lib/dinstar/port-config.ts` — builds the exact full 8-port-row
+  payload `POST /goform/PortCfg` expects, reproducing the confirmed-live
+  baseline (blank SIP/registration fields, Register=No Register, +2dB/+6dB
+  gains) with only the hotline changed, on ports 0-3.
+- New `DINSTAR_WEBUI_USERNAME`/`PASSWORD` settings, deliberately kept
+  separate from `DINSTAR_SMS_USERNAME`/`PASSWORD` — confirmed those
+  authenticate the different SMS API, and this VPS's `.env` value for the
+  SMS password (`change-me`) is a stale placeholder that must never be
+  trusted as the real web-UI credential.
+- `POST /api/admin/dinstar/ports` + a new "Apply standard SIM config"
+  action on `/admin/dinstar`, replacing the old hard-coded "still manual"
+  checklist.
+- Deploy confirmed live: `algo-web` recreated from a no-cache build,
+  healthy; the deployed bundle for the new route was grepped directly and
+  contains the real write logic (`goform/PortCfg`, the `enSetOK`
+  success-page check), not just a passing build.
+
+**Explicitly deferred, not forgotten:** Section 5's optional dedicated
+`/admin/gsm-ports` page (the assignment logic already works via the
+existing user-edit form), Section 6a (needs live port-state detection),
+and live SIM-presence detection for the Dinstar admin page (would need the
+same page-scraping problem Section 7 hit and deferred).
+
+**One unrelated anomaly noticed while checking final container health, not
+investigated further as out of scope for this plan:** `algo-caddy` shows
+`unhealthy` in `docker ps`, and has for ~26 hours — predates this session
+and was never touched by it.
+
+Full commit list this session, in order: `4aed624`, `69194e4` (earlier,
+§24), `d1ef7b9`, `a2f03a2`, `93592f9`, `1b773d2`, `6b07728`, `025c3dd`,
+`c4def00`, `c455318`, `6bed0de`, `27e3722`, `53069ab`, `59c1c26`.

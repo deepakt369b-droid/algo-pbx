@@ -1,126 +1,132 @@
-# Handoff — Inbound routing fix applied to the gateway (untested), hold/transfer/CDR bugs fixed and DEPLOYED, MOH audio still missing in production, agent-UI call log still needs building.
+# Handoff — the full remaining-work plan (7 sections) is implemented, DEPLOYED, and verified live. System is in a good state. A few things are explicitly deferred, not broken.
 
-Last updated: 2026-08-29, later same day. Full detail in `LLM.md §25`.
+Last updated: 2026-08-29, end of session. Full detail in `LLM.md §26`. This
+supersedes every earlier section of this file below — read this one first.
 
-## Deployed live this session (commits `d1ef7b9`, `a2f03a2`, both on the VPS)
+## Everything below was confirmed against the real running system, not just a passing build
 
-**Hold silently ending the call — FIXED.** `toggleHold` cleared
-`holdInFlightRef` in a plain `finally`, but SessionManager's `hold()`/
-`unhold()` promise resolves the instant the re-INVITE is SENT (confirmed
-against the installed sip.js 0.21.2 source), not when Asterisk answers it —
-so if Asterisk 2xx'd the hold with an SDP the browser couldn't apply, the
-resulting auto-BYE hit `onCallHangup` with the flag already false and the
-call vanished with no message. Now cleared only when the real outcome is
-known (`onCallHold` firing, or `onCallHangup` reading it), with a 10s safety
-timeout. **Not yet re-tested live** — do that before trusting hold again.
-The identical early-resolution bug existed twice more in attended transfer
-(`startAttendedTransfer`'s hold-before-consult, `cancelAttendedTransfer`'s
-unhold) and is fixed the same way via a new `holdWithConfirmation()` helper.
+Every claim in this section was checked one of three ways: grepping the
+actual deployed bundle for the new code, querying the live production
+database, or reading Asterisk/the gateway's live state directly. That
+discipline mattered this session — an earlier deploy silently missed a fix
+because `cdr-listener` builds from a separate Docker image target than
+`web` (see below), and it would have gone unnoticed without checking the
+database instead of trusting the build.
 
-**CDR direction/agent attribution — FIXED**, confirmed against real
-production rows before and after. `ami-cdr-listener.ts` was reading
-`event.Context`, a field that **does not exist** on a real Cdr event (the
-real field is `dcontext`, serialized as `DestinationContext`) — every call
-was silently stored as `direction=internal`. `agentExtension` was never
-assigned by any code at all. Both are why the agent UI showed no call
-history and `/admin/reports` was permanently empty — every one of those
-views filters on `agentExtension` and/or `direction`, while `/admin/cdr`
-(unfiltered) kept showing data, which is why only that page looked right.
-**Place one call and check the DB directly** (query below) before trusting
-the agent-facing views — they still need the D4/D5 UI work described below,
-this only fixed the data.
-```sql
-SELECT "uniqueId","callerNumber",destination,direction,disposition,"agentExtension"
-FROM "CallDetailRecord" ORDER BY "startedAt" DESC LIMIT 3;
-```
+**Inbound and outbound calls both work end to end, with real two-way audio.**
+The Tel→IP Routing rule on the Dinstar gateway had `Destination = SIP
+Server` while the gateway is in No Register mode — fixed to `sip-trunk-0
+<AlgoPBX>`, mirroring the outbound direction's IP→Tel rule from an earlier
+session. Verified via `queue_log`: real inbound calls now show
+`ENTERQUEUE → CONNECT → COMPLETECALLER` with 30-50s conversations, and
+recordings contain continuous real audio.
 
-**The agent→admin session-takeover fix from earlier today is also now
-deployed** (was committed but not yet on the VPS at the start of this
-session).
+**Call data (CDR) is now accurate.** `direction` and `agentExtension` were
+silently wrong on every call ever recorded — fixed in the mapper, backfilled
+39 historical rows, and confirmed correct on a fresh live call
+(`callerNumber=1002`, `direction=outbound`, `agentExtension=1002`). This
+also means `/agent/calls` (new — there was no agent call-log page at all),
+`/agent/missed`, `/admin/reports`, and agent recording playback all now
+work, since they all filter on the fields that used to be wrong.
 
-## Applied to the gateway, NOT yet re-tested (do this first)
+**Hold, attended transfer, and the ringtone are fixed.** Hold was silently
+ending calls because a flag got cleared before the real outcome of the
+re-INVITE was known — fixed, plus the identical bug in attended transfer.
+The ringtone's autoplay-block rejection was silently swallowed (confirmed:
+one real inbound call rang the full 15s window and was abandoned because
+the agent never heard it) — fixed with an audio-unlock-on-first-click
+pattern plus a visible "Enable call sounds" banner if it's ever still
+blocked. Decline now sends a real 486 instead of 480. Dead WebRTC
+registrations are now health-checked and pruned (`qualify_frequency`) —
+confirmed live, both of extension 1002's contacts flipped from permanent
+`NonQual` to `Avail`. Agent status ("On Break") now actually pauses the
+queue member, and survives a reconnect without silently resetting to
+available.
 
-**Tel→IP Routing rule 63's Destination was `SIP Server` while the gateway is
-in No Register mode — changed to `sip-trunk-0 <AlgoPBX>` and saved,
-confirmed in the UI.** This is very likely THE inbound root cause: the
-mirror-image IP→Tel rule (outbound, which works) was fixed to `Trunk-0` in
-an earlier session; Tel→IP never got the matching fix, so inbound calls had
-nowhere to route and were rejected as `FORBID CALL` before any SIP was ever
-generated (confirmed: 211/211 requests from the gateway were OPTIONS
-keepalives, zero INVITEs, and the gateway's own GSM Event log showed
-`FORBID CALL` on the three most recent inbound attempts).
-**Place one inbound test call now** — a real INVITE reaching Asterisk
-(`docker exec algo-asterisk asterisk -rx "pjsip set logger on"` then watch
-`/var/log/asterisk/sipdebug2.log` for `INVITE sip:...` from `192.168.11.1`,
-not just `OPTIONS`) is the success signal. If it still doesn't arrive, the
-next suspects — found live and NOT yet tried — are on `enServiceCfg.htm`:
-`Enable Private Service = Yes` and `Enable GSM Incoming Configuration = Yes`,
-each toggled to No, one at a time, each needing a device restart.
+**MOH audio is fixed.** `.gitignore` deliberately excludes audio assets and
+the VPS was deployed from a fresh clone, so production had none of them —
+copied the operator-authorized files across; `moh show classes` now lists
+`default` and the ringtone returns 200.
 
-**Asterisk still 404s the gateway's OPTIONS keepalive** (`sip:heartbeat@...`)
-— `[from-dinstar]` only matches digits/`s`/`hangup`. Add
-`exten => heartbeat,1,Hangup()` and redeploy asterisk; a keepalive answered
-404 can make the gateway mark the trunk unreachable independent of the
-routing fix above.
+**All 4 real GSM ports are configured.** Ports 0-3 (the only ones with
+modem hardware on this UC2000-VE unit) all have `To VOIP Hotline = 100`.
+Inserting a SIM into any of them should register with no further gateway
+configuration — confirmed by reading the dialplan and the gateway's own
+routing rules, voice never selects a port anywhere in this codebase.
 
-## Confirmed live this session, not yet fixed
+**Dinstar port config can now be applied from `/admin/dinstar`** — a real
+"Apply standard SIM config" button, not a manual checklist. **Read this
+limitation before trusting it blindly**: it is write-only. The gateway's
+config page builds its fields with client-side JavaScript, so there is no
+reliable way to read current values back server-side — this was root-caused
+before writing any code, not discovered by a failure in production. The
+write mechanism itself was proven against the live gateway with a
+standalone test script before being wired into the app, and a browser
+re-read confirmed it worked with nothing else disturbed — but every future
+use of this button should be spot-checked once by reloading
+`enPortList.htm` in a browser, the same way this session verified it.
 
-**MOH audio is empty in production** (`asterisk -rx "moh show classes"`
-returns nothing; `/var/lib/asterisk/moh/default/` is empty in the container
-and on the host). Root cause: `.gitignore` excludes `moh/default/*`,
-`algo-pbx-frontend/public/sounds/*`, and `pbx_configs/sounds/*` — a VPS
-deploy from a fresh clone ships none of them. This means the ringtone is
-also silent in production and the queue's periodic hold announcement is
-missing. Needs a real fix (commit suitably-licensed audio, or a deploy step
-that fetches pinned files) before hold or inbound notifications can be
-trusted end to end.
+**Manager escalation and the 3-way conference route are now guarded** the
+same way blind/attended transfer already was against the single-GSM-port
+hazard, and give a clear, specific error instead of a raw transfer-guard
+message or an unguarded AMI Originate.
 
-**No call-log page exists in the agent UI at all** — not a bug in an
-existing page, the page itself was never built. Add `/agent/calls` +
-an own-extension-scoped `/api/me/calls` (the existing `GET /api/cdr` is
-staff-only). The missed-calls list also needs its "missed" definition
-changed from a disposition string to `billsecSec === 0` /
-`answeredAt: null`, because `[from-dinstar]` answers every inbound call
-before queueing it, so a truly-missed call is recorded `ANSWERED`.
+## Explicitly deferred — not bugs, not forgotten
 
-**`docker logs algo-cdr-listener` showed repeated
-"AMI connection lost, reconnecting..." cycles earlier today** — any Cdr
-event during a gap is lost outright, a second contributor to missing call
-data on top of the mapper bugs above. Watch it; investigate if it recurs.
+- **The dynamic multi-SIM transfer guard.** External transfer/escalation on
+  a GSM call is still blocked whenever only one SIM is registered (correct,
+  hardware-limited behavior) — making it dynamic on "how many SIMs are
+  currently registered" needs live port-state detection, which hit the same
+  client-side-rendering wall as the Dinstar write feature above. Not
+  started.
+- **A dedicated `/admin/gsm-ports` page.** The underlying exclusive/revoke
+  port-assignment logic already works correctly (verified, not assumed) via
+  the existing `/admin/users` create/edit form — this would just be a nicer,
+  port-centric view of the same thing.
+- **`getUserMedia` audio constraints are dead code** — confirmed against the
+  installed sip.js source, `echoCancellation`/`noiseSuppression`/
+  `autoGainControl` sit in a field sip.js's factory never reads. No
+  constraint tuning can have any effect until this is fixed. Low priority
+  since default browser behavior has been fine in every test this session.
+- **Extension 1002 still has two simultaneously-registered contacts** (UAE
+  desktop + India mobile) — left as-is per the operator's explicit call;
+  be aware it can make test results ambiguous.
 
-**External GSM-to-external transfer is deliberately blocked**
-(`src/lib/transfer-guard.ts`), not a bug — a live SIP trace showed a REFER
-placing a second call through the same, already-occupied GSM port, which
-the Dinstar correctly 503s. The block's one-port premise is now stale: Port
-Group-0 spans all 8 ports in Cyclic Ascending mode, so a second SIM makes
-external transfer genuinely possible — make the guard read live port state
-once that exists. The same single-port hole is **also open, unguarded, on
-`/api/calls/conference` and on manager escalation to a manager with only a
-phone number** (`escalation-picker.tsx`) — escalation is currently
-impossible on inbound GSM calls to an external manager, which is exactly
-the case it exists for.
+## One thing to check that's outside this session's scope
 
-**Voice needs zero per-port Dinstar configuration** — confirmed by reading
-the dialplan and the live gateway: `Dial(PJSIP/${DIALNUM}@dinstar-trunk)` is
-a single endpoint, the gateway itself picks the port, and Port Group-0
-already spans all 8. The only per-port field that matters at all is
-"To VOIP Hotline" (currently set on port 3 only, `OffhookAutodial3=100`) —
-the Port Group row also has its own group-level hotline field, currently
-empty, untested whether it overrides the per-port ones. Two hardware
-caveats that no software fix removes: only ports 0-3 have modems installed,
-and this device only reads SIM presence at power-on, not on hot-insertion.
+`docker ps` shows **`algo-caddy` as `unhealthy`**, and has for ~26 hours —
+this predates this session and nothing here touched Caddy. Worth a look;
+not investigated further here.
 
-The full Dinstar HTTP API was mapped live this session (cookie login at
-`POST /goform/IADIdentityAuth`, port config at `POST /goform/PortCfg` with
-`OffhookAutodialN` as the hotline field) — see `LLM.md §25` for the complete
-field scheme, ready to build the "configure Dinstar from the admin page"
-feature described there.
+## Deploy gotchas learned the hard way this session — read before the next deploy
 
-## Diagnostics still running on the VPS from earlier today (clean up)
+- **`web` and `cdr-listener` are separate Docker build targets.** Building
+  one does NOT rebuild the other — this is exactly what silently kept an
+  already-committed fix out of production for hours this session. Rebuild
+  both explicitly when a change touches `scripts/ami-cdr-listener.ts` or
+  anything it imports.
+- **A cached `docker compose build` can silently omit a brand-new file**
+  (a fresh migration, a new module) even though the source was already
+  copied to the VPS. Bit this session twice with new Prisma migrations that
+  didn't reach the image on the first build. Use
+  `docker compose build --no-cache <service>` whenever a build follows
+  shortly after adding new files, not just editing existing ones.
+- **`docker compose restart asterisk` silently resets `pjsip set logger on`
+  and any `logger add channel`.** Re-arm them before relying on a live SIP
+  trace — reading a stale trace after a restart produced a wrongly
+  pessimistic "inbound still isn't arriving" conclusion mid-session this
+  time. `queue_log` and the CDR table both survive a restart and are more
+  trustworthy sources for "did a call actually happen".
+- Always run `npm run typecheck && npm run test && npm run lint && npm run
+  build` before every deploy, and after a schema change run
+  `docker exec algo-web node node_modules/prisma/build/index.js migrate
+  deploy` (the bundled CLI — the standalone image has no `prisma` binary on
+  PATH) and confirm it reports the new migration by name, not "no pending".
 
-Same as noted before — `pjsip set logger on`, `/var/log/asterisk/sipdebug*.log`
-channels, `/root/callcap/`, `/root/rtp_rms.py` (worth keeping),
-`/root/pjsip-base.conf.bak-*`. Disk is fine (28% used at last check).
+`/root/rtp_rms.py` on the VPS decodes an a-law RTP flow out of a pcap and
+prints per-second RMS — keep it. It's what distinguished "packets are
+arriving" from "audio is arriving" on a call where Asterisk's own packet
+counters looked perfectly healthy while the far end heard nothing.
 
 ---
 
