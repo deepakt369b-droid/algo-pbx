@@ -22,58 +22,70 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     where: { id: params.id },
     include: {
       owner: { select: { id: true, name: true } },
+      companyRel: { select: { id: true, name: true, domain: true } },
       notes: { include: { author: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } },
-      tasks: { include: { assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } },
+      tasks: {
+        include: { assignee: { select: { id: true, name: true } }, deal: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "desc" },
+      },
       dispositions: { include: { agent: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } },
+      deals: {
+        include: {
+          deal: {
+            include: {
+              stage: { select: { id: true, name: true, isWon: true, isLost: true } },
+              owner: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
     },
   });
   if (!contact) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const [dncEntry, calls, conversations] = await Promise.all([
+  // S2b — the unified timeline now reads the Activity table (one row per
+  // real-world event, populated live by recordActivity and backfilled by
+  // POST /api/admin/maintenance/backfill-activity) instead of merging CDRs
+  // and ChatMessages on the fly. Ordered occurredAt desc, capped at 100.
+  const [dncEntry, activities] = await Promise.all([
     db.doNotCallEntry.findUnique({ where: { numberE164: contact.numberE164 } }),
-    db.callDetailRecord.findMany({
-      where: { OR: [{ callerNumberE164: contact.numberE164 }, { destination: contact.numberE164 }] },
-      orderBy: { startedAt: "desc" },
+    db.activity.findMany({
+      where: { contactId: contact.id },
+      orderBy: { occurredAt: "desc" },
       take: 100,
+      include: { actor: { select: { id: true, name: true } } },
     }),
-    db.conversation.findMany({ where: { contactId: contact.id } }),
   ]);
 
-  const messages = await db.chatMessage.findMany({
-    where: { conversationId: { in: conversations.map((c) => c.id) } },
-    orderBy: { createdAt: "desc" },
-    take: 200,
+  const timeline = activities.map((a) => ({
+    type: a.type,
+    timestamp: a.occurredAt,
+    summary: a.summary,
+    actor: a.actor?.name ?? null,
+    refId: a.refId,
+  }));
+
+  const deals = contact.deals.map((dc) => ({
+    id: dc.deal.id,
+    name: dc.deal.name,
+    value: Number(dc.deal.value),
+    currency: dc.deal.currency,
+    isPrimary: dc.isPrimary,
+    stage: dc.deal.stage,
+    owner: dc.deal.owner,
+  }));
+
+  return NextResponse.json({
+    contact: { ...contact, deals, dncBlocked: Boolean(dncEntry) },
+    timeline,
   });
-
-  const timeline = [
-    ...calls.map((c) => ({
-      type: "call" as const,
-      timestamp: c.startedAt,
-      uniqueId: c.uniqueId,
-      direction: c.direction,
-      disposition: c.disposition,
-      durationSec: c.durationSec,
-      agentExtension: c.agentExtension,
-    })),
-    ...messages.map((m) => ({
-      type: "message" as const,
-      timestamp: m.createdAt,
-      channel: conversations.find((c) => c.id === m.conversationId)?.channel,
-      direction: m.direction,
-      // Same rule as every other agent-facing chat surface: a sensitive
-      // (OTP-shaped) body never leaves the API unredacted.
-      body: m.sensitive ? null : m.body,
-      sensitive: m.sensitive,
-    })),
-  ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-  return NextResponse.json({ contact: { ...contact, dncBlocked: Boolean(dncEntry) }, timeline });
 }
 
 const PatchSchema = z.object({
   displayName: z.string().max(200).optional(),
   email: z.string().email().nullable().optional(),
   company: z.string().max(200).nullable().optional(),
+  companyId: z.string().nullable().optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
   ownerId: z.string().nullable().optional(),
 });

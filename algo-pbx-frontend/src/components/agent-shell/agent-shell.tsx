@@ -19,6 +19,8 @@ import {
   PhoneMissed,
   MessageCircle,
   ShieldCheck,
+  KanbanSquare,
+  CheckSquare,
   Menu as MenuIcon,
 } from "lucide-react";
 import { useSIP } from "@/contexts/sip-context";
@@ -161,6 +163,13 @@ export function AgentShell({
         { href: "/agent/calls", label: "Calls", icon: History },
         { href: "/agent/missed", label: "Missed", icon: PhoneMissed, badge: missedCallsCount },
         { href: "/agent/voicemail", label: "Voicemail", icon: VoicemailIcon, badge: voicemailCount },
+      ],
+    },
+    {
+      label: "Pipeline",
+      items: [
+        { href: "/agent/crm/pipeline", label: "Pipeline", icon: KanbanSquare },
+        { href: "/agent/crm/tasks", label: "Tasks", icon: CheckSquare },
       ],
     },
     {

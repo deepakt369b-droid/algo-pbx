@@ -22,6 +22,7 @@ const UpdateContactSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   email: z.string().trim().email().max(200).nullable().optional().or(z.literal("")),
   company: z.string().trim().max(200).nullable().optional(),
+  companyId: z.string().nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(50).optional(),
   ownerId: z.string().nullable().optional(),
 });
@@ -46,6 +47,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (parsed.data.displayName !== undefined) data.displayName = parsed.data.displayName;
   if (parsed.data.email !== undefined) data.email = parsed.data.email || null;
   if (parsed.data.company !== undefined) data.company = parsed.data.company;
+  if (parsed.data.companyId !== undefined) {
+    data.companyRel = parsed.data.companyId
+      ? { connect: { id: parsed.data.companyId } }
+      : { disconnect: true };
+  }
   if (parsed.data.tags !== undefined) data.tags = parsed.data.tags;
   if (parsed.data.ownerId !== undefined) {
     data.owner = parsed.data.ownerId ? { connect: { id: parsed.data.ownerId } } : { disconnect: true };
