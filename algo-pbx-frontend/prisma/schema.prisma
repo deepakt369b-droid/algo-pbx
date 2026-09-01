@@ -1139,3 +1139,20 @@ model AppSetting {
 
   @@index([updatedAt])
 }
+
+// Plain-boolean runtime kill switches the Asterisk dialplan reads DIRECTLY
+// over ODBC (pbx_configs/func_odbc.conf: RECORDING_ENABLED,
+// RECORDING_ANNOUNCE_ENABLED — same mechanism as DNC_CHECK reading
+// DoNotCallEntry). SEPARATE from AppSetting on purpose: AppSetting.valueEncrypted
+// is AES-256-GCM ciphertext the dialplan cannot decrypt. Written only by
+// POST /api/admin/recording (requireAdminSession, AuditLog). Migration
+// 20260901130000_add_pbx_runtime_flags seeds both flags ON (preserves the
+// pre-toggle "always record" behaviour). Route code uses $queryRaw/$executeRaw
+// against this table; the model exists here so `prisma migrate diff` stays
+// clean for future waves. (S6, 2026-09-01.)
+model PbxRuntimeFlag {
+  key         String   @id
+  enabled     Boolean
+  updatedAt   DateTime @default(now()) @updatedAt
+  updatedById String?
+}
