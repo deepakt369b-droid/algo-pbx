@@ -1,87 +1,156 @@
-# Handoff — Apple-black redesign COMPLETE and DEPLOYED. All of Wave 0 + Wave 1 + Wave 2 (23 commits) on `main`, gate-green, live on pbx.saharatechs.com. NOT PUSHED (H4). Operator manual steps + click-through pending. Read "RIGHT NOW" first.
+# Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE, last build/deploy in flight. 33 session commits on `main`, NONE pushed (H4). Read "RIGHT NOW".
 
-## RIGHT NOW: exact resume state (2026-09-01, end of session)
+## RIGHT NOW — exact resume state (2026-09-01, end of session)
 
-**Plan:** `~/.claude/plans/refer-the-handoff-and-goofy-bentley.md` — a task graph.
-Phase M / MUI migration is **cancelled and MUI is fully removed**.
+**Plan:** `~/.claude/plans/refer-the-handoff-and-goofy-bentley.md` (a task graph).
+Phase M / MUI migration is **cancelled — MUI is fully removed.**
 
-### What's done and live
-- **Wave 0** — 08-31's batch committed (7 commits) + deployed + healthy.
-- **Wave 1 (F1–F6)** — Apple-black CSS-var token system (true-black dark,
-  #F5F5F7 light, #0A84FF accent, `prefers-color-scheme` default), Headless UI
-  primitive kit (`src/components/ui/`), two-level collapsible shell (both admin
-  & agent), theme toggle in both headers, `@mui/*` + `@emotion/*` uninstalled.
-  Deployed + verified MUI-free at runtime.
-- **Wave 2** — all merged to `main`, all gate-green (typecheck, 353 tests,
-  lint, build), deployed + verified on prod:
-  - **S2a** schema: `Company`, `Deal`, `PipelineStage` (6 seeded), `DealContact`,
-    `DealNote`, `Activity` (unified timeline, idempotent), `Contact.companyId`,
-    `ContactTask.dealId`, `User.themePreference`. Migrations
-    `20260901120000_add_crm_pipeline` + `20260901130000_add_pbx_runtime_flags`
-    **applied on prod** (19 migrations total, `migrate status` clean). `recordActivity()`
-    hooks at CDR ingest / message send+ingest / note+task+disposition.
-  - **S2b** CRM UI: `/admin/crm/{companies,pipeline,tasks}`, `/agent/crm/{pipeline,tasks}`,
-    Kanban (`@dnd-kit/core`), contact timeline reads `Activity`, `canWriteDeal`.
-  - **S3** WhatsApp-Web chat UI: two-pane desktop / single-pane+back mobile,
-    ticks, date separators, voice bubbles. Data layer untouched.
-  - **S4** Reports hub: Telephony + CRM Insights tabs, shared agent/date
-    filters, `recharts`. Existing agent-hours table unchanged.
-  - **S6** telephony QA: `/admin/monitor` (listen-only ChanSpy, audit-logged),
-    `/admin/recording` global toggle via `func_odbc` (fails OPEN, no Asterisk
-    reload), forced announcement when recording on. `PbxRuntimeFlag` table,
-    both flags seeded ON. `docs/S6-real-call-test-plan.md`.
-  - **W** CRM↔call wiring: screen-pop, call popover, auto-disposition
-    (`/api/agent/crm/call-context/latest-call` for the CDR id — no sip-context
-    change), missed-call→task. W6 (wallboard names) skipped (no per-caller data).
-  - **S7** UX audit: `UX-AUDIT.md` (24 findings, 9 fixed — skeletons, 44px
-    targets, aria, a Peak-End success flash). + focus rings added to the
-    primitive kit (button/select/switch/tabs/input).
-- **VPS incident FIXED mid-session:** `pbx.saharatechs.com` ERR_SSL_PROTOCOL_ERROR
-  — mounted `pbx_configs/generated/Caddyfile` had regressed to `saharatechs.com`
-  only. Rewrote to serve both hosts, `caddy reload` (no restart). Backup at
-  `/tmp/Caddyfile.bak.*` on VPS. Pre-existing, not caused by the redesign.
+### Git / deploy state
+- **`main` has 33 commits from this session, 44 unpushed total** (15 pre-session
+  + this session). **Nothing is pushed** — H4 gate, repo is PUBLIC, needs your
+  explicit OK. `git log --oneline fe3ce6f~1..HEAD`.
+- **Production (`pbx.saharatechs.com`) is LIVE** and was healthy at last check.
+  Everything through commit `0168f4f` (WhatsApp media/ban-safety) is deployed.
+- **PENDING DEPLOY:** commit `b056448` (admin Rooms UI fix) — its `docker
+  compose build web cdr-listener` was running on the VPS when the session
+  ended. **First thing tomorrow:**
+  ```
+  ssh root@187.53.128.252 "cd /opt/algo-pbx && docker compose build web cdr-listener && docker compose up -d --no-deps web cdr-listener && sleep 15 && docker inspect algo-web --format '{{.State.Health.Status}}'"
+  ```
+  Then confirm migrations (should be 21, no pending):
+  ```
+  ssh root@187.53.128.252 "docker exec algo-web node node_modules/prisma/build/index.js migrate status 2>&1 | tail -4"
+  ```
+  The Rooms fix is UI-only (no migration). Source is already tar-synced to
+  `/opt/algo-pbx/algo-pbx-frontend/src` (`/tmp/wa4.tgz`).
 
-### Operator steps still needed (NONE are code)
-1. **Backfills — DONE 2026-09-01.** `backfill-activity` wrote 62 timeline rows
-   (19 calls + 43 messages); `backfill-caller-e164` = confirmed no-op (27
-   internal ext rows).
+### What shipped this session (all on `main`, gate-green: typecheck + 357 vitest + lint + build)
 
-### WhatsApp fix (2026-09-01, commit `043968f`, deployed)
-Diagnosed against the live OpenWA v0.23.1 sidecar — 5 data-layer breakages:
-- `parseInbound` used `m.fromMe` (never set); real field is `direction`. Own
-  outgoing messages were ingested as INBOUND/empty. Fixed via shared
-  `mapOpenWaMessage()`.
-- Media = base64 under `metadata.media`, not `mediaUrl` → empty bubbles.
-  New `ChatMessage.mediaKind`+`waMessageId`; `GET /api/messaging/media/[id]`
-  proxies bytes.
-- Webhook only pushes NEW msgs → `src/lib/messaging/history-sync.ts` pulls
-  backlog on thread open (rate-limited via `Conversation.historySyncedAt`).
-- No avatars → `Contact.waAvatarUrl`; `GET /api/messaging/avatar/[contactId]`
-  proxies the pic. `ChatAvatar` component.
-- No voice send → composer mic (MediaRecorder) →
-  `POST /api/messaging/conversations/[id]/voice` → OpenWA `send-audio ptt`.
-  `VoiceBubble` player for received + sent.
-Migration `20260901140000_add_wa_media_avatar` (additive, shadow-verified).
-**Still needs the operator's real click-test on the live sidecar** (send a
-voice note, confirm history backfills, confirm avatars load).
-2. **S6 announcement WAVs** — generate the two "call may be recorded" prompts
-   (Piper TTS or asterisk-extra-sounds) per `pbx_configs/sounds/README.md`,
-   `scp` to the VPS, `asterisk -rx "module reload res_odbc.so"` +
-   `dialplan reload`. Until then the declaration Playback references a missing
-   file (Playback of a missing prompt is a no-op — recording still works, the
-   announcement just doesn't play).
-3. **Manual click-through** with the assistant: admin + agent shells both
-   themes, the CRM contact→deal→Kanban→task→timeline flow, WhatsApp on a 390px
-   phone, reports, screen-pop on a real inbound call, the recording toggle
-   against a real call (see `docs/S6-real-call-test-plan.md`).
-4. **H4 — git push.** 23 commits on `main`, unpushed. Repo is PUBLIC. Needs
-   explicit operator OK.
+**Apple-black redesign — DONE + DEPLOYED**
+- Wave 1 (F1–F6): CSS-variable token system (`src/app/globals.css` — true-black
+  dark / `#F5F5F7` light / `#0A84FF` accent, `prefers-color-scheme` default),
+  Headless UI primitive kit (`src/components/ui/`, focus rings added),
+  two-level collapsible shell (`src/components/shell/sidebar-nav.tsx`, admin +
+  agent), theme toggle both headers, `@mui/*`+`@emotion/*` uninstalled, 866
+  hardcoded colour classes swept to semantic tokens.
+- Wave 2 (subagents, all merged): **S2a** CRM schema (Company/Deal/
+  PipelineStage×6/DealContact/DealNote/Activity unified timeline + Contact.
+  companyId + ContactTask.dealId + User.themePreference); **S2b** CRM UI
+  (`/admin/crm/{companies,pipeline,tasks}`, `/agent/crm/{pipeline,tasks}`,
+  Kanban via `@dnd-kit/core`); **S3** WhatsApp-Web chat UI; **S4** Reports hub
+  (Telephony + CRM Insights tabs, `recharts`); **S6** telephony QA
+  (`/admin/monitor` listen-only ChanSpy audit-logged, `/admin/recording`
+  toggle via `func_odbc` that FAILS OPEN, no Asterisk reload; `PbxRuntimeFlag`
+  table); **W** CRM↔call wiring (screen-pop, call popover, auto-disposition,
+  missed-call→task — reads `sip-context.tsx`, never writes it); **S7** UX audit
+  (`UX-AUDIT.md`, 24 findings / 9 fixed).
+- Migrations deployed on prod: `20260901120000_add_crm_pipeline`,
+  `20260901130000_add_pbx_runtime_flags` (`migrate status` clean).
 
-### Deferred (in UX-AUDIT.md — all structural, safe to skip for now)
-admin nav 6→4 groups + reorder + co-locate recording/monitor/DNC;
-`/agent/call` split into Dial/History; disposition-bar emphasis; 3 more raw
-"Loading…" → Skeleton.
+**WhatsApp fix — DONE + DEPLOYED (commits `043968f`, `5178acf`, `0168f4f`)**
+Diagnosed against the live OpenWA v0.23.1 (baileys engine) sidecar. Five
+data-layer breakages, all fixed:
+- `parseInbound` checked `m.fromMe` (OpenWA never sets it) — real field is
+  `direction: "incoming"|"outgoing"`. Own outgoing messages were ingested as
+  INBOUND/empty. Fixed via shared unit-tested `mapOpenWaMessage()`.
+- Media (voice/image/video/doc/sticker) arrives as **base64 in
+  `metadata.media.data`**, not a URL. Captured at ingest into
+  `ChatMessage.mediaData` (~1 MB cap); `GET /api/messaging/media/[id]` serves
+  it (auth-checked, sensitive-gated), falls back to the sidecar for over-cap.
+- Webhook only pushes NEW messages. `src/lib/messaging/history-sync.ts` pulls
+  backlog on thread open — first sync = recent 80 WITH media + wider 400
+  text-only, later syncs = light metadata top-up. Rate-limited via
+  `Conversation.historySyncedAt`, fired async (progressive fill, WhatsApp-Web
+  style). "Load earlier messages" pagination in `ChatThread` (`?before=<iso>`).
+- No avatars → `Contact.waAvatarUrl` + 6h TTL; `GET /api/messaging/avatar/
+  [contactId]` proxies the pps.whatsapp.net pic (CSP-blocked / expiring if
+  loaded direct). `ChatAvatar` component in list + thread header + Rooms.
+- No voice sending → composer mic button (MediaRecorder) → `POST /api/messaging/
+  conversations/[id]/voice` → OpenWA `send-audio {base64, ptt:true}`.
+  `VoiceBubble` player (play/seek/duration/speed) for received + sent.
+- `docker-compose.yml`: `BAILEYS_SYNC_FULL_HISTORY: "true"` (only takes effect
+  on a fresh re-pair — pulls ~1yr+ instead of a few months).
+- Migrations deployed on prod: `20260901140000_add_wa_media_avatar`,
+  `20260901150000_add_chatmessage_mediadata`. `historySyncedAt` was reset to
+  NULL for all 10 WhatsApp conversations so they re-sync with media.
+- **BAN RISK:** everything here is READ-side — history pulls read OpenWA's own
+  local store, not WhatsApp per message (baileys can't). `includeMedia`
+  downloads media blobs from WhatsApp's CDN (normal client behaviour), capped
+  to recent 80 / first sync only / one thread at a time. No send-rate change,
+  no bulk, customer-service 1:1 only. Baseline OpenWA/baileys ToS risk is
+  unchanged. Only zero-risk route = Meta's official Cloud API (`META_CLOUD`
+  provider already exists as a fallback).
 
+**Admin Rooms UI fix — DONE, DEPLOY PENDING (commit `b056448`)**
+The `/admin/rooms` WhatsApp/SMS activity panel was a pre-redesign flat preview
+("(no text)" for voice notes, text overflowing the card, no avatars).
+Rebuilt to the conversation-list pattern: contact avatars, media-aware
+previews ("🎤 Voice message" / "You: …"), unread pills, proper card layout,
+wider page. `activity` route now returns `contact.id` for the avatar.
+
+**Mid-session VPS incident — FIXED**
+`pbx.saharatechs.com` went `ERR_SSL_PROTOCOL_ERROR`: the mounted (gitignored,
+apply-route-owned) `pbx_configs/generated/Caddyfile` had regressed to
+`saharatechs.com` only — no site block for `pbx.*`. Rewrote it to serve BOTH
+hosts, `caddy validate` + `caddy reload` (no restart). Backup at
+`/tmp/Caddyfile.bak.*` on the VPS. Pre-existing prod issue, not the redesign.
+
+### Operator TODO tomorrow (in priority order)
+
+1. **Finish the pending deploy** (Rooms fix) — the command block at the top.
+2. **Backfills — ALREADY DONE this session.** `backfill-activity` wrote 62
+   timeline rows; `backfill-caller-e164` = no-op (27 internal ext rows). If
+   you re-open a contact and the timeline looks thin, re-run
+   `POST /api/admin/maintenance/backfill-activity` from an admin devtools
+   console — it's idempotent.
+3. **Click-through the redesign + WhatsApp with the assistant:**
+   - Admin + agent shells, both themes (toggle top-right), a few pages each.
+   - CRM: contact → create deal → drag across the Kanban → add a task →
+     confirm it all shows in the contact's unified timeline. Agent sees only
+     owner-scoped; admin sees all + can reassign.
+   - **WhatsApp `/agent/chat`**: open Sarath's thread — confirm history fills
+     in progressively, voice notes play (`VoiceBubble`), avatars load, images
+     render. Record + send a voice note. Scroll up → "Load earlier messages".
+   - WhatsApp on a 390px phone viewport (single-pane + back arrow).
+   - `/admin/rooms` → open Room1 → the activity list should now have avatars +
+     "🎤 Voice message" previews; click a row → ChatThread slide-over.
+   - Reports `/admin/reports` — both tabs, agent + date filters.
+   - Screen-pop: place a real inbound call, confirm the CRM card appears for
+     the agent; end the call, confirm the disposition prompt.
+4. **S6 announcement WAVs** (recording declaration) — still not generated.
+   Follow `pbx_configs/sounds/README.md` (Piper TTS or `asterisk-extra-sounds`
+   "this call may be recorded" prompt) → `scp` to the VPS → `asterisk -rx
+   "module reload res_odbc.so"` + `dialplan reload`. Recording works without
+   it; the Playback of a missing prompt is a silent no-op. Also live-test the
+   recording toggle per `docs/S6-real-call-test-plan.md`.
+5. **After an `openwa` container restart, sessions do NOT auto-resume** — they
+   sit `disconnected`. Kick them: `POST /api/admin/whatsapp/instances/<id>/`
+   ... actually simplest is the "repair" button on `/admin/whatsapp`, or:
+   ```
+   docker exec algo-web node -e 'fetch("http://openwa:2785/api/sessions/eabd9bd2-3374-40e0-97c2-99ffc22e8667/start",{method:"POST",headers:{"X-API-Key":process.env.OPENWA_API_KEY}}).then(r=>r.text()).then(console.log)'
+   ```
+   (session id `eabd9bd2-3374-40e0-97c2-99ffc22e8667` = sim1 / `971502644615`.)
+6. **Manager-merge (Phase MM)** still never live-call-tested — see `LLM.md §30`.
+7. **H4 — `git push`.** 44 unpushed commits, PUBLIC repo. Your call.
+
+### Deferred (safe to skip — recorded in `UX-AUDIT.md`)
+Admin nav 6→4 groups + reorder + co-locate recording/monitor/DNC; `/agent/call`
+split into Dial/History sections; disposition-bar Von-Restorff emphasis; 3
+more raw "Loading…" → `<Skeleton>`.
+
+### To get WhatsApp EXACTLY like WhatsApp Web (unlimited scroll-back)
+The baileys engine **cannot** fetch arbitrarily-old messages on demand
+(OpenWA's own capability matrix: "library-limitation"). The link-time history
+sync is the whole backlog we get (~few months, ~1yr with
+`BAILEYS_SYNC_FULL_HISTORY`). Unlimited scroll-back needs
+`OPENWA_ENGINE=whatsapp-web.js` (drives a real Chromium) — but that's
+~300–500 MB RAM per session × 4 sessions on a 1 GB-capped container. Infra
+decision: bigger VM or raised container memory. Not started.
+
+### SIM ports 2–4 (unchanged, operator-blocked)
+Still `PAIRING` — need real phone numbers + QR scans. Pure ops, no code.
+
+---
 ### Superseded — historical only, below this line
 
 ## RIGHT NOW: exact resume state — (SUPERSEDED — this was the 08-31 mid-deploy state, now resolved)
