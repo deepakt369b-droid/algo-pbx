@@ -1,36 +1,71 @@
-# Handoff — 08-31's batch is COMMITTED (7 commits, not pushed) + deployed + healthy. Apple-black redesign (Tailwind + Headless UI, task-graph plan) is underway: F1/F3/F5 done, F2 next. Read "RIGHT NOW" first.
+# Handoff — Apple-black redesign COMPLETE and DEPLOYED. All of Wave 0 + Wave 1 + Wave 2 (23 commits) on `main`, gate-green, live on pbx.saharatechs.com. NOT PUSHED (H4). Operator manual steps + click-through pending. Read "RIGHT NOW" first.
 
-## RIGHT NOW: exact resume state (2026-09-01)
+## RIGHT NOW: exact resume state (2026-09-01, end of session)
 
 **Plan:** `~/.claude/plans/refer-the-handoff-and-goofy-bentley.md` — a task graph.
-Phase M / MUI migration is **cancelled**. Design system = Tailwind + Headless UI,
-"Apple-black" palette + light toggle, two-level shell, full CRM, WhatsApp-Web UI,
-CRM insight reports, + (new this session) admin live-call monitor / global
-recording toggle / recording announcement.
+Phase M / MUI migration is **cancelled and MUI is fully removed**.
 
-1. **Wave 0 DONE.** 08-31's ~58-file batch is committed as 7 logical commits
-   (`fe3ce6f`..`c124a43`) on `main`, **not pushed** (H4 gate — public repo).
-   Deployed via full `--no-cache` rebuild of `web` + `cdr-listener`; `algo-web`
-   healthy; both `20260831*` migrations applied; the previously-missing
-   `/admin/contact-ownership` + `api/agent/crm/transfer-requests` are now live.
-   P3 caller-E164 backfill = confirmed no-op (27 remaining NULLs are internal
-   ext `"1002"` rows, correctly unparseable).
-2. **Wave 1 in progress.** F1 (Apple-black token layer — `globals.css`,
-   `tailwind.config.ts`, `theme-provider.tsx`), F3 (`src/components/ui/` Headless
-   UI kit), F5 (Playwright scaffold) are committed in `c124a43` and gate-green.
-   MUI/Emotion still in the tree — removed in **F6**.
-3. **NEXT: F2** — the hardcoded-colour codemod. Spec at
-   `scratchpad/F2-codemod-spec.md`: sweep stock `slate-*` (~554 uses) →
-   `text-primary/secondary/tertiary` + `bg-surface*`, and `red/green/yellow`
-   (~230) → `danger/success/warning`. `cyan`/`blue` already resolve to the
-   accent token via F1 — leave them. **F2 runs ALONE** (no other writer). Then
-   **F4** (two-level shell rebuild), **F6** (delete MUI), then **H2** gate
-   (visual approval, both themes) before Wave 2.
-4. **Wave 2** (after H2): S2a schema (Company/Deal/PipelineStage/Activity —
-   spec at `scratchpad/S2a-schema-spec.md`, sole schema writer), then parallel
-   S2b (CRM UI), W (CRM↔PBX wiring), S3 (WhatsApp UI), S4 (reports), S6
-   (telephony QA), S7 (UX audit) in git worktrees. Then V1/V2/V3 verifiers, M
-   merge, H3 deploy, H4 push.
+### What's done and live
+- **Wave 0** — 08-31's batch committed (7 commits) + deployed + healthy.
+- **Wave 1 (F1–F6)** — Apple-black CSS-var token system (true-black dark,
+  #F5F5F7 light, #0A84FF accent, `prefers-color-scheme` default), Headless UI
+  primitive kit (`src/components/ui/`), two-level collapsible shell (both admin
+  & agent), theme toggle in both headers, `@mui/*` + `@emotion/*` uninstalled.
+  Deployed + verified MUI-free at runtime.
+- **Wave 2** — all merged to `main`, all gate-green (typecheck, 353 tests,
+  lint, build), deployed + verified on prod:
+  - **S2a** schema: `Company`, `Deal`, `PipelineStage` (6 seeded), `DealContact`,
+    `DealNote`, `Activity` (unified timeline, idempotent), `Contact.companyId`,
+    `ContactTask.dealId`, `User.themePreference`. Migrations
+    `20260901120000_add_crm_pipeline` + `20260901130000_add_pbx_runtime_flags`
+    **applied on prod** (19 migrations total, `migrate status` clean). `recordActivity()`
+    hooks at CDR ingest / message send+ingest / note+task+disposition.
+  - **S2b** CRM UI: `/admin/crm/{companies,pipeline,tasks}`, `/agent/crm/{pipeline,tasks}`,
+    Kanban (`@dnd-kit/core`), contact timeline reads `Activity`, `canWriteDeal`.
+  - **S3** WhatsApp-Web chat UI: two-pane desktop / single-pane+back mobile,
+    ticks, date separators, voice bubbles. Data layer untouched.
+  - **S4** Reports hub: Telephony + CRM Insights tabs, shared agent/date
+    filters, `recharts`. Existing agent-hours table unchanged.
+  - **S6** telephony QA: `/admin/monitor` (listen-only ChanSpy, audit-logged),
+    `/admin/recording` global toggle via `func_odbc` (fails OPEN, no Asterisk
+    reload), forced announcement when recording on. `PbxRuntimeFlag` table,
+    both flags seeded ON. `docs/S6-real-call-test-plan.md`.
+  - **W** CRM↔call wiring: screen-pop, call popover, auto-disposition
+    (`/api/agent/crm/call-context/latest-call` for the CDR id — no sip-context
+    change), missed-call→task. W6 (wallboard names) skipped (no per-caller data).
+  - **S7** UX audit: `UX-AUDIT.md` (24 findings, 9 fixed — skeletons, 44px
+    targets, aria, a Peak-End success flash). + focus rings added to the
+    primitive kit (button/select/switch/tabs/input).
+- **VPS incident FIXED mid-session:** `pbx.saharatechs.com` ERR_SSL_PROTOCOL_ERROR
+  — mounted `pbx_configs/generated/Caddyfile` had regressed to `saharatechs.com`
+  only. Rewrote to serve both hosts, `caddy reload` (no restart). Backup at
+  `/tmp/Caddyfile.bak.*` on VPS. Pre-existing, not caused by the redesign.
+
+### Operator steps still needed (NONE are code)
+1. **Run two backfills** from a logged-in **admin** browser session (devtools
+   console, or curl with the session cookie):
+   - `POST /api/admin/maintenance/backfill-activity` — populates the unified
+     timeline from 42 historical CDRs + 41 chat messages (Activity table is
+     currently empty → contact timelines show nothing until this runs).
+   - `POST /api/admin/maintenance/backfill-caller-e164` — idempotent, likely a
+     no-op now (the 27 unpopulated rows are internal ext "1002").
+2. **S6 announcement WAVs** — generate the two "call may be recorded" prompts
+   (Piper TTS or asterisk-extra-sounds) per `pbx_configs/sounds/README.md`,
+   `scp` to the VPS, `asterisk -rx "module reload res_odbc.so"` +
+   `dialplan reload`. Until then the declaration Playback references a missing
+   file (Playback of a missing prompt is a no-op — recording still works, the
+   announcement just doesn't play).
+3. **Manual click-through** with the assistant: admin + agent shells both
+   themes, the CRM contact→deal→Kanban→task→timeline flow, WhatsApp on a 390px
+   phone, reports, screen-pop on a real inbound call, the recording toggle
+   against a real call (see `docs/S6-real-call-test-plan.md`).
+4. **H4 — git push.** 23 commits on `main`, unpushed. Repo is PUBLIC. Needs
+   explicit operator OK.
+
+### Deferred (in UX-AUDIT.md — all structural, safe to skip for now)
+admin nav 6→4 groups + reorder + co-locate recording/monitor/DNC;
+`/agent/call` split into Dial/History; disposition-bar emphasis; 3 more raw
+"Loading…" → Skeleton.
 
 ### Superseded — historical only, below this line
 
