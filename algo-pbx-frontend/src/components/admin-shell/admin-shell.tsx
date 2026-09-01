@@ -1,132 +1,100 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { usePathname } from "next/navigation";
-import Link from "next/link";
-import { useSessionIdentityGuard } from "@/lib/use-session-identity-guard";
 import {
-  AppBar,
-  Box,
-  Drawer,
-  IconButton,
-  List,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  ListSubheader,
-  Toolbar,
-  Typography,
-} from "@mui/material";
-import MenuIcon from "@mui/icons-material/Menu";
-import DashboardIcon from "@mui/icons-material/Dashboard";
-import GroupsIcon from "@mui/icons-material/Groups";
-import ListAltIcon from "@mui/icons-material/ListAlt";
-import DialpadIcon from "@mui/icons-material/Dialpad";
-import GraphicEqIcon from "@mui/icons-material/GraphicEq";
-import BarChartIcon from "@mui/icons-material/BarChart";
-import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import SmsIcon from "@mui/icons-material/Sms";
-import MeetingRoomIcon from "@mui/icons-material/MeetingRoom";
-import PeopleIcon from "@mui/icons-material/People";
-import RouterIcon from "@mui/icons-material/Router";
-import SettingsIcon from "@mui/icons-material/Settings";
-import MonitorHeartIcon from "@mui/icons-material/MonitorHeart";
-import LoginIcon from "@mui/icons-material/Login";
-import BlockIcon from "@mui/icons-material/Block";
-import SupportAgentIcon from "@mui/icons-material/SupportAgent";
-import FactCheckIcon from "@mui/icons-material/FactCheck";
-import LanguageIcon from "@mui/icons-material/Language";
-import ContactsIcon from "@mui/icons-material/Contacts";
+  Dialog,
+  DialogBackdrop,
+  DialogPanel,
+  Transition,
+  TransitionChild,
+} from "@headlessui/react";
+import {
+  LayoutDashboard,
+  Users2,
+  Contact,
+  UserCog,
+  ListOrdered,
+  Phone,
+  AudioLines,
+  Router,
+  MessageCircle,
+  MessageSquare,
+  DoorOpen,
+  BarChart3,
+  Headphones,
+  Ban,
+  Globe,
+  Settings,
+  Activity,
+  LogIn,
+  FileCheck2,
+  Menu as MenuIcon,
+  LogOut,
+} from "lucide-react";
+import { useSessionIdentityGuard } from "@/lib/use-session-identity-guard";
+import { SidebarNav, type NavGroup } from "@/components/shell/sidebar-nav";
+import { ThemeToggleButton } from "@/components/shell/theme-toggle";
 import { HealthPill } from "./health-pill";
-import { ThemeToggleButton } from "./theme-toggle-button";
 
-const DRAWER_WIDTH = 260;
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-}
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
-const NAV_GROUPS: NavGroup[] = [
+// Two-level nav (plan §5 F4). Only routes that exist today — S2b/S6 add
+// their own sub-cards (CRM pipeline/tasks/companies, monitor, recording).
+const NAV: NavGroup[] = [
+  { label: "Dashboard", items: [{ href: "/admin", label: "Wallboard", icon: LayoutDashboard }] },
   {
-    label: "Operations",
+    label: "CRM",
     items: [
-      { href: "/admin", label: "Wallboard", icon: <DashboardIcon fontSize="small" /> },
-      { href: "/admin/queues", label: "Queues", icon: <ListAltIcon fontSize="small" /> },
-      { href: "/admin/cdr", label: "CDR", icon: <DialpadIcon fontSize="small" /> },
-      { href: "/admin/recordings", label: "Recordings", icon: <GraphicEqIcon fontSize="small" /> },
-      { href: "/admin/reports", label: "Reports", icon: <BarChartIcon fontSize="small" /> },
+      { href: "/admin/contacts", label: "Contacts", icon: Contact },
+      { href: "/admin/contact-ownership", label: "Ownership", icon: UserCog },
+    ],
+  },
+  {
+    label: "Telephony",
+    items: [
+      { href: "/admin/queues", label: "Queues", icon: ListOrdered },
+      { href: "/admin/cdr", label: "Call log", icon: Phone },
+      { href: "/admin/recordings", label: "Recordings", icon: AudioLines },
+      { href: "/admin/extensions", label: "Extensions", icon: Router },
+      { href: "/admin/dinstar", label: "Dinstar gateway", icon: Router },
     ],
   },
   {
     label: "Messaging",
     items: [
-      { href: "/admin/whatsapp", label: "WhatsApp", icon: <WhatsAppIcon fontSize="small" /> },
-      { href: "/admin/sms", label: "SIM SMS", icon: <SmsIcon fontSize="small" /> },
-      { href: "/admin/rooms", label: "Rooms", icon: <MeetingRoomIcon fontSize="small" /> },
-      { href: "/admin/contacts", label: "Contacts", icon: <ContactsIcon fontSize="small" /> },
-      { href: "/admin/contact-ownership", label: "Ownership", icon: <SupportAgentIcon fontSize="small" /> },
+      { href: "/admin/whatsapp", label: "WhatsApp", icon: MessageCircle },
+      { href: "/admin/sms", label: "SIM SMS", icon: MessageSquare },
+      { href: "/admin/rooms", label: "Rooms", icon: DoorOpen },
     ],
   },
+  { label: "Reports", items: [{ href: "/admin/reports", label: "Reports", icon: BarChart3 }] },
   {
     label: "Configuration",
     items: [
-      { href: "/admin/extensions", label: "Extensions", icon: <RouterIcon fontSize="small" /> },
-      { href: "/admin/users", label: "Users", icon: <PeopleIcon fontSize="small" /> },
-      { href: "/admin/escalations", label: "Manager Escalation", icon: <SupportAgentIcon fontSize="small" /> },
-      { href: "/admin/dinstar", label: "Dinstar Gateway", icon: <RouterIcon fontSize="small" /> },
-      { href: "/admin/domain", label: "Connect Domain", icon: <LanguageIcon fontSize="small" /> },
-      { href: "/admin/settings", label: "Settings", icon: <SettingsIcon fontSize="small" /> },
-      { href: "/admin/system", label: "System", icon: <MonitorHeartIcon fontSize="small" /> },
+      { href: "/admin/users", label: "Users", icon: Users2 },
+      { href: "/admin/escalations", label: "Manager escalation", icon: Headphones },
+      { href: "/admin/dnc", label: "Do not call", icon: Ban },
+      { href: "/admin/domain", label: "Connect domain", icon: Globe },
+      { href: "/admin/settings", label: "Settings", icon: Settings },
+      { href: "/admin/system", label: "System", icon: Activity },
     ],
   },
   {
     label: "Audit",
     items: [
-      { href: "/admin/sign-ins", label: "Sign-Ins", icon: <LoginIcon fontSize="small" /> },
-      { href: "/admin/dnc", label: "Do Not Call", icon: <BlockIcon fontSize="small" /> },
-      { href: "/admin/audit", label: "Audit Log", icon: <FactCheckIcon fontSize="small" /> },
+      { href: "/admin/audit", label: "Audit log", icon: FileCheck2 },
+      { href: "/admin/sign-ins", label: "Sign-ins", icon: LogIn },
     ],
   },
 ];
 
-function NavList({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function Rail({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
   return (
-    <Box sx={{ overflowY: "auto" }}>
-      {NAV_GROUPS.map((group) => (
-        <List
-          key={group.label}
-          dense
-          subheader={
-            <ListSubheader component="div" sx={{ bgcolor: "transparent", lineHeight: 2, fontSize: "0.6875rem", letterSpacing: 0.6, fontWeight: 700 }}>
-              {group.label}
-            </ListSubheader>
-          }
-        >
-          {group.items.map((item) => {
-            const active = item.href === "/admin" ? pathname === "/admin" : pathname.startsWith(item.href);
-            return (
-              <ListItemButton
-                key={item.href}
-                component={Link}
-                href={item.href}
-                selected={active}
-                onClick={onNavigate}
-                sx={{ borderRadius: 2, mx: 1, mb: 0.25 }}
-              >
-                <ListItemIcon sx={{ minWidth: 36, color: active ? "primary.main" : "text.secondary" }}>{item.icon}</ListItemIcon>
-                <ListItemText slotProps={{ primary: { sx: { fontSize: "0.875rem", fontWeight: active ? 600 : 500 } } }}>{item.label}</ListItemText>
-              </ListItemButton>
-            );
-          })}
-        </List>
-      ))}
-    </Box>
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 items-center gap-2 border-b px-4 [border-color:rgb(var(--hairline))]">
+        <span className="text-[15px] font-semibold tracking-tight text-primary">Algo PBX</span>
+      </div>
+      <SidebarNav groups={NAV} pathname={pathname} onNavigate={onNavigate} />
+    </div>
   );
 }
 
@@ -144,68 +112,74 @@ export function AdminShell({
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   // An agent signing in on this same browser replaces the session cookie for
-  // every tab. Without this, an already-rendered admin page keeps its
-  // painted DOM — including the /admin/users table, which by the owner's
-  // deliberate design shows plaintext passwords — on screen for whoever uses
-  // the browser next. See @/lib/use-session-identity-guard.
+  // every tab — force a re-render for whoever the cookie now belongs to
+  // (the /admin/users table shows plaintext passwords by the owner's design).
   useSessionIdentityGuard(userId);
 
   return (
-    <Box sx={{ display: "flex", minHeight: "100vh" }}>
-      <AppBar
-        position="fixed"
-        color="inherit"
-        elevation={0}
-        sx={{ zIndex: (t) => t.zIndex.drawer + 1, borderBottom: 1, borderColor: "divider", backdropFilter: "blur(8px)" }}
-      >
-        <Toolbar sx={{ gap: 2 }}>
-          <IconButton edge="start" sx={{ display: { sm: "none" } }} onClick={() => setMobileOpen(true)}>
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6" sx={{ fontWeight: 700, fontSize: "1.05rem" }}>
-            Algo PBX
-          </Typography>
-          <Box sx={{ flexGrow: 1 }} />
+    <div className="flex min-h-screen bg-canvas text-primary">
+      {/* desktop rail */}
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r bg-surface md:block [border-color:rgb(var(--hairline))]">
+        <Rail pathname={pathname} />
+      </aside>
+
+      {/* mobile drawer */}
+      <Transition show={mobileOpen} as={Fragment}>
+        <Dialog onClose={setMobileOpen} className="relative z-50 md:hidden">
+          <TransitionChild
+            as={Fragment}
+            enter="ease-out duration-150"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="ease-in duration-100"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <DialogBackdrop className="fixed inset-0 bg-black/50" />
+          </TransitionChild>
+          <TransitionChild
+            as={Fragment}
+            enter="ease-out duration-200"
+            enterFrom="-translate-x-full"
+            enterTo="translate-x-0"
+            leave="ease-in duration-150"
+            leaveFrom="translate-x-0"
+            leaveTo="-translate-x-full"
+          >
+            <DialogPanel className="fixed inset-y-0 left-0 w-72 border-r bg-surface [border-color:rgb(var(--hairline))]">
+              <Rail pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            </DialogPanel>
+          </TransitionChild>
+        </Dialog>
+      </Transition>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-canvas/80 px-4 backdrop-blur [border-color:rgb(var(--hairline))]">
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open navigation"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-secondary hover:bg-surface-hover hover:text-primary md:hidden"
+          >
+            <MenuIcon size={18} />
+          </button>
+          <div className="flex-1" />
           <HealthPill />
           <ThemeToggleButton />
-          <Typography variant="body2" color="text.secondary" sx={{ display: { xs: "none", sm: "block" } }}>
-            {userEmail}
-          </Typography>
+          <span className="hidden text-[13px] text-secondary sm:block">{userEmail}</span>
           <form action={signOutAction}>
-            <IconButton type="submit" size="small" title="Sign out">
-              <LoginIcon fontSize="small" sx={{ transform: "rotate(180deg)" }} />
-            </IconButton>
+            <button
+              type="submit"
+              title="Sign out"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-secondary hover:bg-surface-hover hover:text-primary"
+            >
+              <LogOut size={17} />
+            </button>
           </form>
-        </Toolbar>
-      </AppBar>
+        </header>
 
-      <Drawer
-        variant="permanent"
-        sx={{
-          display: { xs: "none", sm: "block" },
-          width: DRAWER_WIDTH,
-          flexShrink: 0,
-          [`& .MuiDrawer-paper`]: { width: DRAWER_WIDTH, boxSizing: "border-box", borderRight: 1, borderColor: "divider" },
-        }}
-      >
-        <Toolbar />
-        <NavList pathname={pathname} />
-      </Drawer>
-      <Drawer
-        variant="temporary"
-        open={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-        ModalProps={{ keepMounted: true }}
-        sx={{ display: { xs: "block", sm: "none" }, [`& .MuiDrawer-paper`]: { width: DRAWER_WIDTH } }}
-      >
-        <Toolbar />
-        <NavList pathname={pathname} onNavigate={() => setMobileOpen(false)} />
-      </Drawer>
-
-      <Box component="main" sx={{ flexGrow: 1, p: { xs: 2, sm: 4 }, width: { sm: `calc(100% - ${DRAWER_WIDTH}px)` } }}>
-        <Toolbar />
-        {children}
-      </Box>
-    </Box>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+      </div>
+    </div>
   );
 }

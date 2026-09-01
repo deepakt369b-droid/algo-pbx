@@ -8,15 +8,11 @@ import {
   useMemo,
   useState,
 } from "react";
-import { ThemeProvider as MuiThemeProvider, CssBaseline } from "@mui/material";
-import { darkTheme, lightTheme } from "./index";
-
 // Three-state preference. "system" (the default) stamps no attribute and
 // lets prefers-color-scheme decide; an explicit choice stamps
 // <html data-theme="light|dark">. The CSS-variable token layer in
 // globals.css keys off exactly that, so this provider only manages the
-// attribute + persistence. (The MUI wrapper below is transitional — it is
-// deleted in F6 along with the @mui/@emotion packages.)
+// attribute + persistence.
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
@@ -110,17 +106,5 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     [preference, resolved, setPreference, toggle],
   );
 
-  const muiTheme = useMemo(
-    () => (resolved === "light" ? lightTheme : darkTheme),
-    [resolved],
-  );
-
-  return (
-    <ThemeContext.Provider value={value}>
-      <MuiThemeProvider theme={muiTheme}>
-        <CssBaseline />
-        {children}
-      </MuiThemeProvider>
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

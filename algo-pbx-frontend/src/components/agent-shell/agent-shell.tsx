@@ -3,11 +3,30 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Users, Phone, History, Voicemail as VoicemailIcon, PhoneMissed, MessageCircle, ShieldCheck } from "lucide-react";
+import { Fragment } from "react";
+import {
+  Dialog,
+  DialogBackdrop,
+  DialogPanel,
+  Transition,
+  TransitionChild,
+} from "@headlessui/react";
+import {
+  Users,
+  Phone,
+  History,
+  Voicemail as VoicemailIcon,
+  PhoneMissed,
+  MessageCircle,
+  ShieldCheck,
+  Menu as MenuIcon,
+} from "lucide-react";
 import { useSIP } from "@/contexts/sip-context";
 import { countUnseenVoicemail } from "@/lib/voicemail-unread";
 import { useSessionIdentityGuard } from "@/lib/use-session-identity-guard";
 import { IncomingCallBanner } from "@/components/incoming-call-banner";
+import { SidebarNav, type NavGroup } from "@/components/shell/sidebar-nav";
+import { ThemeToggleButton } from "@/components/shell/theme-toggle";
 
 const BASE_TITLE = "Algo PBX — Agent Workspace";
 
@@ -65,25 +84,8 @@ export function useMissedCallsRefresh(): () => void {
   return useContext(MissedCallsRefreshContext);
 }
 
-function Badge({ count }: { count: number }) {
-  if (count <= 0) return null;
-  return (
-    <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 text-[10px] font-semibold text-accent-fg">
-      {count > 99 ? "99+" : count}
-    </span>
-  );
-}
-
-const SIDEBAR_WIDTH = "16rem";
-
-// Left sidebar, card-style nav (LLM.md §31) — replaces the earlier
-// single-line horizontal top-bar nav, which had grown to 6 destinations
-// once /agent became the CRM and Call got its own page and no longer read
-// as a real navigation surface. Matches the admin section's own sidebar
-// shape (components/admin-shell/admin-shell.tsx, MUI Drawer) structurally
-// — a fixed-width left rail, active-item highlight, badge counts — built
-// in Tailwind here since the agent surface hasn't gone through the MUI
-// migration yet (deliberately deferred, see LLM.md's plan).
+// Two-level sidebar shared with the admin shell (F4). Pipeline/Tasks
+// sub-cards are added by S2b once /agent/crm/* exists.
 export function AgentShell({
   children,
   userId,
@@ -150,84 +152,111 @@ export function AgentShell({
     };
   }, [callState, unreadTotal]);
 
-  const navItems = [
-    // P3 (LLM.md §28/29): /agent is the CRM — the agent's main
-    // interface — with Call as its own sibling page (the former /agent
-    // softphone, unchanged). Both first so they read as the primary
-    // destinations.
-    { href: "/agent", label: "Contacts", icon: Users, count: 0, title: "CRM — your contacts" },
-    { href: "/agent/call", label: "Call", icon: Phone, count: 0, title: "Dialpad and active call" },
-    { href: "/agent/calls", label: "Calls", icon: History, count: 0, title: "Recent call history" },
-    { href: "/agent/voicemail", label: "Voicemail", icon: VoicemailIcon, count: voicemailCount, title: "Unread voicemail" },
-    { href: "/agent/missed", label: "Missed", icon: PhoneMissed, count: missedCallsCount, title: "Missed calls since you were last seen" },
-    { href: "/agent/chat", label: "Chat", icon: MessageCircle, count: whatsappUnreadCount, title: "Unread WhatsApp/SMS" },
+  const navGroups: NavGroup[] = [
+    {
+      label: "Work",
+      items: [
+        { href: "/agent", label: "Contacts", icon: Users },
+        { href: "/agent/call", label: "Call", icon: Phone },
+        { href: "/agent/calls", label: "Calls", icon: History },
+        { href: "/agent/missed", label: "Missed", icon: PhoneMissed, badge: missedCallsCount },
+        { href: "/agent/voicemail", label: "Voicemail", icon: VoicemailIcon, badge: voicemailCount },
+      ],
+    },
+    {
+      label: "Messaging",
+      items: [{ href: "/agent/chat", label: "Chat", icon: MessageCircle, badge: whatsappUnreadCount }],
+    },
   ];
 
-  return (
-    <div className="flex min-h-screen bg-background">
-      <aside
-        className="sticky top-0 flex h-screen flex-shrink-0 flex-col border-r border-border bg-background/95 backdrop-blur"
-        style={{ width: SIDEBAR_WIDTH }}
-      >
-        <div className="flex flex-col gap-2 border-b border-border px-4 py-4">
-          <span className="text-sm font-semibold text-primary">Algo PBX</span>
-          <span
-            className="flex w-fit items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs"
-            title={isConnected ? "Softphone registered" : "Softphone not connected — you cannot receive calls"}
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const rail = (onNavigate?: () => void) => (
+    <div className="flex h-full flex-col">
+      <div className="flex flex-col gap-2 border-b px-4 py-4 [border-color:rgb(var(--hairline))]">
+        <span className="text-[15px] font-semibold tracking-tight text-primary">Algo PBX</span>
+        <span
+          className="flex w-fit items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs [border-color:rgb(var(--hairline))]"
+          title={isConnected ? "Softphone registered" : "Softphone not connected — you cannot receive calls"}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-success" : "bg-danger"}`} />
+          <span className={isConnected ? "text-success" : "text-danger"}>{isConnected ? "Connected" : "Disconnected"}</span>
+        </span>
+      </div>
+
+      <SidebarNav groups={navGroups} pathname={pathname} onNavigate={onNavigate} />
+
+      <div className="flex flex-col gap-2 border-t px-4 py-3 [border-color:rgb(var(--hairline))]">
+        {(role === "SUPERVISOR" || role === "ADMIN") && (
+          <Link href="/admin" className="flex items-center gap-2 text-xs text-accent hover:underline">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Admin
+          </Link>
+        )}
+        <span className="truncate text-xs text-tertiary" title={userEmail ?? undefined}>
+          {userEmail}
+        </span>
+        <form action={signOutAction}>
+          <button
+            type="submit"
+            className="w-full rounded-[var(--radius)] border px-3 py-1.5 text-xs text-secondary hover:bg-surface-hover hover:text-primary [border-color:rgb(var(--hairline))]"
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-success" : "bg-danger"}`} />
-            <span className={isConnected ? "text-success" : "text-danger"}>{isConnected ? "Connected" : "Disconnected"}</span>
-          </span>
-        </div>
+            Sign out
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 
-        {/* Card-style nav — before this, all 6 destinations lived as plain
-            text links in a single horizontal row in the header, which had
-            stopped reading as real navigation once /agent became the CRM.
-            isActive drives the same visible current-page indicator the old
-            top bar had, now as a filled card instead of a text color. */}
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-3">
-          {navItems.map(({ href, label, icon: Icon, count, title }) => {
-            const isActive = pathname === href;
-            return (
-              <Link
-                key={href}
-                href={href}
-                title={title}
-                aria-current={isActive ? "page" : undefined}
-                className={`glass-card flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                  isActive ? "border-cyan/60 bg-cyan/10 text-cyan" : "text-secondary hover:border-cyan/40 hover:text-cyan"
-                }`}
-              >
-                <Icon className="h-4 w-4 flex-shrink-0" />
-                <span className="flex-1">{label}</span>
-                <Badge count={count} />
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
-          {(role === "SUPERVISOR" || role === "ADMIN") && (
-            <Link href="/admin" className="flex items-center gap-2 text-xs text-cyan hover:underline">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Admin
-            </Link>
-          )}
-          <span className="truncate text-xs text-tertiary" title={userEmail ?? undefined}>
-            {userEmail}
-          </span>
-          <form action={signOutAction}>
-            <button
-              type="submit"
-              className="w-full rounded-lg border border-border px-3 py-1.5 text-xs text-secondary hover:border-cyan hover:text-cyan"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
+  return (
+    <div className="flex min-h-screen bg-canvas text-primary">
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r bg-surface md:block [border-color:rgb(var(--hairline))]">
+        {rail()}
       </aside>
 
-      <div className="min-w-0 flex-1">
+      <Transition show={mobileOpen} as={Fragment}>
+        <Dialog onClose={setMobileOpen} className="relative z-50 md:hidden">
+          <TransitionChild
+            as={Fragment}
+            enter="ease-out duration-150"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="ease-in duration-100"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <DialogBackdrop className="fixed inset-0 bg-black/50" />
+          </TransitionChild>
+          <TransitionChild
+            as={Fragment}
+            enter="ease-out duration-200"
+            enterFrom="-translate-x-full"
+            enterTo="translate-x-0"
+            leave="ease-in duration-150"
+            leaveFrom="translate-x-0"
+            leaveTo="-translate-x-full"
+          >
+            <DialogPanel className="fixed inset-y-0 left-0 w-72 border-r bg-surface [border-color:rgb(var(--hairline))]">
+              {rail(() => setMobileOpen(false))}
+            </DialogPanel>
+          </TransitionChild>
+        </Dialog>
+      </Transition>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-canvas/80 px-4 backdrop-blur [border-color:rgb(var(--hairline))]">
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open navigation"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius)] text-secondary hover:bg-surface-hover hover:text-primary md:hidden"
+          >
+            <MenuIcon size={18} />
+          </button>
+          <div className="flex-1" />
+          <ThemeToggleButton />
+        </header>
+
         {/* Confirmed live 2026-08-29: an inbound call rang for its full 15s
             RINGNOANSWER window with no audible alert, because a blocked
             ringtone play() was previously swallowed silently. A blocked

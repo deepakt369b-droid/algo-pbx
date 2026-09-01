@@ -2,7 +2,6 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Box, Button, Typography } from "@mui/material";
 
 // Landing page — "Algo PBX, wired for SAHARA". One purpose: funnel every
 // visitor (admin, supervisor, agent) through the single unified login;
@@ -10,57 +9,39 @@ import { Box, Button, Typography } from "@mui/material";
 // destination is decided at sign-in (see login-form.tsx).
 //
 // Client-only: WebGL/three.js has no server-rendered form. `ssr: false` on
-// next/dynamic is only honored inside a Client Component — in a Server
-// Component Next 14's App Router silently still traces the dynamically
-// imported module into the SERVER bundle for page-data collection.
-// Marking this whole page a Client Component is what keeps the Scanner's
-// module graph out of the server bundle.
+// next/dynamic is only honored inside a Client Component.
 const ScannerBackground = dynamic(
   () => import("@/components/landing/scanner-background").then((m) => m.ScannerBackground),
-  { ssr: false }
+  { ssr: false },
 );
 
 export default function Home() {
   return (
-    <Box
-      component="main"
-      sx={{
-        position: "relative",
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 4,
-        p: 4,
-        overflow: "hidden",
-        color: "common.white",
-      }}
-    >
+    <main className="relative flex min-h-screen flex-col items-center justify-center gap-8 overflow-hidden bg-black p-6 text-white">
       <ScannerBackground />
-      <Box
+      <div
         aria-hidden
-        sx={{ position: "absolute", inset: 0, zIndex: -5, background: "linear-gradient(180deg, rgba(11,15,25,0.2) 0%, rgba(11,15,25,0.75) 100%)" }}
+        className="absolute inset-0 -z-[5]"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.78) 100%)",
+        }}
       />
 
-      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, textAlign: "center", maxWidth: 560 }}>
-        <Typography variant="h1" sx={{ fontSize: { xs: "2.25rem", sm: "3rem" } }}>
-          Algo PBX
-        </Typography>
-        <Typography
-          variant="body1"
-          sx={{ color: "rgba(255,255,255,0.85)", letterSpacing: "0.18em", textTransform: "uppercase", fontSize: "0.875rem" }}
-        >
-          Wired for SAHARA
-        </Typography>
-        <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.65)" }}>
+      <div className="flex max-w-[560px] flex-col items-center gap-3 text-center">
+        <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Algo PBX</h1>
+        <p className="text-sm uppercase tracking-[0.18em] text-white/85">Wired for SAHARA</p>
+        <p className="text-sm text-white/65">
           Self-hosted cloud PBX. Sign in to reach your workspace.
-        </Typography>
-      </Box>
+        </p>
+      </div>
 
-      <Button component={Link} href="/login" variant="contained" size="large" sx={{ minWidth: 220 }}>
+      <Link
+        href="/login"
+        className="inline-flex h-11 min-w-[220px] items-center justify-center rounded-[10px] bg-[rgb(10_132_255)] px-6 text-[15px] font-medium text-white transition-colors hover:bg-[rgb(0_113_227)]"
+      >
         Sign In
-      </Button>
-    </Box>
+      </Link>
+    </main>
   );
 }
