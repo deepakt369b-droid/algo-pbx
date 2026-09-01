@@ -61,3 +61,10 @@ vendor/openwa/upstream/
 # OS
 .DS_Store
 Thumbs.db
+algo-pbx-frontend/.auth/
+
+# Playwright
+algo-pbx-frontend/test-results/
+algo-pbx-frontend/playwright-report/
+algo-pbx-frontend/blob-report/
+algo-pbx-frontend/.last-run.json

@@ -70,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/admin/sms", label: "SIM SMS", icon: <SmsIcon fontSize="small" /> },
       { href: "/admin/rooms", label: "Rooms", icon: <MeetingRoomIcon fontSize="small" /> },
       { href: "/admin/contacts", label: "Contacts", icon: <ContactsIcon fontSize="small" /> },
+      { href: "/admin/contact-ownership", label: "Ownership", icon: <SupportAgentIcon fontSize="small" /> },
     ],
   },
   {

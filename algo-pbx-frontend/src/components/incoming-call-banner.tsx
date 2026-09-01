@@ -2,6 +2,7 @@
 
 import { PhoneIncoming } from "lucide-react";
 import { useSIP } from "@/contexts/sip-context";
+import { formatUnknownCaller } from "@/lib/caller-id-format";
 
 // A ringing call's Answer/Decline UI previously existed ONLY inside
 // CallControls, which is mounted exclusively on /agent (src/app/agent/page.tsx).
@@ -29,7 +30,15 @@ export function IncomingCallBanner({ hidden }: { hidden: boolean }) {
     >
       <div className="flex items-center gap-3">
         <PhoneIncoming className="h-6 w-6 flex-shrink-0 animate-pulse text-cyan" />
-        <p className="text-sm text-slate-100">Incoming call from {incomingCallerId ?? "Unknown"}</p>
+        {/* Feature C1 (2026-08-31) — never a bare number for an unknown
+            caller. incomingCallerId is already the far end's display name
+            when SIP.js/the far end supplied one; formatUnknownCaller only
+            kicks in for the fallback case (a bare number or no caller-ID
+            at all), same "identity may be a name OR a number" ambiguity
+            active-call-contact.tsx's own comment documents. */}
+        <p className="text-sm text-slate-100">
+          Incoming call from {incomingCallerId && !/^\+?\d[\d\s-]{5,}\d$/.test(incomingCallerId) ? incomingCallerId : formatUnknownCaller(incomingCallerId)}
+        </p>
       </div>
       <div className="flex flex-shrink-0 gap-2">
         <button

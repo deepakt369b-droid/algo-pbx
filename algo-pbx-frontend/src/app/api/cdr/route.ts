@@ -6,6 +6,7 @@ import { requireStaffSession } from "@/lib/auth-guard";
 import { emitEvent } from "@/lib/emit-event";
 import { withApiErrorHandler } from "@/lib/api-handler";
 import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
+import { normalizeToE164 } from "@/lib/phone-normalize";
 
 export const dynamic = "force-dynamic";
 
@@ -118,10 +119,20 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  // P2 CRM data layer (LLM.md §28/29): normalized at ingest so every new
+  // call is caller-ID-matchable to a Contact without the old
+  // last-2000-CDRs-normalized-in-process approach
+  // (api/crm/contacts/[id]/activity/route.ts still does that for its own
+  // Bearer-key callers; new session-authed CRM routes use this column
+  // instead). Historical rows are covered by the one-time
+  // POST /api/admin/maintenance/backfill-caller-e164.
+  const callerNumberE164 = normalizeToE164(parsed.data.callerNumber);
+  const data = { ...parsed.data, callerNumberE164 };
+
   const row = await db.callDetailRecord.upsert({
     where: { uniqueId: parsed.data.uniqueId },
-    create: parsed.data,
-    update: parsed.data,
+    create: data,
+    update: data,
   });
 
   // Phase D: a Recording row is what src/lib/recording-access.ts's
@@ -142,6 +153,46 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     const existing = await db.recording.findFirst({ where: { cdrId: row.id } });
     if (!existing) {
       await db.recording.create({ data: { cdrId: row.id, filePath: `${parsed.data.uniqueId}.wav` } });
+    }
+  }
+
+  // Feature B1 (2026-08-31) — auto-assignment: the first ANSWERED call
+  // with an UNOWNED matching Contact claims it for the answering agent.
+  // Mirrors the precedent in POST /api/messaging/conversations/[id]/
+  // messages ("claim an unassigned conversation on first send") but for
+  // Contact.ownerId, a different field on a different model. Tries the
+  // caller's number first (inbound), falling back to the destination
+  // (outbound) — whichever side is the actual customer varies by
+  // direction, and this is best-effort matching either way, same as
+  // resolveContactDisplayName's normalize-then-lookup approach.
+  if (parsed.data.disposition === "ANSWERED" && parsed.data.agentExtension) {
+    const candidateE164 = callerNumberE164 ?? normalizeToE164(parsed.data.destination);
+    if (candidateE164) {
+      const contact = await db.contact.findUnique({ where: { numberE164: candidateE164 } });
+      if (contact && !contact.ownerId) {
+        const ext = await db.extension.findUnique({
+          where: { number: parsed.data.agentExtension },
+          select: { userId: true },
+        });
+        if (ext?.userId) {
+          // Race guard, same shape as the transfer-approve race guard:
+          // only claim if still unowned at write time.
+          const claimed = await db.contact.updateMany({
+            where: { id: contact.id, ownerId: null },
+            data: { ownerId: ext.userId },
+          });
+          if (claimed.count > 0) {
+            await db.auditLog.create({
+              data: {
+                action: "contact.auto_assign",
+                actorId: ext.userId,
+                targetId: contact.id,
+                metadata: { via: "cdr_answered_call", uniqueId: row.uniqueId },
+              },
+            });
+          }
+        }
+      }
     }
   }
 

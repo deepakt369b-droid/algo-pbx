@@ -147,6 +147,34 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     await db.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: new Date() } }).catch(() => undefined);
   }
 
+  // Feature B1 (2026-08-31) — the SAME "claim on first send" behavior as
+  // above, but for Contact.ownerId (a different field on a different
+  // model: Conversation.assignedAgentId is per-channel-thread ownership,
+  // Contact.ownerId is the whole-contact relationship). A chat reply is a
+  // "meaningful interaction" exactly like an answered call (see the mirror
+  // of this in POST /api/cdr's ingest handler). Independent of whether the
+  // conversation itself was already assigned to someone else — a contact
+  // can be unowned while its conversation already has an assignee from an
+  // earlier send by an agent who never went on to own the contact.
+  if (!conversation.contact.ownerId) {
+    const claimed = await db.contact.updateMany({
+      where: { id: conversation.contactId, ownerId: null },
+      data: { ownerId: userId },
+    });
+    if (claimed.count > 0) {
+      await db.auditLog
+        .create({
+          data: {
+            action: "contact.auto_assign",
+            actorId: userId,
+            targetId: conversation.contactId,
+            metadata: { via: "chat_reply", conversationId: conversation.id },
+          },
+        })
+        .catch(() => undefined);
+    }
+  }
+
   if (result.status === "failed") {
     return NextResponse.json({ error: result.error ?? "Send failed", message }, { status: 502 });
   }

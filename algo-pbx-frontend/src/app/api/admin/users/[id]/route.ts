@@ -92,8 +92,39 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     await db.auditLog.create({
       data: { action: parsed.data.disabled ? "user.disable" : "user.enable", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email } },
     });
+
+    // Feature B6 (2026-08-31, operator-decided requirement) — a deactivated
+    // agent's owned contacts return to the unassigned pool automatically.
+    // No new notification model for this one event (same "cheap given
+    // what's already built for B3" reasoning as the task spec) — the
+    // AuditLog row below IS the visible/notifiable trail; /admin/contact-
+    // ownership's unassigned-pool view (B5) is where a manager would
+    // actually see the pool grow.
+    let releasedContactCount = 0;
+    if (parsed.data.disabled) {
+      const released = await db.contact.updateMany({
+        where: { ownerId: target.id },
+        data: { ownerId: null },
+      });
+      releasedContactCount = released.count;
+      if (releasedContactCount > 0) {
+        await db.auditLog.create({
+          data: {
+            action: "contact.owner_released_on_deactivation",
+            actorId: guard.session.user.id,
+            targetId: target.id,
+            metadata: { releasedContactCount, deactivatedUserEmail: target.email },
+          },
+        });
+      }
+    }
+
     const queueWarning = await syncQueueMembership(target.extension?.number, !parsed.data.disabled);
-    return NextResponse.json({ user: { id: updated.id, email: updated.email, disabled: updated.disabled }, warning: queueWarning });
+    return NextResponse.json({
+      user: { id: updated.id, email: updated.email, disabled: updated.disabled },
+      warning: queueWarning,
+      releasedContactCount,
+    });
   }
 
   // ---- { sendReset } ----
