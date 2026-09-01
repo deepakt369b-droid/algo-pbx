@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -19,34 +19,58 @@ const CHANNEL_BADGE: Record<ConversationSummary["channel"], string> = {
   SMS: "bg-accent-subtle text-accent",
 };
 
-// Polls GET /api/messaging/conversations every 5s — same pattern as
-// src/components/wallboard.tsx (this codebase has no websocket/SSE infra;
-// see sip-context.tsx's own comment on why a fast poll is the accepted
-// "realtime" mechanism here). An AGENT session sees their own assigned
-// threads plus unassigned ones ("up for grabs" — first send claims it, see
-// src/lib/messaging/conversation-access.ts).
+/** Deterministic initials for the avatar disc. */
+function initials(label: string): string {
+  const clean = label.replace(/[^\p{L}\p{N} ]/gu, " ").trim();
+  if (!clean) return "#";
+  const parts = clean.split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** Short relative-ish timestamp for the conversation row, WhatsApp-style. */
+function rowTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const yst = new Date(now);
+  yst.setDate(now.getDate() - 1);
+  const isYesterday =
+    d.getFullYear() === yst.getFullYear() &&
+    d.getMonth() === yst.getMonth() &&
+    d.getDate() === yst.getDate();
+  if (isYesterday) return "Yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// Polls GET /api/messaging/conversations every 5s — this codebase has no
+// websocket/SSE infra, so a fast poll is the accepted "realtime" mechanism.
+// An AGENT session sees their own assigned threads plus unassigned ones
+// ("up for grabs" — first send claims it).
 export function ConversationList({
   selectedId,
   onSelect,
 }: {
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, label?: string) => void;
 }) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [mineOnly, setMineOnly] = useState(false);
   const [stale, setStale] = useState(false);
+  const [query, setQuery] = useState("");
   // New-conversation compose form. There is otherwise no way to start a
   // WhatsApp/SMS thread from the agent UI — every existing conversation
-  // comes from an inbound message (see POST /api/messaging/conversations's
-  // file header for the full gap description).
+  // comes from an inbound message.
   const [composing, setComposing] = useState(false);
   const [composeNumber, setComposeNumber] = useState("");
   const [composeChannel, setComposeChannel] = useState<ConversationSummary["channel"]>("WHATSAPP");
   const [composeError, setComposeError] = useState<string | null>(null);
   const [composeBusy, setComposeBusy] = useState(false);
-  // Locally-cleared unread counts: selecting a conversation used to leave
-  // its badge up until the next poll reflected the server-side read mark.
-  // The optimistic clear is corrected by whichever poll lands next.
+  // Optimistically-cleared unread counts, corrected by whichever poll lands next.
   const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -67,8 +91,6 @@ export function ConversationList({
         })
         .catch(() => {
           if (!cancelled && !failedOnce) {
-            // Surface a stale indicator once; don't spam re-renders on
-            // every failed poll while the backend is briefly unreachable.
             failedOnce = true;
             setStale(true);
           }
@@ -82,8 +104,8 @@ export function ConversationList({
     };
   }, [mineOnly]);
 
-  const handleSelect = (id: string) => {
-    onSelect(id);
+  const handleSelect = (id: string, label?: string) => {
+    onSelect(id, label ?? conversations.find((c) => c.id === id)?.contact.displayName ?? undefined);
     if ((conversations.find((c) => c.id === id)?.unreadCount ?? 0) > 0) {
       setClearedIds((prev) => new Set(prev).add(id));
     }
@@ -104,8 +126,6 @@ export function ConversationList({
         setComposeError(data?.error ?? `Failed (${res.status})`);
         return;
       }
-      // Select immediately rather than waiting up to 5s for the next poll
-      // to surface the new row — the next poll will fill in its summary.
       handleSelect(data.conversationId);
       setComposing(false);
       setComposeNumber("");
@@ -116,115 +136,177 @@ export function ConversationList({
     }
   };
 
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter(
+      (c) =>
+        (c.contact.displayName ?? "").toLowerCase().includes(q) ||
+        c.contact.numberE164.toLowerCase().includes(q)
+    );
+  }, [conversations, query]);
+
   return (
-    <div className="glass-card flex h-full w-72 flex-shrink-0 flex-col gap-2 p-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-secondary">Conversations</h2>
-        <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-tertiary">
-            <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
-            Mine
-          </label>
-          <button
-            type="button"
-            onClick={() => {
-              setComposing((v) => !v);
-              setComposeError(null);
-            }}
-            className="rounded border border-border px-1.5 py-0.5 text-xs text-cyan hover:bg-surface"
-            title="Start a new conversation"
-          >
-            + New
-          </button>
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[var(--radius-lg)] border bg-surface">
+      <div className="flex flex-shrink-0 flex-col gap-2 border-b px-3 py-2.5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-primary">Chats</h2>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-xs text-tertiary">
+              <input
+                type="checkbox"
+                checked={mineOnly}
+                onChange={(e) => setMineOnly(e.target.checked)}
+                className="accent-accent"
+              />
+              Mine
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setComposing((v) => !v);
+                setComposeError(null);
+              }}
+              className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-medium text-accent hover:bg-surface-hover"
+              title="Start a new conversation"
+            >
+              + New
+            </button>
+          </div>
         </div>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search name or number"
+          aria-label="Search conversations"
+          className="w-full rounded-[var(--radius)] border bg-canvas px-3 py-1.5 text-sm text-primary outline-none placeholder:text-tertiary focus:border-accent"
+        />
       </div>
+
       {composing && (
-        <form onSubmit={handleCompose} className="flex flex-col gap-2 rounded-lg border border-border bg-background p-2">
+        <form
+          onSubmit={handleCompose}
+          className="flex flex-shrink-0 flex-col gap-2 border-b bg-surface-subtle p-3"
+        >
           <input
             type="text"
             required
             placeholder="Phone number, e.g. +9715XXXXXXXX"
             value={composeNumber}
             onChange={(e) => setComposeNumber(e.target.value)}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary"
+            className="rounded-[var(--radius)] border bg-canvas px-3 py-2 text-sm text-primary outline-none focus:border-accent"
           />
           <select
             value={composeChannel}
             onChange={(e) => setComposeChannel(e.target.value as ConversationSummary["channel"])}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary"
+            className="rounded-[var(--radius)] border bg-canvas px-3 py-2 text-sm text-primary outline-none focus:border-accent"
           >
             <option value="WHATSAPP">WhatsApp</option>
             <option value="SMS">SMS</option>
           </select>
-          {composeError && <p className="text-[10px] text-danger">{composeError}</p>}
+          {composeError && <p className="text-[11px] text-danger">{composeError}</p>}
           <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setComposing(false)}
-              className="rounded px-2 py-1 text-xs text-tertiary hover:bg-surface"
+              className="rounded-[var(--radius-sm)] px-2 py-1 text-xs text-tertiary hover:bg-surface-hover"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={composeBusy}
-              className="rounded bg-cyan px-2 py-1 text-xs font-medium text-accent-fg disabled:opacity-50"
+              className="rounded-[var(--radius-sm)] bg-accent px-3 py-1 text-xs font-medium text-accent-fg disabled:opacity-50"
             >
               {composeBusy ? "Starting…" : "Start"}
             </button>
           </div>
         </form>
       )}
-      {stale && <p className="text-[10px] text-warning">Live updates unavailable — retrying…</p>}
-      <ul className="flex flex-1 flex-col gap-1 overflow-y-auto">
-        {conversations.length === 0 && <li className="text-xs text-tertiary">No conversations yet.</li>}
-        {conversations.map((c) => {
+
+      {stale && (
+        <p className="flex-shrink-0 bg-warning-subtle px-3 py-1 text-[11px] text-warning">
+          Live updates unavailable — retrying…
+        </p>
+      )}
+
+      <ul className="min-h-0 flex-1 overflow-y-auto">
+        {visible.length === 0 && (
+          <li className="px-3 py-4 text-xs text-tertiary">
+            {conversations.length === 0 ? "No conversations yet." : "No matches."}
+          </li>
+        )}
+        {visible.map((c) => {
           const unread = clearedIds.has(c.id) ? 0 : c.unreadCount;
+          const label = c.contact.displayName ?? c.contact.numberE164;
+          const active = selectedId === c.id;
           return (
             <li key={c.id}>
-              {/* `role="button"` on a div, not a real <button> — a nested
-                  <a>/Link (the "View in CRM" deep link below, LLM.md §31)
-                  is invalid inside a <button> and breaks hydration. The
-                  link's own onClick stops propagation so clicking it opens
-                  the contact instead of also selecting this conversation. */}
+              {/* role="button" on a div, not a real <button> — a nested
+                  <Link> (the CRM deep link) is invalid inside a <button>
+                  and breaks hydration. The link's onClick stops propagation. */}
               <div
                 role="button"
                 tabIndex={0}
-                onClick={() => handleSelect(c.id)}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleSelect(c.id)}
+                onClick={() => handleSelect(c.id, label)}
+                onKeyDown={(e) =>
+                  (e.key === "Enter" || e.key === " ") &&
+                  (e.preventDefault(), handleSelect(c.id, label))
+                }
                 className={cn(
-                  "flex w-full cursor-pointer flex-col gap-1 rounded-lg border border-transparent px-2 py-2 text-left text-sm",
-                  selectedId === c.id ? "border-cyan bg-surface" : "hover:bg-surface"
+                  "flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 text-left",
+                  active ? "bg-surface-hover" : "hover:bg-surface-hover"
                 )}
               >
-                <div className="flex items-center justify-between">
-                  <span className="truncate text-primary">
-                    {c.contact.displayName ?? c.contact.numberE164}
-                  </span>
-                  {unread > 0 && (
-                    <span className="rounded-full bg-cyan px-1.5 text-xs font-medium text-accent-fg">
-                      {unread}
+                <span
+                  aria-hidden
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-surface-subtle text-xs font-semibold text-secondary"
+                >
+                  {initials(label)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-primary">
+                      {label}
                     </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", CHANNEL_BADGE[c.channel])}>
-                    {c.channel}
-                  </span>
-                  {!c.assignedAgentId && <span className="text-[10px] text-tertiary">unassigned</span>}
-                  <Link
-                    href={`/agent?contact=${c.contact.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="text-[10px] text-cyan hover:underline"
-                    title="Open this contact in the CRM"
-                  >
-                    CRM
-                  </Link>
-                  {c.lastMessageAt && (
-                    <span className="ml-auto text-[10px] text-tertiary">
-                      {new Date(c.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    {c.lastMessageAt && (
+                      <span
+                        className={cn(
+                          "flex-shrink-0 text-[10px]",
+                          unread > 0 ? "text-accent" : "text-tertiary"
+                        )}
+                      >
+                        {rowTime(c.lastMessageAt)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        CHANNEL_BADGE[c.channel]
+                      )}
+                    >
+                      {c.channel}
                     </span>
-                  )}
+                    {!c.assignedAgentId && (
+                      <span className="text-[10px] text-tertiary">unassigned</span>
+                    )}
+                    <Link
+                      href={`/agent?contact=${c.contact.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] font-medium text-accent hover:underline"
+                      title="Open this contact in the CRM"
+                    >
+                      CRM
+                    </Link>
+                    {unread > 0 && (
+                      <span className="ml-auto flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 text-[10px] font-semibold text-accent-fg">
+                        {unread}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </li>
