@@ -30,6 +30,29 @@ export function AgentMissedCalls() {
   const [calls, setCalls] = useState<MissedCall[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Node W (W5) — missed call -> follow-up task. Keyed by CDR id.
+  const [taskState, setTaskState] = useState<Record<string, "saving" | "done" | "error">>({});
+
+  // One click: a ContactTask due tomorrow, assigned to self (the route
+  // defaults assigneeId to the caller). Only offered when the missed call
+  // resolved to a CRM contact.
+  const createFollowUp = useCallback(async (call: MissedCall) => {
+    if (!call.callerContactId || taskState[call.id] === "saving") return;
+    setTaskState((s) => ({ ...s, [call.id]: "saving" }));
+    const dueAt = new Date();
+    dueAt.setDate(dueAt.getDate() + 1);
+    try {
+      const res = await fetch(`/api/agent/crm/contacts/${call.callerContactId}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Follow up missed call", dueAt: dueAt.toISOString() }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setTaskState((s) => ({ ...s, [call.id]: "done" }));
+    } catch {
+      setTaskState((s) => ({ ...s, [call.id]: "error" }));
+    }
+  }, [taskState]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -107,12 +130,29 @@ export function AgentMissedCalls() {
                 )}
               </p>
             </div>
-            <button
-              onClick={() => makeCall(c.callerNumber)}
-              className="rounded-lg border border-border px-3 py-1 text-xs text-cyan hover:border-cyan"
-            >
-              Call back
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {c.callerContactId && (
+                <button
+                  onClick={() => createFollowUp(c)}
+                  disabled={taskState[c.id] === "saving" || taskState[c.id] === "done"}
+                  className="rounded-lg border border-border px-3 py-1 text-xs text-secondary hover:border-cyan hover:text-cyan disabled:opacity-50"
+                >
+                  {taskState[c.id] === "done"
+                    ? "Task created"
+                    : taskState[c.id] === "saving"
+                      ? "Creating…"
+                      : taskState[c.id] === "error"
+                        ? "Retry task"
+                        : "Follow-up task"}
+                </button>
+              )}
+              <button
+                onClick={() => makeCall(c.callerNumber)}
+                className="rounded-lg border border-border px-3 py-1 text-xs text-cyan hover:border-cyan"
+              >
+                Call back
+              </button>
+            </div>
           </li>
         ))}
       </ul>
