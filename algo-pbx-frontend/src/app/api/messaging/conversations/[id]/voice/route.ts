@@ -67,14 +67,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       body: null,
       mediaKind: "voice",
       mediaMimeType: parsed.data.mimeType,
+      // We already hold the bytes — stash them (capped) so the bubble plays
+      // back immediately without a round-trip to the sidecar.
+      mediaData: parsed.data.base64.length <= 1_400_000 ? parsed.data.base64 : null,
       providerMessageId: result.providerMessageId,
       waMessageId: result.providerMessageId,
       deliveryStatus: result.status,
       sensitive: false,
     },
   });
-  // The bytes we just sent are stored on OpenWA's message row — serve them
-  // back through the same proxy the received-media path uses.
   await db.chatMessage
     .update({ where: { id: message.id }, data: { mediaUrl: `/api/messaging/media/${message.id}` } })
     .catch(() => undefined);

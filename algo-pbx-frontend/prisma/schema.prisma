@@ -957,6 +957,13 @@ model ChatMessage {
   // — so the chat UI picks the right bubble without mime-sniffing (voice vs
   // plain audio, sticker vs image).
   mediaKind         String?
+  // Base64 of the media payload, captured at ingest from OpenWA's
+  // `metadata.media.data` (the sidecar's own `/media` sub-endpoint 404s for
+  // received media it never archived). Size-capped in ingest.ts; over the
+  // cap the row keeps mediaKind but mediaData stays null and the proxy
+  // falls back to the sidecar. Never SELECTed except by
+  // GET /api/messaging/media/[id]. (2026-09-01)
+  mediaData         String?  @db.Text
   providerMessageId String? // OpenWA's internal message id / Meta / Dinstar id — for status-webhook correlation
   // OpenWA's WhatsApp message id (the `waMessageId` field). Distinct from
   // providerMessageId (OpenWA's own row id). This is what

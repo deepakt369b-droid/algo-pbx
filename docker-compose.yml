@@ -454,6 +454,15 @@ services:
       BAILEYS_AUTH_DIR: /app/data/baileys
       STORAGE_TYPE: local
       STORAGE_LOCAL_PATH: /app/data/media
+      # Ask WhatsApp for a LARGE initial history sync on the next (re-)pair.
+      # Baileys' `getChatHistory` scroll-back is a library limitation (it
+      # can't fetch older messages on demand the way whatsapp-web.js's real
+      # browser can), so the one-time history-sync payload WhatsApp pushes at
+      # link time is effectively the whole backlog we get. Default (false) is
+      # a few months; true pulls up to ~1 year+, at the cost of a slower,
+      # heavier first connect. Takes effect only when a session is paired
+      # fresh — existing sessions keep whatever they already synced.
+      BAILEYS_SYNC_FULL_HISTORY: "true"
       # Webhooks are registered PER SESSION by the app at pairing time
       # (src/lib/messaging/openwa-client.ts registerSessionWebhook), not
       # via a global env var — OpenWA has no such var. SSRF protection is

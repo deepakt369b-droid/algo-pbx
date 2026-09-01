@@ -49,6 +49,12 @@ export async function syncConversationHistory(
     if (!waId) return { synced: false, written: 0, reason: "bad number" };
     const chatId = `${waId}@c.us`;
 
+    // First-ever sync for this thread: pull a big window WITH media bytes so
+    // old voice notes / photos play back. Subsequent syncs are a light
+    // metadata-only top-up (new messages already arrived via the webhook
+    // with their media inline anyway).
+    const firstSync = !conversation.historySyncedAt;
+
     // Stamp first so concurrent polls (5s ChatThread interval) don't all fan
     // out to OpenWA at once.
     await db.conversation
@@ -56,8 +62,11 @@ export async function syncConversationHistory(
       .catch(() => undefined);
 
     const rows = opts.deep
-      ? await openwa.getChatHistory(sessionId, chatId, { limit: opts.limit ?? 300, deep: true })
-      : await openwa.getChatMessages(sessionId, chatId, { limit: opts.limit ?? 60 });
+      ? await openwa.getChatHistory(sessionId, chatId, { limit: opts.limit ?? 500, deep: true })
+      : await openwa.getChatMessages(sessionId, chatId, {
+          limit: opts.limit ?? (firstSync ? 400 : 60),
+          includeMedia: opts.force || firstSync,
+        });
 
     let written = 0;
     for (const raw of rows) {
@@ -72,6 +81,12 @@ export async function syncConversationHistory(
 
     return { synced: true, written };
   } catch (err) {
+    // A failed first sync must not leave the thread permanently
+    // half-populated behind the cooldown — clear the stamp so the next
+    // poll retries.
+    await db.conversation
+      .update({ where: { id: conversationId }, data: { historySyncedAt: null } })
+      .catch(() => undefined);
     return { synced: false, written: 0, reason: (err as Error).message };
   }
 }

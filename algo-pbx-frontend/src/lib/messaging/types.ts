@@ -85,6 +85,10 @@ export interface NormalizedInboundEvent {
    * message carries media; ingest builds the mediaUrl proxy path from the
    * saved row id and this. */
   mediaKind?: string | null;
+  /** Raw base64 of the media payload (OpenWA `metadata.media.data`), if the
+   * sidecar included it. Ingest stashes it (size-capped) so the proxy can
+   * serve received media the sidecar's own /media endpoint won't. */
+  mediaBase64?: string | null;
   providerMessageId?: string | null;
   /** The provider's WhatsApp message id (OpenWA `waMessageId`), needed to
    * lazily pull the media bytes and to dedupe against history-sync. */

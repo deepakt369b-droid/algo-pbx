@@ -130,6 +130,13 @@ export async function persistNormalizedMessage(
 
   const sensitive = channel === "SMS" && !event.mediaKind && event.body ? isSensitiveSms(event.body) : false;
 
+  // ~1.4 MB of base64 (~1 MB decoded). Voice notes and most photos fit;
+  // bigger payloads keep mediaKind (so the bubble still shows) but the
+  // proxy falls back to the sidecar's /media endpoint for them.
+  const MAX_MEDIA_B64 = 1_400_000;
+  const storedB64 =
+    event.mediaBase64 && event.mediaBase64.length <= MAX_MEDIA_B64 ? event.mediaBase64 : null;
+
   const message = await db.chatMessage.create({
     data: {
       conversationId: conversation.id,
@@ -137,6 +144,8 @@ export async function persistNormalizedMessage(
       body: event.mediaKind ? (event.body?.trim() || null) : event.body,
       mediaKind: event.mediaKind ?? null,
       mediaMimeType: event.mediaMimeType ?? null,
+      mediaData: storedB64,
+      mediaUrl: event.mediaKind ? `/api/messaging/media/PENDING` : null,
       providerMessageId: event.providerMessageId ?? null,
       waMessageId: event.waMessageId ?? null,
       deliveryStatus: event.deliveryStatus ?? (outbound ? "sent" : "delivered"),
@@ -145,8 +154,7 @@ export async function persistNormalizedMessage(
     },
   });
 
-  // A media message's bytes live in OpenWA; the browser fetches them through
-  // our auth-checked proxy keyed by this row id.
+  // The proxy path needs the row id, known only after insert.
   if (event.mediaKind) {
     await db.chatMessage
       .update({ where: { id: message.id }, data: { mediaUrl: `/api/messaging/media/${message.id}` } })

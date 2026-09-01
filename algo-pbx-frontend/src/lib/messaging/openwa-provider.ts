@@ -92,6 +92,14 @@ export function mapOpenWaMessage(
       ? ((m as Record<string, unknown>).mimetype as string)
       : null);
 
+  // OpenWA inlines the media bytes here for both received and account-sent
+  // messages; its dedicated /media endpoint only serves archived files, so
+  // this is the reliable source.
+  const mediaBase64 =
+    typeof m.metadata?.media?.data === "string" && !/^https?:\/\//i.test(m.metadata.media.data)
+      ? m.metadata.media.data
+      : null;
+
   return {
     channel: "WHATSAPP",
     fromE164,
@@ -101,6 +109,7 @@ export function mapOpenWaMessage(
     mediaUrl: null,
     mediaMimeType: mime ?? null,
     mediaKind: kind,
+    mediaBase64,
     providerMessageId: typeof m.id === "string" ? m.id : null,
     waMessageId:
       typeof m.waMessageId === "string"

@@ -225,16 +225,33 @@ export function ChatThread({
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [channel, setChannel] = useState<"WHATSAPP" | "SMS">("WHATSAPP");
   const [contact, setContact] = useState<ThreadContact | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   // A 404 here means "not yours to see" (conversation-access.ts's
   // reassign-hides-it rule) as much as it means transient poll failure.
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // True until the first successful load of a conversation — controls the
+  // one-time scroll-to-bottom (later loads must not yank the view down).
+  const freshRef = useRef(true);
 
   useEffect(() => {
     setMessages([]);
     setContact(null);
+    setHasMore(false);
     setError(null);
+    freshRef.current = true;
   }, [conversationId]);
+
+  /** Merge a batch in by id, keep chronological, dedupe. */
+  const mergeMessages = (incoming: ChatMessageDto[]) =>
+    setMessages((prev) => {
+      const byId = new Map(prev.map((m) => [m.id, m]));
+      for (const m of incoming) byId.set(m.id, m);
+      return [...byId.values()].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+    });
 
   const load = async () => {
     try {
@@ -248,11 +265,39 @@ export function ChatThread({
       }
       const data = await res.json();
       setError(null);
-      setMessages(data.messages ?? []);
+      mergeMessages(data.messages ?? []);
+      if (freshRef.current) setHasMore(!!data.hasMore);
       if (data.channel) setChannel(data.channel);
       if (data.contact) setContact(data.contact);
     } catch {
       setError("Network error — retrying…");
+    }
+  };
+
+  const loadOlder = async () => {
+    const oldest = messages[0]?.createdAt;
+    if (!oldest || loadingOlder || !hasMore) return;
+    setLoadingOlder(true);
+    const el = scrollRef.current;
+    const prevHeight = el?.scrollHeight ?? 0;
+    try {
+      const res = await fetch(
+        `/api/messaging/conversations/${conversationId}/messages?before=${encodeURIComponent(oldest)}`,
+        { cache: "no-store" }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        mergeMessages(data.messages ?? []);
+        setHasMore(!!data.hasMore);
+        // Keep the reader's viewport anchored where it was.
+        requestAnimationFrame(() => {
+          if (el) el.scrollTop = el.scrollHeight - prevHeight + el.scrollTop;
+        });
+      }
+    } catch {
+      /* next scroll retries */
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -263,11 +308,32 @@ export function ChatThread({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load is stable per conversationId
   }, [conversationId]);
 
-  // Auto-scroll to the newest message on open and whenever new messages arrive.
+  // Scroll to bottom once on open; afterwards only when the reader is
+  // already near the bottom (so an incoming message doesn't interrupt
+  // someone reading older history).
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el || messages.length === 0) return;
+    if (freshRef.current) {
+      el.scrollTop = el.scrollHeight;
+      freshRef.current = false;
+      return;
+    }
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // Load older when scrolled near the top.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (el.scrollTop < 80 && hasMore && !loadingOlder) void loadOlder();
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, loadingOlder, messages]);
 
   const requestAccess = async (messageId: string) => {
     try {
@@ -330,6 +396,18 @@ export function ChatThread({
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto bg-canvas px-3 py-3">
         {error && <p className="text-xs text-danger">{error}</p>}
+        {(hasMore || loadingOlder) && (
+          <div className="flex justify-center py-1">
+            <button
+              type="button"
+              onClick={loadOlder}
+              disabled={loadingOlder}
+              className="rounded-full bg-surface-subtle px-3 py-1 text-[11px] font-medium text-secondary hover:text-primary disabled:opacity-60"
+            >
+              {loadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
+            </button>
+          </div>
+        )}
         {messages.map((m, i) => {
           const prev = messages[i - 1];
           const showDay = !prev || dayKey(prev.createdAt) !== dayKey(m.createdAt);

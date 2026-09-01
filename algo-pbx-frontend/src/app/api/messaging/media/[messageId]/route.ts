@@ -47,23 +47,40 @@ export async function GET(_request: NextRequest, { params }: { params: { message
     if (!approved) return NextResponse.json({ error: "Access required" }, { status: 403 });
   }
 
+  const cacheHeaders = {
+    // Per-message, auth-checked; a shared cache must never serve it onward.
+    "Cache-Control": "private, max-age=86400",
+  };
+
+  // Primary source: the base64 we captured at ingest (OpenWA's own /media
+  // sub-endpoint 404s for received media it never archived).
+  if (message.mediaData) {
+    const bytes = Buffer.from(message.mediaData, "base64");
+    return new NextResponse(new Uint8Array(bytes), {
+      status: 200,
+      headers: {
+        ...cacheHeaders,
+        "Content-Type": message.mediaMimeType || "application/octet-stream",
+        "Content-Length": String(bytes.length),
+      },
+    });
+  }
+
+  // Fallback: over the ingest size cap, or a legacy row — try the sidecar.
   const sessionId = conv.waInstance?.openwaSessionId;
   const waId = e164ToWaId(conv.contact.numberE164);
   const waMessageId = message.waMessageId ?? message.providerMessageId;
   if (!sessionId || !waId || !waMessageId) {
     return NextResponse.json({ error: "Media unavailable" }, { status: 404 });
   }
-
   try {
     const { bytes, contentType } = await openwa.getMessageMedia(sessionId, `${waId}@c.us`, waMessageId);
     return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {
+        ...cacheHeaders,
         "Content-Type": message.mediaMimeType || contentType || "application/octet-stream",
         "Content-Length": String(bytes.length),
-        // Private: the URL is per-message and auth-checked, but a shared
-        // cache must never serve it to another session.
-        "Cache-Control": "private, max-age=86400",
       },
     });
   } catch {

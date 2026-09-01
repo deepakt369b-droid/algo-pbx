@@ -20,10 +20,20 @@ export const dynamic = "force-dynamic";
 // through redactMessagesForSession() (src/lib/messaging/conversation-
 // access.ts) — a sensitive SMS body NEVER leaves this route unless the
 // caller's own approved (non-expired) SmsAccessRequest says otherwise.
-export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+
+  // Pagination for "scroll up to load earlier" (WhatsApp-Web style). No
+  // `before` = the most recent page; `before=<iso>` = the page just older
+  // than that. Page size caps at 300.
+  const beforeParam = request.nextUrl.searchParams.get("before");
+  const before = beforeParam ? new Date(beforeParam) : null;
+  const pageSize = Math.min(
+    300,
+    Math.max(20, Number(request.nextUrl.searchParams.get("limit")) || (before ? 80 : 200))
+  );
 
   const conversation = await db.conversation.findUnique({
     where: { id: params.id },
@@ -38,26 +48,31 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   }
 
   // Pull backlog from the provider (rate-limited internally) so the thread
-  // shows real history + media the push webhook never delivered. Time-boxed
-  // and non-fatal — a slow sidecar must not stall the 5s poll.
-  if (conversation.channel === "WHATSAPP") {
-    await Promise.race([
-      syncConversationHistory(conversation.id),
-      new Promise((r) => setTimeout(r, 8_000)),
-    ]).catch(() => undefined);
+  // shows real history + media the push webhook never delivered. Fire and
+  // forget on the first (unpaginated) load only — the first sync can take a
+  // minute (it downloads media bytes for hundreds of old messages) and each
+  // 5s poll picks up whatever has landed so far.
+  if (conversation.channel === "WHATSAPP" && !before) {
+    void syncConversationHistory(conversation.id).catch(() => undefined);
   }
 
-  const [recent, myRequests] = await Promise.all([
-    // Newest 500 (history-sync can backfill hundreds of older rows), then
-    // flipped to chronological for the UI.
-    db.chatMessage.findMany({ where: { conversationId: conversation.id }, orderBy: { createdAt: "desc" }, take: 500 }),
+  const [page, myRequests] = await Promise.all([
+    db.chatMessage.findMany({
+      where: {
+        conversationId: conversation.id,
+        ...(before ? { createdAt: { lt: before } } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: pageSize,
+    }),
     db.smsAccessRequest.findMany({
       where: { requestedById: userId, message: { conversationId: conversation.id } },
       select: { messageId: true, status: true, expiresAt: true, createdAt: true },
     }),
   ]);
 
-  const messages = recent.reverse();
+  const hasMore = page.length === pageSize;
+  const messages = page.reverse();
 
   const requestsByMessageId = new Map<string, typeof myRequests>();
   for (const r of myRequests) {
@@ -76,6 +91,8 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     conversationId: conversation.id,
     channel: conversation.channel,
     contact: conversation.contact,
+    hasMore,
+    oldestCreatedAt: messages[0]?.createdAt ?? null,
     messages: redactMessagesForSession(messages, role as Role, requestsByMessageId),
   });
 }

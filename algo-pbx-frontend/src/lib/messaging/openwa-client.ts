@@ -204,13 +204,15 @@ export async function sendAudio(
 export async function getChatMessages(
   sessionId: string,
   chatId: string,
-  opts: { limit?: number } = {}
+  opts: { limit?: number; includeMedia?: boolean } = {}
 ): Promise<OpenWaHistoryMessage[]> {
   const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
   const q = new URLSearchParams({ chatId: assertSafeWaChatId(chatId), limit: String(opts.limit ?? 50) });
+  if (opts.includeMedia) q.set("includeMedia", "true");
   const res = await requestJson<OpenWaHistoryResponse | OpenWaHistoryMessage[]>(
     `${url}${sessionPath(sessionId, "/messages")}?${q.toString()}`,
-    { headers, timeoutMs: 25_000 }
+    // includeMedia downloads every attachment's bytes — allow much longer.
+    { headers, timeoutMs: opts.includeMedia ? 90_000 : 25_000 }
   );
   return Array.isArray(res) ? res : (res.messages ?? []);
 }
