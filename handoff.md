@@ -42,13 +42,28 @@ Phase M / MUI migration is **cancelled and MUI is fully removed**.
   `/tmp/Caddyfile.bak.*` on VPS. Pre-existing, not caused by the redesign.
 
 ### Operator steps still needed (NONE are code)
-1. **Run two backfills** from a logged-in **admin** browser session (devtools
-   console, or curl with the session cookie):
-   - `POST /api/admin/maintenance/backfill-activity` — populates the unified
-     timeline from 42 historical CDRs + 41 chat messages (Activity table is
-     currently empty → contact timelines show nothing until this runs).
-   - `POST /api/admin/maintenance/backfill-caller-e164` — idempotent, likely a
-     no-op now (the 27 unpopulated rows are internal ext "1002").
+1. **Backfills — DONE 2026-09-01.** `backfill-activity` wrote 62 timeline rows
+   (19 calls + 43 messages); `backfill-caller-e164` = confirmed no-op (27
+   internal ext rows).
+
+### WhatsApp fix (2026-09-01, commit `043968f`, deployed)
+Diagnosed against the live OpenWA v0.23.1 sidecar — 5 data-layer breakages:
+- `parseInbound` used `m.fromMe` (never set); real field is `direction`. Own
+  outgoing messages were ingested as INBOUND/empty. Fixed via shared
+  `mapOpenWaMessage()`.
+- Media = base64 under `metadata.media`, not `mediaUrl` → empty bubbles.
+  New `ChatMessage.mediaKind`+`waMessageId`; `GET /api/messaging/media/[id]`
+  proxies bytes.
+- Webhook only pushes NEW msgs → `src/lib/messaging/history-sync.ts` pulls
+  backlog on thread open (rate-limited via `Conversation.historySyncedAt`).
+- No avatars → `Contact.waAvatarUrl`; `GET /api/messaging/avatar/[contactId]`
+  proxies the pic. `ChatAvatar` component.
+- No voice send → composer mic (MediaRecorder) →
+  `POST /api/messaging/conversations/[id]/voice` → OpenWA `send-audio ptt`.
+  `VoiceBubble` player for received + sent.
+Migration `20260901140000_add_wa_media_avatar` (additive, shadow-verified).
+**Still needs the operator's real click-test on the live sidecar** (send a
+voice note, confirm history backfills, confirm avatars load).
 2. **S6 announcement WAVs** — generate the two "call may be recorded" prompts
    (Piper TTS or asterisk-extra-sounds) per `pbx_configs/sounds/README.md`,
    `scp` to the VPS, `asterisk -rx "module reload res_odbc.so"` +
