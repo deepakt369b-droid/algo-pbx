@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { MessageComposer } from "./message-composer";
+import { ChatAvatar } from "./chat-avatar";
+import { VoiceBubble } from "./voice-bubble";
 
 interface ChatMessageDto {
   id: string;
@@ -10,10 +12,17 @@ interface ChatMessageDto {
   body: string | null;
   mediaUrl: string | null;
   mediaMimeType: string | null;
+  mediaKind: string | null;
   sensitive: boolean;
   accessRequestStatus: "none" | "pending" | "approved" | "declined" | "revoked" | "expired";
   deliveryStatus: string;
   createdAt: string;
+}
+
+interface ThreadContact {
+  id: string;
+  numberE164: string;
+  displayName: string | null;
 }
 
 // Delivery ticks for outbound messages — the DTO always carried
@@ -38,20 +47,21 @@ function DeliveryTicks({ status, outbound }: { status: string; outbound: boolean
   );
 }
 
-/** True when this message's media is an audio attachment (WhatsApp voice
- * notes and the like) rather than an image/document. mediaMimeType is
- * preferred (present whenever the ingesting webhook reported one — see
- * openwa-provider.ts's parseInbound); the URL extension is only a
- * fallback for rows ingested before that field existed or from a channel
- * that never set it. */
-function isAudioAttachment(m: Pick<ChatMessageDto, "mediaMimeType" | "mediaUrl">): boolean {
-  if (m.mediaMimeType) return m.mediaMimeType.toLowerCase().startsWith("audio/");
-  return !!m.mediaUrl && /\.(ogg|oga|opus|mp3|m4a|wav|aac)(\?|$)/i.test(m.mediaUrl);
-}
-
-function isImageAttachment(m: Pick<ChatMessageDto, "mediaMimeType" | "mediaUrl">): boolean {
-  if (m.mediaMimeType) return m.mediaMimeType.toLowerCase().startsWith("image/");
-  return !!m.mediaUrl && /\.(png|jpe?g|gif|webp)(\?|$)/i.test(m.mediaUrl);
+/** Resolve a message's media category. `mediaKind` (set at ingest from the
+ * OpenWA message type) is authoritative; mime / URL extension are fallbacks
+ * for older rows. */
+type MediaCat = "voice" | "image" | "video" | "audio" | "document" | "sticker" | null;
+function mediaCat(m: Pick<ChatMessageDto, "mediaKind" | "mediaMimeType" | "mediaUrl">): MediaCat {
+  if (m.mediaKind) return m.mediaKind as MediaCat;
+  if (!m.mediaUrl) return null;
+  const mime = (m.mediaMimeType ?? "").toLowerCase();
+  if (mime.startsWith("audio/")) return "voice";
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (/\.(ogg|oga|opus|mp3|m4a|wav|aac)(\?|$)/i.test(m.mediaUrl)) return "voice";
+  if (/\.(png|jpe?g|gif|webp)(\?|$)/i.test(m.mediaUrl)) return "image";
+  if (/\.(mp4|mov|webm|3gp)(\?|$)/i.test(m.mediaUrl)) return "video";
+  return "document";
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -91,15 +101,15 @@ function MessageBubble({
   onRequestAccess: (id: string) => void;
 }) {
   const outbound = message.direction === "OUTBOUND";
-  const audio = isAudioAttachment(message);
-  const image = isImageAttachment(message);
-  const withheld = message.sensitive && !message.body;
+  const cat = mediaCat(message);
+  const withheld = message.sensitive && !message.body && !message.mediaUrl;
 
   return (
     <div className={cn("flex", outbound ? "justify-end" : "justify-start")}>
       <div
         className={cn(
           "relative max-w-[85%] rounded-[var(--radius-lg)] px-3 py-2 text-sm shadow-sm sm:max-w-[72%]",
+          cat === "sticker" && "!bg-transparent !shadow-none !px-0 !py-0",
           outbound
             ? "rounded-br-sm bg-accent text-accent-fg"
             : "rounded-bl-sm border bg-surface text-primary"
@@ -125,56 +135,72 @@ function MessageBubble({
           </div>
         ) : (
           <>
-            {message.body && <p className="whitespace-pre-wrap break-words">{message.body}</p>}
-
-            {/* Voice notes / audio attachments — same <audio controls> pattern
-                already proven working in agent-voicemail.tsx. mediaUrl is
-                rendered as-is: it is whatever the ingesting webhook stored,
-                same trust level the image rendering below already relies on. */}
-            {message.mediaUrl && audio && (
-              <div
-                className={cn(
-                  "mt-1 flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5",
-                  outbound ? "bg-canvas/15" : "bg-surface-subtle"
-                )}
-              >
-                <span aria-hidden className="text-base leading-none">
-                  🎤
-                </span>
-                <audio controls src={message.mediaUrl} className="h-8 w-full max-w-[15rem]" />
-              </div>
+            {/* Voice note — full WhatsApp-style player. */}
+            {message.mediaUrl && cat === "voice" && (
+              <VoiceBubble src={message.mediaUrl} outbound={outbound} />
             )}
 
-            {message.mediaUrl && !audio && image && (
-              // eslint-disable-next-line @next/next/no-img-element -- media URLs are same-origin API routes with auth cookies
+            {/* Non-voice audio — plain controls. */}
+            {message.mediaUrl && cat === "audio" && (
+              <audio controls src={message.mediaUrl} className="mt-1 h-9 w-full max-w-[15rem]" />
+            )}
+
+            {message.mediaUrl && cat === "image" && (
+              // eslint-disable-next-line @next/next/no-img-element -- same-origin auth-cookie proxy route
               <img
                 src={message.mediaUrl}
-                alt="shared media"
-                className="mt-1 max-h-64 rounded-[var(--radius)]"
+                alt={message.body ?? "shared image"}
+                className="mt-1 max-h-72 cursor-zoom-in rounded-[var(--radius)]"
+                onClick={() => window.open(message.mediaUrl!, "_blank")}
               />
             )}
 
-            {message.mediaUrl && !audio && !image && (
+            {message.mediaUrl && cat === "video" && (
+              <video
+                controls
+                src={message.mediaUrl}
+                className="mt-1 max-h-72 rounded-[var(--radius)]"
+              />
+            )}
+
+            {message.mediaUrl && cat === "sticker" && (
+              // eslint-disable-next-line @next/next/no-img-element -- same-origin auth-cookie proxy route
+              <img src={message.mediaUrl} alt="sticker" className="h-28 w-28 object-contain" />
+            )}
+
+            {message.mediaUrl && cat === "document" && (
               <a
                 href={message.mediaUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-1 block text-xs font-medium underline"
+                className={cn(
+                  "mt-1 flex items-center gap-2 rounded-[var(--radius)] px-2.5 py-2 text-xs font-medium",
+                  outbound ? "bg-canvas/15" : "bg-surface-subtle"
+                )}
               >
-                Open attachment
+                <span aria-hidden>📄</span>
+                <span className="truncate">{message.body || "Document"}</span>
               </a>
+            )}
+
+            {message.body && cat !== "document" && (
+              <p className={cn("whitespace-pre-wrap break-words", message.mediaUrl && "mt-1")}>
+                {message.body}
+              </p>
             )}
           </>
         )}
-        <p
-          className={cn(
-            "mt-1 flex items-center justify-end text-[10px]",
-            outbound ? "text-accent-fg/70" : "text-tertiary"
-          )}
-        >
-          {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          <DeliveryTicks status={message.deliveryStatus} outbound={outbound} />
-        </p>
+        {cat !== "sticker" && (
+          <p
+            className={cn(
+              "mt-1 flex items-center justify-end text-[10px]",
+              outbound ? "text-accent-fg/70" : "text-tertiary"
+            )}
+          >
+            {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            <DeliveryTicks status={message.deliveryStatus} outbound={outbound} />
+          </p>
+        )}
       </div>
     </div>
   );
@@ -198,6 +224,7 @@ export function ChatThread({
 }) {
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [channel, setChannel] = useState<"WHATSAPP" | "SMS">("WHATSAPP");
+  const [contact, setContact] = useState<ThreadContact | null>(null);
   // A 404 here means "not yours to see" (conversation-access.ts's
   // reassign-hides-it rule) as much as it means transient poll failure.
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +232,7 @@ export function ChatThread({
 
   useEffect(() => {
     setMessages([]);
+    setContact(null);
     setError(null);
   }, [conversationId]);
 
@@ -222,6 +250,7 @@ export function ChatThread({
       setError(null);
       setMessages(data.messages ?? []);
       if (data.channel) setChannel(data.channel);
+      if (data.contact) setContact(data.contact);
     } catch {
       setError("Network error — retrying…");
     }
@@ -279,9 +308,21 @@ export function ChatThread({
             </svg>
           </button>
         )}
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-primary">
-          {contactLabel ?? "Conversation"}
-        </p>
+        {channel === "WHATSAPP" && contact && (
+          <ChatAvatar
+            name={contact.displayName ?? contact.numberE164}
+            src={`/api/messaging/avatar/${contact.id}`}
+            size={34}
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-primary">
+            {contact?.displayName ?? contactLabel ?? contact?.numberE164 ?? "Conversation"}
+          </p>
+          {contact?.displayName && (
+            <p className="truncate text-[11px] text-tertiary">{contact.numberE164}</p>
+          )}
+        </div>
         <span className="flex-shrink-0 rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium text-secondary">
           {channel === "WHATSAPP" ? "WhatsApp" : "SMS"}
         </span>

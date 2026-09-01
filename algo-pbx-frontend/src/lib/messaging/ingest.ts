@@ -39,73 +39,154 @@ export async function findOrCreateConversation(
   return { conversation, created: true };
 }
 
-// Shared inbound-message ingestion path — every provider's webhook/poll
-// route calls this, so "upsert Contact -> find-or-create Conversation ->
-// create ChatMessage -> bump unreadCount/lastMessageAt -> classify
-// sensitivity" only has one implementation. Kept out of the route handlers
-// themselves so the OpenWA webhook, the Meta webhook, and the Dinstar poll
-// route are each a thin adapter-specific parse step feeding this one
-// function.
-export async function ingestInboundEvent(
+/** A media message's caption is worth keeping; the raw base64 blob (which
+ * some engines put in `body`) is not, and never reaches here — the provider
+ * mapper drops it. This just picks the human-readable summary for the CRM
+ * timeline and the conversation-list preview. */
+function mediaSummary(kind: string | null | undefined, body: string | null): string {
+  const caption = body?.trim();
+  if (caption) return caption;
+  switch (kind) {
+    case "voice":
+      return "🎤 Voice message";
+    case "audio":
+      return "🎵 Audio";
+    case "image":
+      return "📷 Photo";
+    case "video":
+      return "🎬 Video";
+    case "document":
+      return "📄 Document";
+    case "sticker":
+      return "Sticker";
+    default:
+      return "(attachment)";
+  }
+}
+
+/**
+ * The core persist step shared by the inbound webhook path and history-sync.
+ * Idempotent on `waMessageId` (also `providerMessageId`) — a message seen by
+ * both the live webhook and a later backlog pull is written once.
+ *
+ * `opts.bumpUnread` / `opts.emit` are true only on the live inbound path;
+ * history-sync passes false so a backfill doesn't light up every badge or
+ * re-fire CRM webhooks for months-old messages.
+ *
+ * Returns the ChatMessage row id, or null if it was a duplicate / not
+ * attributable to a contact.
+ */
+export async function persistNormalizedMessage(
   event: NormalizedInboundEvent,
   channel: Channel,
-  waInstanceId: string | null
-): Promise<void> {
-  if (!event.fromE164) return;
+  waInstanceId: string | null,
+  opts: { bumpUnread?: boolean; emit?: boolean } = {}
+): Promise<string | null> {
+  if (!event.fromE164) return null;
+  const outbound = event.direction === "outgoing";
+
+  // Dedupe before doing any writes.
+  const dedupeKeys: Prisma.ChatMessageWhereInput[] = [];
+  if (event.waMessageId) dedupeKeys.push({ waMessageId: event.waMessageId });
+  if (event.providerMessageId) dedupeKeys.push({ providerMessageId: event.providerMessageId });
+  if (dedupeKeys.length) {
+    const seen = await db.chatMessage.findFirst({ where: { OR: dedupeKeys }, select: { id: true } });
+    if (seen) return null;
+  }
 
   const contact = await db.contact.upsert({
     where: { numberE164: event.fromE164 },
     update: {},
-    create: { numberE164: event.fromE164 },
+    create: {
+      numberE164: event.fromE164,
+      displayName: event.contactName ?? undefined,
+    },
   });
+  // Adopt the provider's name only when we still have none (an outgoing
+  // message's chatName is the account owner, so mapOpenWaMessage only sets
+  // contactName for incoming — no extra guard needed here).
+  if (event.contactName && !contact.displayName) {
+    await db.contact
+      .update({ where: { id: contact.id }, data: { displayName: event.contactName } })
+      .catch(() => undefined);
+  }
 
-  const { conversation: found, created } = await findOrCreateConversation(
-    contact.id,
-    channel,
-    waInstanceId,
-    { lastMessageAt: event.timestamp ?? new Date(), unreadCount: 1 }
-  );
-  const conversation = created
-    ? found
-    : await db.conversation.update({
-        where: { id: found.id },
-        data: { lastMessageAt: event.timestamp ?? new Date(), unreadCount: { increment: 1 } },
-      });
+  const when = event.timestamp ?? new Date();
+  const { conversation: found, created } = await findOrCreateConversation(contact.id, channel, waInstanceId, {
+    lastMessageAt: when,
+    unreadCount: outbound || !opts.bumpUnread ? 0 : 1,
+  });
+  const conversation =
+    created
+      ? found
+      : await db.conversation.update({
+          where: { id: found.id },
+          data: {
+            // Only advance lastMessageAt forward.
+            ...(found.lastMessageAt && found.lastMessageAt >= when ? {} : { lastMessageAt: when }),
+            ...(outbound || !opts.bumpUnread ? {} : { unreadCount: { increment: 1 } }),
+          },
+        });
 
-  const sensitive = channel === "SMS" && event.body ? isSensitiveSms(event.body) : false;
+  const sensitive = channel === "SMS" && !event.mediaKind && event.body ? isSensitiveSms(event.body) : false;
 
   const message = await db.chatMessage.create({
     data: {
       conversationId: conversation.id,
-      direction: "INBOUND",
-      body: event.body,
-      mediaUrl: event.mediaUrl ?? null,
+      direction: outbound ? "OUTBOUND" : "INBOUND",
+      body: event.mediaKind ? (event.body?.trim() || null) : event.body,
+      mediaKind: event.mediaKind ?? null,
       mediaMimeType: event.mediaMimeType ?? null,
       providerMessageId: event.providerMessageId ?? null,
-      deliveryStatus: "delivered",
+      waMessageId: event.waMessageId ?? null,
+      deliveryStatus: event.deliveryStatus ?? (outbound ? "sent" : "delivered"),
       sensitive,
+      createdAt: when,
     },
   });
 
-  // Unified CRM timeline (S2). A sensitive body is redacted here too — the
-  // summary must never leak an OTP.
+  // A media message's bytes live in OpenWA; the browser fetches them through
+  // our auth-checked proxy keyed by this row id.
+  if (event.mediaKind) {
+    await db.chatMessage
+      .update({ where: { id: message.id }, data: { mediaUrl: `/api/messaging/media/${message.id}` } })
+      .catch(() => undefined);
+  }
+
   await recordActivity({
     type: channel === "SMS" ? "SMS" : "WHATSAPP",
-    summary: `Received: ${sensitive ? "(sensitive message)" : truncateBody(event.body, "(message)")}`,
+    summary: `${outbound ? "Sent" : "Received"}: ${
+      sensitive
+        ? "(sensitive message)"
+        : event.mediaKind
+          ? mediaSummary(event.mediaKind, event.body)
+          : truncateBody(event.body, "(message)")
+    }`,
     refId: message.id,
     occurredAt: message.createdAt,
     contactId: contact.id,
   });
 
-  // Not awaited — a slow/down CRM webhook endpoint must never add latency
-  // to inbound message ingestion. Sensitive bodies are never included, per
-  // the same server-side redaction rule the agent-facing routes enforce
-  // (see src/lib/messaging/conversation-access.ts).
-  void emitEvent("message.received", {
-    conversationId: conversation.id,
-    channel,
-    fromE164: event.fromE164,
-    body: sensitive ? null : message.body,
-    sensitive,
-  });
+  if (opts.emit && !outbound) {
+    void emitEvent("message.received", {
+      conversationId: conversation.id,
+      channel,
+      fromE164: event.fromE164,
+      body: sensitive ? null : message.body ?? mediaSummary(event.mediaKind, null),
+      sensitive,
+    });
+  }
+
+  return message.id;
+}
+
+// Shared inbound-message ingestion path — every provider's webhook/poll
+// route calls this. Thin wrapper over persistNormalizedMessage with the
+// live-inbound flags on.
+export async function ingestInboundEvent(
+  event: NormalizedInboundEvent,
+  channel: Channel,
+  waInstanceId: string | null
+): Promise<void> {
+  await persistNormalizedMessage(event, channel, waInstanceId, { bumpUnread: true, emit: true });
 }

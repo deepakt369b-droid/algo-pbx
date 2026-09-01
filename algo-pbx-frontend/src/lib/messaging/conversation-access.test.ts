@@ -114,6 +114,7 @@ describe("redactMessagesForSession", () => {
     body: "Your OTP is 483920",
     mediaUrl: null,
     mediaMimeType: null,
+    mediaKind: null,
     deliveryStatus: "delivered",
     sensitive: true,
     createdAt: EARLIER,

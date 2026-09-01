@@ -30,19 +30,50 @@ export async function GET(request: NextRequest) {
 
   const conversations = await db.conversation.findMany({
     where,
-    include: { contact: true },
+    include: {
+      contact: true,
+      messages: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { direction: true, body: true, mediaKind: true, sensitive: true },
+      },
+    },
     orderBy: { lastMessageAt: "desc" },
     take: 100,
   });
+
+  const previewOf = (m: { body: string | null; mediaKind: string | null; sensitive: boolean } | undefined) => {
+    if (!m) return null;
+    if (m.sensitive) return "🔒 Sensitive message";
+    if (m.mediaKind) {
+      const t: Record<string, string> = {
+        voice: "🎤 Voice message",
+        audio: "🎵 Audio",
+        image: "📷 Photo",
+        video: "🎬 Video",
+        document: "📄 Document",
+        sticker: "Sticker",
+      };
+      return m.body?.trim() || t[m.mediaKind] || "Attachment";
+    }
+    return m.body ?? null;
+  };
 
   return NextResponse.json({
     conversations: conversations.map((c) => ({
       id: c.id,
       channel: c.channel,
-      contact: { id: c.contact.id, numberE164: c.contact.numberE164, displayName: c.contact.displayName },
+      contact: {
+        id: c.contact.id,
+        numberE164: c.contact.numberE164,
+        displayName: c.contact.displayName,
+        avatarUrl: c.channel === "WHATSAPP" ? `/api/messaging/avatar/${c.contact.id}` : null,
+      },
       assignedAgentId: c.assignedAgentId,
       unreadCount: c.unreadCount,
       lastMessageAt: c.lastMessageAt,
+      lastMessagePreview: previewOf(c.messages[0]),
+      lastMessageOutbound: c.messages[0]?.direction === "OUTBOUND",
       mine: c.assignedAgentId === userId,
     })),
   });

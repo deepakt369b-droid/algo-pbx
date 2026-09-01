@@ -109,6 +109,7 @@ export interface RawMessage {
   body: string | null;
   mediaUrl: string | null;
   mediaMimeType: string | null;
+  mediaKind: string | null;
   deliveryStatus: string;
   sensitive: boolean;
   createdAt: Date;
@@ -121,6 +122,7 @@ export interface RedactedMessage {
   body: string | null;
   mediaUrl: string | null;
   mediaMimeType: string | null;
+  mediaKind: string | null;
   deliveryStatus: string;
   sensitive: boolean;
   /** Only meaningful when sensitive === true. */
@@ -157,6 +159,10 @@ export function redactMessagesForSession(
       body: reveal ? m.body : null,
       mediaUrl: reveal ? m.mediaUrl : null,
       mediaMimeType: reveal ? m.mediaMimeType : null,
+      // mediaKind is not sensitive on its own (it's "voice"/"image"/…), but
+      // hide it in the withheld branch too so the UI shows the lock, not a
+      // broken player.
+      mediaKind: reveal ? m.mediaKind : null,
       deliveryStatus: m.deliveryStatus,
       sensitive: m.sensitive,
       accessRequestStatus: accessState,

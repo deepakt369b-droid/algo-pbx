@@ -3,29 +3,23 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { ChatAvatar } from "./chat-avatar";
 
 interface ConversationSummary {
   id: string;
   channel: "WHATSAPP" | "SMS";
-  contact: { id: string; numberE164: string; displayName: string | null };
+  contact: {
+    id: string;
+    numberE164: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+  };
   assignedAgentId: string | null;
   unreadCount: number;
   lastMessageAt: string | null;
+  lastMessagePreview: string | null;
+  lastMessageOutbound: boolean;
   mine: boolean;
-}
-
-const CHANNEL_BADGE: Record<ConversationSummary["channel"], string> = {
-  WHATSAPP: "bg-success-subtle text-success",
-  SMS: "bg-accent-subtle text-accent",
-};
-
-/** Deterministic initials for the avatar disc. */
-function initials(label: string): string {
-  const clean = label.replace(/[^\p{L}\p{N} ]/gu, " ").trim();
-  if (!clean) return "#";
-  const parts = clean.split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 /** Short relative-ish timestamp for the conversation row, WhatsApp-style. */
@@ -259,12 +253,7 @@ export function ConversationList({
                   active ? "bg-surface-hover" : "hover:bg-surface-hover"
                 )}
               >
-                <span
-                  aria-hidden
-                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-surface-subtle text-xs font-semibold text-secondary"
-                >
-                  {initials(label)}
-                </span>
+                <ChatAvatar name={label} src={c.contact.avatarUrl} size={44} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-primary">
@@ -281,28 +270,27 @@ export function ConversationList({
                       </span>
                     )}
                   </div>
-                  <div className="mt-0.5 flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                        CHANNEL_BADGE[c.channel]
-                      )}
-                    >
-                      {c.channel}
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate text-xs text-tertiary">
+                      {c.lastMessagePreview
+                        ? `${c.lastMessageOutbound ? "You: " : ""}${c.lastMessagePreview}`
+                        : c.channel === "WHATSAPP"
+                          ? "WhatsApp"
+                          : "SMS"}
                     </span>
                     {!c.assignedAgentId && (
-                      <span className="text-[10px] text-tertiary">unassigned</span>
+                      <span className="flex-shrink-0 text-[10px] text-tertiary">·&nbsp;unassigned</span>
                     )}
                     <Link
                       href={`/agent?contact=${c.contact.id}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="text-[10px] font-medium text-accent hover:underline"
+                      className="flex-shrink-0 text-[10px] font-medium text-accent hover:underline"
                       title="Open this contact in the CRM"
                     >
                       CRM
                     </Link>
                     {unread > 0 && (
-                      <span className="ml-auto flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 text-[10px] font-semibold text-accent-fg">
+                      <span className="flex h-5 min-w-[1.25rem] flex-shrink-0 items-center justify-center rounded-full bg-accent px-1.5 text-[10px] font-semibold text-accent-fg">
                         {unread}
                       </span>
                     )}

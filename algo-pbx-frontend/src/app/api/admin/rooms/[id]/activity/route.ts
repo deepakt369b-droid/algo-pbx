@@ -85,6 +85,7 @@ export async function GET(_request: Request, { params }: { params: { id: string 
         body: m.body,
         mediaUrl: m.mediaUrl,
         mediaMimeType: m.mediaMimeType,
+        mediaKind: m.mediaKind,
         deliveryStatus: m.deliveryStatus,
         sensitive: m.sensitive,
         createdAt: m.createdAt,

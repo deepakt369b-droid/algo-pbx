@@ -1,6 +1,10 @@
 import * as openwa from "./openwa-client";
 import { e164ToWaId, waIdToE164 } from "./wa-id";
-import { toWaInstanceStatus, type OpenWaSessionStatus } from "./openwa-types";
+import {
+  toWaInstanceStatus,
+  type OpenWaHistoryMessage,
+  type OpenWaSessionStatus,
+} from "./openwa-types";
 import type {
   MessageProvider,
   NormalizedInboundEvent,
@@ -9,6 +13,114 @@ import type {
   SendResult,
   SendTextInput,
 } from "./types";
+
+/** Map an OpenWA message `type` onto our coarse mediaKind, or null for a
+ * plain text message. */
+function mediaKindFor(type: string | null | undefined): string | null {
+  switch ((type ?? "").toLowerCase()) {
+    case "voice":
+    case "ptt":
+      return "voice";
+    case "audio":
+      return "audio";
+    case "image":
+      return "image";
+    case "video":
+      return "video";
+    case "document":
+    case "file":
+      return "document";
+    case "sticker":
+      return "sticker";
+    default:
+      return null;
+  }
+}
+
+/** Normalize one OpenWA message row (from the webhook `data` OR a
+ * history/messages pull — same shape). `mediaUrl` is left null here; the
+ * ingest layer builds the `/api/messaging/media/<rowId>` proxy path once the
+ * row exists. Returns null for anything not attributable to an individual
+ * contact (groups, broadcasts, unparseable). */
+export function mapOpenWaMessage(
+  raw: unknown,
+  sessionId: string | null
+): NormalizedInboundEvent | null {
+  const m = raw as (OpenWaHistoryMessage & Record<string, unknown>) | null;
+  if (!m || typeof m !== "object") return null;
+
+  // direction: OpenWA uses "incoming"/"outgoing" (NOT a `fromMe` boolean —
+  // that field simply doesn't exist and the old code's `m.fromMe === true`
+  // check silently ingested our own outbound messages as inbound).
+  const dir =
+    m.direction === "outgoing" || m.direction === "incoming"
+      ? m.direction
+      : typeof (m as Record<string, unknown>).fromMe === "boolean"
+        ? ((m as Record<string, unknown>).fromMe ? "outgoing" : "incoming")
+        : "incoming";
+
+  // The individual party on the far end: for incoming it's `from`, for
+  // outgoing it's `to`. `chatId` is the same thing for a 1:1 chat.
+  const party =
+    (dir === "outgoing" ? m.to : m.from) ??
+    m.chatId ??
+    (typeof (m as Record<string, unknown>).author === "string"
+      ? ((m as Record<string, unknown>).author as string)
+      : "");
+  const fromE164 = waIdToE164(String(party ?? ""));
+  if (!fromE164) return null;
+
+  const kind = mediaKindFor(m.type);
+  const bodyText =
+    typeof m.body === "string" && m.body.trim()
+      ? m.body
+      : typeof (m as Record<string, unknown>).caption === "string"
+        ? ((m as Record<string, unknown>).caption as string)
+        : null;
+
+  const ts =
+    typeof m.timestamp === "number"
+      ? new Date(m.timestamp * 1000)
+      : typeof m.timestamp === "string"
+        ? new Date(m.timestamp)
+        : null;
+
+  const mime =
+    m.metadata?.media?.mimetype ??
+    m.mediaMimetype ??
+    (typeof (m as Record<string, unknown>).mimetype === "string"
+      ? ((m as Record<string, unknown>).mimetype as string)
+      : null);
+
+  return {
+    channel: "WHATSAPP",
+    fromE164,
+    // A media message's `body` is a caption at most — never the base64 blob
+    // (which some engines drop into `body`); mapper already ignored that.
+    body: bodyText,
+    mediaUrl: null,
+    mediaMimeType: mime ?? null,
+    mediaKind: kind,
+    providerMessageId: typeof m.id === "string" ? m.id : null,
+    waMessageId:
+      typeof m.waMessageId === "string"
+        ? m.waMessageId
+        : typeof m.id === "string"
+          ? m.id
+          : null,
+    // chatName on an outgoing row is the account owner, not the contact.
+    contactName:
+      dir === "incoming" && typeof m.chatName === "string" && m.chatName.trim() ? m.chatName : null,
+    direction: dir,
+    deliveryStatus: typeof m.status === "string" ? m.status.toLowerCase() : null,
+    timestamp: ts && !Number.isNaN(ts.getTime()) ? ts : null,
+    instanceRef:
+      sessionId ??
+      (typeof (m as Record<string, unknown>).sessionId === "string"
+        ? ((m as Record<string, unknown>).sessionId as string)
+        : null),
+  };
+}
 
 // MessageProvider implementation for OpenWA, delegating all wire-format
 // concerns to openwa-client.ts / openwa-types.ts (session lifecycle) —
@@ -57,6 +169,29 @@ export class OpenWaProvider implements MessageProvider {
         url: input.mediaUrl,
         caption: input.caption ?? "",
         mimetype: input.mimeType,
+      });
+      return { providerMessageId: readMessageId(res), status: "sent" };
+    } catch (err) {
+      return { providerMessageId: null, status: "failed", error: (err as Error).message };
+    }
+  }
+
+  /** Send a WhatsApp voice note (ptt bubble). `base64` is the raw audio
+   * payload; OpenWA transcodes to opus/ogg as WhatsApp requires. */
+  async sendVoice(input: {
+    instanceId: string;
+    toE164: string;
+    base64: string;
+    mimeType: string;
+  }): Promise<SendResult> {
+    const waId = e164ToWaId(input.toE164);
+    if (!waId) return { providerMessageId: null, status: "failed", error: "Destination is not E.164" };
+    try {
+      const res = await openwa.sendAudio(input.instanceId, {
+        chatId: `${waId}@c.us`,
+        base64: input.base64,
+        mimetype: input.mimeType,
+        ptt: true,
       });
       return { providerMessageId: readMessageId(res), status: "sent" };
     } catch (err) {
@@ -144,46 +279,11 @@ export class OpenWaProvider implements MessageProvider {
 
       const events: NormalizedInboundEvent[] = [];
       for (const item of items) {
-        const m = item as Record<string, unknown> | null;
-        if (!m || typeof m !== "object") continue;
-
-        // Ignore our own echoed outbound messages.
-        if (m.fromMe === true) continue;
-
-        const from = typeof m.from === "string" ? m.from : typeof m.author === "string" ? m.author : "";
-        const fromE164 = waIdToE164(from);
-        if (!fromE164) continue; // group / broadcast / unparseable
-
-        const body =
-          typeof m.body === "string"
-            ? m.body
-            : typeof m.text === "string"
-              ? m.text
-              : typeof m.caption === "string"
-                ? m.caption
-                : null;
-
-        const mediaUrl = typeof m.mediaUrl === "string" ? m.mediaUrl : null;
-
-        const ts =
-          typeof m.timestamp === "number"
-            ? new Date(m.timestamp * 1000)
-            : typeof m.timestamp === "string"
-              ? new Date(m.timestamp)
-              : null;
-
-        events.push({
-          channel: "WHATSAPP",
-          // A media message's `body` may be a base64 payload rather than
-          // text depending on engine — never store that as a chat bubble.
-          body: mediaUrl ? (typeof m.caption === "string" ? m.caption : null) : body,
-          mediaUrl,
-          mediaMimeType: typeof m.mimetype === "string" ? m.mimetype : null,
-          providerMessageId: typeof m.id === "string" ? m.id : null,
-          timestamp: ts && !Number.isNaN(ts.getTime()) ? ts : null,
-          fromE164,
-          instanceRef: sessionId ?? (typeof m.sessionId === "string" ? m.sessionId : null),
-        });
+        const ev = mapOpenWaMessage(item, sessionId);
+        // The webhook is `message.received` — only ingest genuinely inbound
+        // messages here. A full thread's outgoing side is backfilled by
+        // history-sync.ts, which calls mapOpenWaMessage directly.
+        if (ev && ev.direction !== "outgoing") events.push(ev);
       }
       return events;
     } catch {

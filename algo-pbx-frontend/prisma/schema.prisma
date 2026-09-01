@@ -653,34 +653,40 @@ model InboundWebhookDelivery {
 // E.164 *without* the leading '+' — the inbound webhook handler must
 // prefix it before calling normalizeToE164().
 model Contact {
-  id               String                   @id @default(cuid())
-  numberE164       String                   @unique
-  displayName      String?
+  id                String                   @id @default(cuid())
+  numberE164        String                   @unique
+  displayName       String?
   // CRM fields (P2, 2026-08-31) — additive to the pre-existing bare
   // {id, numberE164, displayName} shape. `dncBlocked` is deliberately NOT
   // a column here: it is derived at read time from DoNotCallEntry so
   // there is exactly one source of truth for "is this number blocked",
   // matching the DNC check's existing design rather than risking the two
   // drifting apart.
-  email            String?
+  email             String?
   // Free-text company name kept for import back-compat (bulk-import writes
   // it directly). `companyRel` (S2, 2026-09-01) is the structured link; a
   // one-time backfill matches obvious names, the rest stay string-only.
-  company          String?
-  companyId        String?
-  companyRel       Company?                 @relation("CompanyContacts", fields: [companyId], references: [id])
-  tags             String[]                 @default([])
-  ownerId          String?
-  owner            User?                    @relation("ContactOwner", fields: [ownerId], references: [id])
-  notes            ContactNote[]
-  tasks            ContactTask[]
-  dispositions     CallDisposition[]
-  conversations    Conversation[]
-  transferRequests ContactTransferRequest[]
-  deals            DealContact[]
-  activities       Activity[]
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
+  company           String?
+  companyId         String?
+  companyRel        Company?                 @relation("CompanyContacts", fields: [companyId], references: [id])
+  // WhatsApp profile picture (2026-09-01). `waAvatarUrl` is the raw
+  // pps.whatsapp.net URL OpenWA returns — it expires and is cross-origin,
+  // so the UI never loads it directly; GET /api/messaging/avatar/[contactId]
+  // proxies it and refetches from OpenWA when null or stale (waAvatarCheckedAt).
+  waAvatarUrl       String?
+  waAvatarCheckedAt DateTime?
+  tags              String[]                 @default([])
+  ownerId           String?
+  owner             User?                    @relation("ContactOwner", fields: [ownerId], references: [id])
+  notes             ContactNote[]
+  tasks             ContactTask[]
+  dispositions      CallDisposition[]
+  conversations     Conversation[]
+  transferRequests  ContactTransferRequest[]
+  deals             DealContact[]
+  activities        Activity[]
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
 
   @@index([companyId])
   @@index([ownerId])
@@ -922,6 +928,10 @@ model Conversation {
   assignedAgentId String?
   lastMessageAt   DateTime?
   unreadCount     Int            @default(0)
+  // Last time history-sync.ts pulled backlog from the provider for this
+  // thread (2026-09-01). The webhook only delivers NEW messages; opening a
+  // thread triggers a rate-limited pull of older ones from OpenWA.
+  historySyncedAt DateTime?
   messages        ChatMessage[]
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -943,7 +953,16 @@ model ChatMessage {
   body              String?
   mediaUrl          String?
   mediaMimeType     String?
-  providerMessageId String? // id from OpenWA/Meta/Dinstar, for status-webhook correlation
+  // "voice" | "image" | "video" | "audio" | "document" | "sticker" (2026-09-01)
+  // — so the chat UI picks the right bubble without mime-sniffing (voice vs
+  // plain audio, sticker vs image).
+  mediaKind         String?
+  providerMessageId String? // OpenWA's internal message id / Meta / Dinstar id — for status-webhook correlation
+  // OpenWA's WhatsApp message id (the `waMessageId` field). Distinct from
+  // providerMessageId (OpenWA's own row id). This is what
+  // GET /api/sessions/:s/messages/:chatId/:id/media wants, and the dedup key
+  // for history-sync.ts. (2026-09-01)
+  waMessageId       String?
   deliveryStatus    String             @default("pending") // "pending" | "sent" | "delivered" | "read" | "failed"
   // OTP/verification-code heuristic classification (Workstream E,
   // SIM-SMS-only in practice today — WhatsApp OTPs aren't routed through
@@ -956,6 +975,7 @@ model ChatMessage {
 
   @@index([conversationId, createdAt])
   @@index([providerMessageId])
+  @@index([waMessageId])
 }
 
 // Rooms (Workstream E, client requirement: "just a UI view, no data model

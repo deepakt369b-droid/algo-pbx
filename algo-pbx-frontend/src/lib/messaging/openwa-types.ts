@@ -110,6 +110,56 @@ export interface OpenWaSuccessResult {
   message?: string;
 }
 
+/** Body for POST /api/sessions/{id}/messages/send-audio. Extends send-media
+ * with `ptt` — `ptt: true` produces a WhatsApp voice note (push-to-talk
+ * bubble), `false`/absent a regular audio file. Source: message.controller.js
+ * SendAudioMessageDto at this deployment's pinned OpenWA (v0.23.1). */
+export interface OpenWaSendAudioRequest extends OpenWaSendMediaRequest {
+  ptt?: boolean;
+}
+
+/** One row from GET /api/sessions/{id}/messages?chatId=... and the
+ * /{chatId}/history endpoint. Hand-transcribed from a live v0.23.1 response
+ * (see src/lib/messaging/openwa-provider.ts). Media for messages sent BY this
+ * account arrives inline as base64 under metadata.media; for received media
+ * the bytes are fetched separately via /{chatId}/{waMessageId}/media. */
+export interface OpenWaHistoryMessage {
+  id: string;
+  waMessageId: string;
+  chatId: string;
+  chatName?: string | null;
+  from?: string | null;
+  to?: string | null;
+  body?: string | null;
+  /** "text" | "voice" | "audio" | "image" | "video" | "document" | "sticker" | ... */
+  type?: string | null;
+  direction?: "incoming" | "outgoing" | null;
+  /** unix seconds */
+  timestamp?: number | null;
+  status?: string | null;
+  metadata?: {
+    media?: { mimetype?: string | null; data?: string | null } | null;
+  } | null;
+  mediaMimetype?: string | null;
+}
+
+export interface OpenWaHistoryResponse {
+  messages: OpenWaHistoryMessage[];
+}
+
+export interface OpenWaContactResponse {
+  id: string;
+  name?: string | null;
+  pushName?: string | null;
+  number?: string | null;
+  isMyContact?: boolean;
+}
+
+export interface OpenWaProfilePictureResponse {
+  /** null / absent when the contact has no picture or it is private. */
+  url?: string | null;
+}
+
 /** Per-session webhook registration (POST /api/sessions/{id}/webhooks) —
  * OpenWA has no global webhook config; every session's webhook is set up
  * individually, which is why session creation in openwa-client.ts always

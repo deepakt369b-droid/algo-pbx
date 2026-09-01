@@ -11,6 +11,7 @@ import {
 import { getProvider } from "@/lib/messaging/registry";
 import { emitEvent } from "@/lib/emit-event";
 import { recordActivity, truncateBody } from "@/lib/crm/activity";
+import { syncConversationHistory } from "@/lib/messaging/history-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,10 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
 
-  const conversation = await db.conversation.findUnique({ where: { id: params.id } });
+  const conversation = await db.conversation.findUnique({
+    where: { id: params.id },
+    include: { contact: { select: { id: true, numberE164: true, displayName: true } } },
+  });
   if (!conversation) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   if (!canAccessConversation({ role: role as Role, userId, assignedAgentId: conversation.assignedAgentId })) {
@@ -33,13 +37,27 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const [messages, myRequests] = await Promise.all([
-    db.chatMessage.findMany({ where: { conversationId: conversation.id }, orderBy: { createdAt: "asc" }, take: 500 }),
+  // Pull backlog from the provider (rate-limited internally) so the thread
+  // shows real history + media the push webhook never delivered. Time-boxed
+  // and non-fatal — a slow sidecar must not stall the 5s poll.
+  if (conversation.channel === "WHATSAPP") {
+    await Promise.race([
+      syncConversationHistory(conversation.id),
+      new Promise((r) => setTimeout(r, 8_000)),
+    ]).catch(() => undefined);
+  }
+
+  const [recent, myRequests] = await Promise.all([
+    // Newest 500 (history-sync can backfill hundreds of older rows), then
+    // flipped to chronological for the UI.
+    db.chatMessage.findMany({ where: { conversationId: conversation.id }, orderBy: { createdAt: "desc" }, take: 500 }),
     db.smsAccessRequest.findMany({
       where: { requestedById: userId, message: { conversationId: conversation.id } },
       select: { messageId: true, status: true, expiresAt: true, createdAt: true },
     }),
   ]);
+
+  const messages = recent.reverse();
 
   const requestsByMessageId = new Map<string, typeof myRequests>();
   for (const r of myRequests) {
@@ -57,6 +75,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   return NextResponse.json({
     conversationId: conversation.id,
     channel: conversation.channel,
+    contact: conversation.contact,
     messages: redactMessagesForSession(messages, role as Role, requestsByMessageId),
   });
 }
@@ -134,6 +153,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       direction: "OUTBOUND",
       body: parsed.data.text,
       providerMessageId: result.providerMessageId,
+      // OpenWA returns its waMessageId as `messageId`; storing it here lets
+      // history-sync dedupe this send against the backlog pull.
+      waMessageId: result.providerMessageId,
       deliveryStatus: result.status,
       sensitive: false,
     },

@@ -81,7 +81,21 @@ export interface NormalizedInboundEvent {
   body: string | null;
   mediaUrl?: string | null;
   mediaMimeType?: string | null;
+  /** "voice" | "image" | "video" | "audio" | "document" | "sticker" when the
+   * message carries media; ingest builds the mediaUrl proxy path from the
+   * saved row id and this. */
+  mediaKind?: string | null;
   providerMessageId?: string | null;
+  /** The provider's WhatsApp message id (OpenWA `waMessageId`), needed to
+   * lazily pull the media bytes and to dedupe against history-sync. */
+  waMessageId?: string | null;
+  /** Contact's display name as the provider knows it (OpenWA `chatName`) —
+   * ingest adopts it when we have no better name. */
+  contactName?: string | null;
+  /** "incoming" | "outgoing" — a full thread contains both; history-sync
+   * ingests outgoing too. The webhook path only ever passes "incoming". */
+  direction?: "incoming" | "outgoing" | null;
+  deliveryStatus?: string | null;
   /** Provider-reported timestamp, if any. Ingest falls back to now(). */
   timestamp?: Date | null;
   /** Which paired identity received it — the adapter reports whatever the

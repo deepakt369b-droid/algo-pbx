@@ -18,16 +18,21 @@
 // pinned commit (99874630c9d386340d71f191b310c8bd8aa52ee3) — see
 // openwa-types.ts's header. They are not guesses.
 
-import { assertSafePathSegment, requestJson } from "./http";
+import { assertSafePathSegment, assertSafeWaChatId, requestBytes, requestJson } from "./http";
 import { getSetting } from "@/lib/settings/service";
 import {
   OPENWA_WEBHOOK_EVENTS,
+  type OpenWaContactResponse,
   type OpenWaCreateSessionRequest,
+  type OpenWaHistoryMessage,
+  type OpenWaHistoryResponse,
   type OpenWaMessageResponse,
   type OpenWaPairingCodeResponse,
+  type OpenWaProfilePictureResponse,
   type OpenWaQrCodeResponse,
   type OpenWaRegisterWebhookRequest,
   type OpenWaRequestPairingCodeRequest,
+  type OpenWaSendAudioRequest,
   type OpenWaSendMediaRequest,
   type OpenWaSendTextRequest,
   type OpenWaSessionResponse,
@@ -172,6 +177,101 @@ export async function registerSessionWebhook(
     headers,
     body: { events: [...OPENWA_WEBHOOK_EVENTS], ...body },
   });
+}
+
+export async function sendAudio(
+  sessionId: string,
+  body: OpenWaSendAudioRequest
+): Promise<OpenWaMessageResponse> {
+  const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
+  return requestJson<OpenWaMessageResponse>(`${url}${sessionPath(sessionId, "/messages/send-audio")}`, {
+    method: "POST",
+    headers,
+    body,
+    timeoutMs: 30_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// History + media + contacts (2026-09-01). OpenWA's webhook only pushes NEW
+// messages; these pull endpoints are what backfills a thread, fetches a
+// received voice note's bytes, and resolves a profile picture.
+// ---------------------------------------------------------------------------
+
+/** Recent messages for one chat (most-recent first). `includeMedia` inlines
+ * base64 for messages that have it — slower; leave off and pull bytes lazily
+ * via getMessageMedia() for received media. */
+export async function getChatMessages(
+  sessionId: string,
+  chatId: string,
+  opts: { limit?: number } = {}
+): Promise<OpenWaHistoryMessage[]> {
+  const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
+  const q = new URLSearchParams({ chatId: assertSafeWaChatId(chatId), limit: String(opts.limit ?? 50) });
+  const res = await requestJson<OpenWaHistoryResponse | OpenWaHistoryMessage[]>(
+    `${url}${sessionPath(sessionId, "/messages")}?${q.toString()}`,
+    { headers, timeoutMs: 25_000 }
+  );
+  return Array.isArray(res) ? res : (res.messages ?? []);
+}
+
+/** Deep chat history (up to ~2000 with `deep`, engine-dependent). Metadata
+ * only. Used for the one-time fuller backfill of a thread. */
+export async function getChatHistory(
+  sessionId: string,
+  chatId: string,
+  opts: { limit?: number; deep?: boolean } = {}
+): Promise<OpenWaHistoryMessage[]> {
+  const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
+  const q = new URLSearchParams({ limit: String(opts.limit ?? 100) });
+  if (opts.deep) q.set("deep", "true");
+  const path = sessionPath(sessionId, `/messages/${assertSafeWaChatId(chatId)}/history`);
+  const res = await requestJson<OpenWaHistoryResponse | OpenWaHistoryMessage[]>(`${url}${path}?${q.toString()}`, {
+    headers,
+    timeoutMs: 40_000,
+  });
+  return Array.isArray(res) ? res : (res.messages ?? []);
+}
+
+/** The stored bytes for one message's media (archived file, or the inline
+ * copy for media this account sent). 404 => no stored media. */
+export async function getMessageMedia(
+  sessionId: string,
+  chatId: string,
+  waMessageId: string
+): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
+  const path = sessionPath(
+    sessionId,
+    `/messages/${assertSafeWaChatId(chatId)}/${assertSafeWaChatId(waMessageId, "message id")}/media`
+  );
+  return requestBytes(`${url}${path}`, { headers, timeoutMs: 25_000 });
+}
+
+export async function getContact(sessionId: string, contactId: string): Promise<OpenWaContactResponse> {
+  const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
+  return requestJson<OpenWaContactResponse>(
+    `${url}${sessionPath(sessionId, `/contacts/${assertSafeWaChatId(contactId)}`)}`,
+    { headers }
+  );
+}
+
+/** The pps.whatsapp.net URL for a contact's picture, or null. That URL
+ * expires and is cross-origin — callers proxy it, never hand it to a browser. */
+export async function getContactProfilePicture(
+  sessionId: string,
+  contactId: string
+): Promise<string | null> {
+  const [url, headers] = await Promise.all([baseUrl(), authHeaders()]);
+  try {
+    const res = await requestJson<OpenWaProfilePictureResponse>(
+      `${url}${sessionPath(sessionId, `/contacts/${assertSafeWaChatId(contactId)}/profile-picture`)}`,
+      { headers }
+    );
+    return typeof res.url === "string" && res.url ? res.url : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function statsOverview(): Promise<OpenWaSessionStatsOverview> {

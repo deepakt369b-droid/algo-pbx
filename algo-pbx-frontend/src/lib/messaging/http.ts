@@ -21,6 +21,19 @@ export function assertSafePathSegment(value: string, label = "path segment"): st
   return value;
 }
 
+/** A WhatsApp chat/JID path segment ("971504852446@c.us", a group id, or a
+ * bare wa_id). Allows '@' and '.' that SAFE_PATH_SEGMENT rejects, but still
+ * bars '/', '?', '#', '..', whitespace and control chars so it cannot break
+ * out of its URL path position. */
+const SAFE_WA_CHAT_ID = /^[A-Za-z0-9_.@:-]{3,128}$/;
+
+export function assertSafeWaChatId(value: string, label = "chat id"): string {
+  if (!SAFE_WA_CHAT_ID.test(value) || value.includes("..")) {
+    throw new Error(`Unsafe ${label}: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
 /** HTTP header values may not contain CR, LF or NUL (RFC 9110 §5.5). A
  * secret pulled from env should never contain them, but a misconfigured
  * .env with a trailing newline is exactly how header injection gets in. */
@@ -82,6 +95,33 @@ export async function requestJson<T = unknown>(url: string, init: JsonRequestIni
       // Some of these devices answer with text/html even on success.
       return { raw: text } as unknown as T;
     }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** fetch() returning raw bytes + content-type, with the same hard timeout.
+ * For binary endpoints (media downloads, profile pictures) where
+ * requestJson()'s always-parse-as-JSON behaviour is wrong. */
+export async function requestBytes(
+  url: string,
+  init: JsonRequestInit = {}
+): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const { method = "GET", headers = {}, timeoutMs = 15_000 } = init;
+  const safeHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    assertSafeHeaderValue(v, `header ${k}`);
+    safeHeaders[k] = v;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method, headers: safeHeaders, signal: controller.signal, cache: "no-store" });
+    if (!res.ok) {
+      throw new ProviderHttpError(`${method} ${url} failed: ${res.status}`, res.status, "");
+    }
+    const arr = await res.arrayBuffer();
+    return { bytes: Buffer.from(arr), contentType: res.headers.get("content-type") };
   } finally {
     clearTimeout(timer);
   }
