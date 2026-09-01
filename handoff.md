@@ -1,5 +1,45 @@
 # Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE, last build/deploy in flight. 33 session commits on `main`, NONE pushed (H4). Read "RIGHT NOW".
 
+## ▶ "claude continue" — the remaining work, in order
+
+When the operator says **"claude continue"**, work through this list top to
+bottom. Full detail for each item is in "RIGHT NOW" and "Operator TODO" below.
+
+1. **Finish the pending deploy** — `b056448` (admin Rooms UI fix). Its
+   `docker compose build web cdr-listener` was running on the VPS at session
+   end. Run:
+   ```
+   ssh root@187.53.128.252 "cd /opt/algo-pbx && docker compose build web cdr-listener && docker compose up -d --no-deps web cdr-listener && sleep 15 && docker inspect algo-web --format '{{.State.Health.Status}}' && docker exec algo-web node node_modules/prisma/build/index.js migrate status 2>&1 | tail -4"
+   ```
+   Expect `healthy` + 21 migrations, no pending. Source already tar-synced.
+2. **Check the openwa WhatsApp session is connected** — after any restart it
+   sits `disconnected` and needs an explicit start:
+   ```
+   ssh root@187.53.128.252 'docker exec algo-web node -e "fetch(\"http://openwa:2785/api/sessions\",{headers:{\"X-API-Key\":process.env.OPENWA_API_KEY}}).then(r=>r.json()).then(s=>console.log(s.map(x=>x.name+\": \"+x.status).join(\"\\n\")))"'
+   ```
+   If `sim1-*` is not `ready`, POST `.../api/sessions/eabd9bd2-3374-40e0-97c2-99ffc22e8667/start` (see item 5 in Operator TODO).
+3. **Drive the click-through with the operator** — the checklist in "Operator
+   TODO #3": redesign both themes, CRM contact→deal→Kanban→task→timeline,
+   WhatsApp thread (history fill / voice notes / avatars / send a voice note /
+   load earlier), WhatsApp at 390px, `/admin/rooms` activity list, Reports
+   tabs, screen-pop on a real inbound call + the disposition prompt.
+   Fix anything that's broken.
+4. **S6 recording-announcement WAVs** — generate + deploy per
+   `pbx_configs/sounds/README.md`, then live-test the recording toggle
+   (`docs/S6-real-call-test-plan.md`). Recording already works; only the
+   spoken "this call may be recorded" prompt is missing.
+5. **Manager-merge (Phase MM)** — never live-call-tested. Do a deliberate test
+   call (`LLM.md §30`).
+6. **Ask the operator about `git push`** (H4) — 44 unpushed commits, PUBLIC
+   repo. Do not push without an explicit yes.
+7. **Optional / infra decision** — if the operator wants unlimited
+   WhatsApp-Web scroll-back, plan the `OPENWA_ENGINE=whatsapp-web.js` switch
+   (RAM cost — see "To get WhatsApp EXACTLY like WhatsApp Web" below).
+8. **SIM ports 2–4** — still blocked on the operator having phone numbers to
+   scan. Pure ops.
+
+---
+
 ## RIGHT NOW — exact resume state (2026-09-01, end of session)
 
 **Plan:** `~/.claude/plans/refer-the-handoff-and-goofy-bentley.md` (a task graph).
