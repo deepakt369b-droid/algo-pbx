@@ -74,19 +74,19 @@ export default function SmsAdminPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">SIM SMS</h1>
-      <p className="max-w-2xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">SIM SMS</h1>
+      <p className="max-w-2xl text-center text-xs text-tertiary">
         Inbound SMS on the Dinstar SIMs. OTP/verification-code-shaped messages are withheld from every
         agent-facing view by default — an agent must request access here before seeing one, and the
         request expires 15 minutes after approval.
       </p>
 
       <div className="glass-card flex w-full max-w-md flex-col items-center gap-3 p-6">
-        <button onClick={pollNow} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+        <button onClick={pollNow} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
           Check for new SMS now
         </button>
-        {pollMessage && <p className="text-xs text-slate-500">{pollMessage}</p>}
-        <p className="text-xs text-slate-600">
+        {pollMessage && <p className="text-xs text-tertiary">{pollMessage}</p>}
+        <p className="text-xs text-tertiary">
           The Dinstar gateway has no push webhook — new SMS only arrives here on a poll. Wire this
           route to a schedule for unattended ingestion once a human is available to authenticate it —
           see the route&apos;s own header comment.
@@ -94,15 +94,15 @@ export default function SmsAdminPage() {
       </div>
 
       <div className="glass-card w-full max-w-2xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           SIM SMS inbox ({smsConversations.length})
         </h2>
         {smsConversations.length === 0 ? (
-          <p className="text-slate-500">
+          <p className="text-tertiary">
             No SMS conversations yet — they appear here once the gateway ingests an inbound message.
           </p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {smsConversations.map((c) => (
               <li key={c.id}>
                 <button
@@ -113,12 +113,12 @@ export default function SmsAdminPage() {
                   <span>
                     {c.contact.displayName ?? c.contact.numberE164}
                     {c.unreadCount > 0 && (
-                      <span className="ml-2 rounded-full bg-cyan px-1.5 py-0.5 text-[10px] font-semibold text-background">
+                      <span className="ml-2 rounded-full bg-cyan px-1.5 py-0.5 text-[10px] font-semibold text-accent-fg">
                         {c.unreadCount} unread
                       </span>
                     )}
                   </span>
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-tertiary">
                     {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : ""}
                   </span>
                 </button>
@@ -129,29 +129,29 @@ export default function SmsAdminPage() {
       </div>
 
       <div className="glass-card w-full max-w-2xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Pending access requests ({requests.length})
         </h2>
         {requests.length === 0 ? (
-          <p className="text-slate-500">Nothing pending.</p>
+          <p className="text-tertiary">Nothing pending.</p>
         ) : (
-          <ul className="flex flex-col gap-3 text-sm text-slate-200">
+          <ul className="flex flex-col gap-3 text-sm text-primary">
             {requests.map((r) => (
               <li key={r.id} className="flex items-center justify-between border-t border-border pt-3 first:border-0 first:pt-0">
                 <div>
                   <p>
-                    {r.requestedBy.name} <span className="text-xs text-slate-500">({r.requestedBy.email})</span>
+                    {r.requestedBy.name} <span className="text-xs text-tertiary">({r.requestedBy.email})</span>
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-tertiary">
                     requested {new Date(r.createdAt).toLocaleString()} — message from{" "}
                     {new Date(r.message.createdAt).toLocaleString()}
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => decide(r.id, "approve")} className="text-xs text-green-400 hover:text-green-300">
+                  <button onClick={() => decide(r.id, "approve")} className="text-xs text-success hover:text-success">
                     Approve
                   </button>
-                  <button onClick={() => decide(r.id, "decline")} className="text-xs text-red-400 hover:text-red-300">
+                  <button onClick={() => decide(r.id, "decline")} className="text-xs text-danger hover:text-danger">
                     Decline
                   </button>
                 </div>
@@ -168,8 +168,8 @@ export default function SmsAdminPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">SMS thread</h3>
-              <button onClick={() => setOpenThreadId(null)} className="text-xs text-slate-500 hover:text-slate-200">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-secondary">SMS thread</h3>
+              <button onClick={() => setOpenThreadId(null)} className="text-xs text-tertiary hover:text-primary">
                 Close
               </button>
             </div>

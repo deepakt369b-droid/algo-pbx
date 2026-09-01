@@ -41,15 +41,15 @@ export default function WhatsAppAdminPage() {
   return (
     <div className="flex w-full flex-col items-center gap-6">
       <div className="text-center">
-        <h1 className="text-xl font-semibold text-slate-100">WhatsApp SIM Ports</h1>
-        <p className="mt-1 max-w-2xl text-xs text-slate-500">
+        <h1 className="text-xl font-semibold text-primary">WhatsApp SIM Ports</h1>
+        <p className="mt-1 max-w-2xl text-xs text-tertiary">
           One WhatsApp number per Dinstar GSM port — all four slots below stay live at once, each with
           its own pairing code or QR. Pairing and logout are admin-only; agents see a read-only
           connection status in their own chat panel.
         </p>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-secondary">
           {connectedCount}/4 connected · {instances.length}/4 ports in use
-          {connectedCount === 4 && <span className="ml-2 text-green-400">all linked</span>}
+          {connectedCount === 4 && <span className="ml-2 text-success">all linked</span>}
         </p>
       </div>
 

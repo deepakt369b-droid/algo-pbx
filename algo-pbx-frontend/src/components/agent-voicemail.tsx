@@ -68,7 +68,7 @@ export function AgentVoicemail() {
   if (error && messages.length === 0) {
     return (
       <div className="glass-card w-full max-w-2xl p-6">
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-danger">{error}</p>
       </div>
     );
   }
@@ -76,16 +76,16 @@ export function AgentVoicemail() {
 
   return (
     <div className="glass-card w-full max-w-2xl p-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
         Voicemail
       </h2>
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-      <ul className="flex flex-col gap-3 text-sm text-slate-200">
+      {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+      <ul className="flex flex-col gap-3 text-sm text-primary">
         {messages.map((m) => (
           <li key={m.id} className="flex items-center justify-between gap-3 border-t border-border pt-3 first:border-0 first:pt-0">
             <div>
               <p>{m.callerId ?? "Unknown caller"}</p>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-tertiary">
                 {m.origtime ? new Date(m.origtime * 1000).toLocaleString() : "—"}
                 {m.durationSec ? ` · ${m.durationSec}s` : ""}
               </p>
@@ -94,15 +94,15 @@ export function AgentVoicemail() {
               <audio controls src={m.audioUrl} className="h-8" />
               {confirmDeleteId === m.id ? (
                 <span className="flex items-center gap-1 text-xs">
-                  <button onClick={() => remove(m.id)} className="text-red-400 hover:text-red-300">
+                  <button onClick={() => remove(m.id)} className="text-danger hover:text-danger">
                     Confirm
                   </button>
-                  <button onClick={() => setConfirmDeleteId(null)} className="text-slate-500">
+                  <button onClick={() => setConfirmDeleteId(null)} className="text-tertiary">
                     x
                   </button>
                 </span>
               ) : (
-                <button onClick={() => setConfirmDeleteId(m.id)} className="text-xs text-slate-500 hover:text-red-400">
+                <button onClick={() => setConfirmDeleteId(m.id)} className="text-xs text-tertiary hover:text-danger">
                   Delete
                 </button>
               )}

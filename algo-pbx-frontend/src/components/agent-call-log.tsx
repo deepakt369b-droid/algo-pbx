@@ -61,7 +61,7 @@ export function AgentCallLog() {
   if (error && calls.length === 0) {
     return (
       <div className="glass-card w-full max-w-2xl p-6">
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-danger">{error}</p>
       </div>
     );
   }
@@ -69,17 +69,17 @@ export function AgentCallLog() {
   if (calls.length === 0) {
     return (
       <div className="glass-card w-full max-w-2xl p-6">
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Call History</h2>
-        <p className="text-xs text-slate-500">No calls yet.</p>
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-secondary">Call History</h2>
+        <p className="text-xs text-tertiary">No calls yet.</p>
       </div>
     );
   }
 
   return (
     <div className="glass-card w-full max-w-2xl p-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Call History</h2>
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-      <ul className="flex flex-col gap-3 text-sm text-slate-200">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">Call History</h2>
+      {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+      <ul className="flex flex-col gap-3 text-sm text-primary">
         {calls.map((c) => {
           const otherParty = c.direction === "outbound" ? c.destination : c.callerNumber;
           const displayName = c.direction === "outbound" ? null : c.callerDisplayName;
@@ -90,12 +90,12 @@ export function AgentCallLog() {
             >
               <div>
                 <p>
-                  <span className="mr-2 text-xs uppercase text-slate-500">
+                  <span className="mr-2 text-xs uppercase text-tertiary">
                     {c.direction === "outbound" ? "Out" : c.direction === "inbound" ? "In" : "Internal"}
                   </span>
                   {displayName ?? otherParty}
                 </p>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-tertiary">
                   {new Date(c.startedAt).toLocaleString()} · {c.disposition} · {formatDuration(c.billsecSec)}
                   {c.callerContactId && (
                     <>

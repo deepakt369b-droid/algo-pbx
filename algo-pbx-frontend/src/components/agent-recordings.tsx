@@ -69,7 +69,7 @@ export function AgentRecordings() {
   if (error && recordings.length === 0) {
     return (
       <div className="glass-card w-full max-w-2xl p-6">
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-danger">{error}</p>
       </div>
     );
   }
@@ -77,11 +77,11 @@ export function AgentRecordings() {
 
   return (
     <div className="glass-card w-full max-w-2xl p-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
         My Recent Recordings
       </h2>
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-      <ul className="flex flex-col gap-3 text-sm text-slate-200">
+      {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+      <ul className="flex flex-col gap-3 text-sm text-primary">
         {recordings.map((r) => (
           <li key={r.id} className="flex items-center justify-between gap-3 border-t border-border pt-3 first:border-0 first:pt-0">
             <div>
@@ -89,11 +89,11 @@ export function AgentRecordings() {
                 {r.cdr.direction === "outbound" ? r.cdr.destination : r.cdr.callerNumber} —{" "}
                 {new Date(r.cdr.startedAt).toLocaleString()}
               </p>
-              <p className="text-xs text-slate-500">{r.cdr.durationSec}s</p>
+              <p className="text-xs text-tertiary">{r.cdr.durationSec}s</p>
             </div>
             <div className="flex items-center gap-3">
               <audio controls src={r.recordingUrl} className="h-8" />
-              <button onClick={() => hide(r.id)} className="text-xs text-slate-500 hover:text-red-400">
+              <button onClick={() => hide(r.id)} className="text-xs text-tertiary hover:text-danger">
                 Hide
               </button>
             </div>

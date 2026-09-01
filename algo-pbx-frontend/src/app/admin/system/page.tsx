@@ -16,10 +16,10 @@ interface HealthCheck {
 const REFRESH_INTERVAL_MS = 15000;
 
 const STATUS_STYLE: Record<HealthCheck["status"], { dot: string; text: string; label: string }> = {
-  ok: { dot: "bg-green-400", text: "text-green-400", label: "OK" },
-  warn: { dot: "bg-yellow-400", text: "text-yellow-400", label: "Warning" },
-  fail: { dot: "bg-red-400", text: "text-red-400", label: "Failing" },
-  unknown: { dot: "bg-slate-500", text: "text-slate-500", label: "Unknown" },
+  ok: { dot: "bg-success", text: "text-success", label: "OK" },
+  warn: { dot: "bg-warning", text: "text-warning", label: "Warning" },
+  fail: { dot: "bg-danger", text: "text-danger", label: "Failing" },
+  unknown: { dot: "bg-surface-hover", text: "text-tertiary", label: "Unknown" },
 };
 
 // System readiness — the aggregated, authenticated view behind
@@ -57,8 +57,8 @@ export default function SystemPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">System Readiness</h1>
-      <p className="max-w-2xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">System Readiness</h1>
+      <p className="max-w-2xl text-center text-xs text-tertiary">
         Every dependency this product needs, checked live. A warning or failure links to where to fix it.
       </p>
 
@@ -67,13 +67,13 @@ export default function SystemPage() {
           <span className={`h-2.5 w-2.5 rounded-full ${overallStyle.dot}`} />
           Overall: {overallStyle.label}
         </span>
-        <button onClick={load} disabled={refreshing} className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50">
+        <button onClick={load} disabled={refreshing} className="text-xs text-secondary hover:text-primary disabled:opacity-50">
           {refreshing ? "Checking…" : "Re-check all"}
         </button>
       </div>
 
       {error && (
-        <div className="w-full max-w-2xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-2xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {error}
         </div>
       )}
@@ -84,15 +84,15 @@ export default function SystemPage() {
           return (
             <div key={c.id} className="glass-card flex flex-col gap-1 p-4">
               <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                <span className="flex items-center gap-2 text-sm font-medium text-primary">
                   <span className={`h-2 w-2 rounded-full ${style.dot}`} />
                   {c.label}
                 </span>
                 <span className={`text-xs ${style.text}`}>{style.label}</span>
               </div>
-              <p className="text-xs text-slate-500">{c.detail}</p>
+              <p className="text-xs text-tertiary">{c.detail}</p>
               {c.hint && (c.status === "warn" || c.status === "fail") && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-secondary">
                   {c.hint}
                   {c.docsHref && (
                     <>

@@ -25,7 +25,7 @@ function DeliveryTicks({ status, outbound }: { status: string; outbound: boolean
   const failed = upper === "FAILED";
   const pending = upper === "" || upper === "PENDING" || upper === "QUEUED" || upper === "SENDING";
   return (
-    <span className={cn("ml-1 text-[10px]", failed ? "text-red-400" : "opacity-60")}>
+    <span className={cn("ml-1 text-[10px]", failed ? "text-danger" : "opacity-60")}>
       {failed ? "!" : pending ? "✓" : "✓✓"}
     </span>
   );
@@ -59,22 +59,22 @@ function MessageBubble({ message, onRequestAccess }: { message: ChatMessageDto; 
       className={cn(
         "max-w-[72%] rounded-2xl px-3 py-2 text-sm shadow-sm",
         outbound
-          ? "ml-auto rounded-br-sm bg-cyan text-background"
-          : "mr-auto rounded-bl-sm bg-surface text-slate-200"
+          ? "ml-auto rounded-br-sm bg-cyan text-accent-fg"
+          : "mr-auto rounded-bl-sm bg-surface text-primary"
       )}
     >
       {message.sensitive && !message.body ? (
         <div className="flex flex-col gap-1">
-          <p className="text-xs italic text-slate-400">🔒 Sensitive message withheld</p>
+          <p className="text-xs italic text-secondary">🔒 Sensitive message withheld</p>
           {message.accessRequestStatus === "none" || message.accessRequestStatus === "expired" ? (
             <button
               onClick={() => onRequestAccess(message.id)}
-              className="w-fit rounded bg-blue px-2 py-1 text-xs font-medium text-white"
+              className="w-fit rounded bg-blue px-2 py-1 text-xs font-medium text-primary"
             >
               Request access
             </button>
           ) : (
-            <p className="text-xs text-slate-500">Request: {message.accessRequestStatus}</p>
+            <p className="text-xs text-tertiary">Request: {message.accessRequestStatus}</p>
           )}
         </div>
       ) : (
@@ -102,7 +102,7 @@ function MessageBubble({ message, onRequestAccess }: { message: ChatMessageDto; 
           )}
         </>
       )}
-      <p className={cn("mt-1 text-[10px]", outbound ? "text-background/70" : "opacity-60")}>
+      <p className={cn("mt-1 text-[10px]", outbound ? "text-accent-fg" : "opacity-60")}>
         {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         <DeliveryTicks status={message.deliveryStatus} outbound={outbound} />
       </p>
@@ -206,8 +206,8 @@ export function ChatThread({
       {/* Minimal header: contact + channel + a connection dot only. No
           status button, no settings button — explicitly not wanted here. */}
       <div className="mb-2 flex flex-shrink-0 items-center justify-between border-b border-border pb-2">
-        <p className="truncate text-sm font-medium text-slate-100">{contactLabel ?? "Conversation"}</p>
-        <span className="flex-shrink-0 rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+        <p className="truncate text-sm font-medium text-primary">{contactLabel ?? "Conversation"}</p>
+        <span className="flex-shrink-0 rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-medium text-secondary">
           {channel === "WHATSAPP" ? "WhatsApp" : "SMS"}
         </span>
       </div>
@@ -218,11 +218,11 @@ export function ChatThread({
             already needed elsewhere) — an error is not "no messages yet",
             an agent needs to know the thread failed to load rather than
             conclude the customer never wrote back. */}
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-danger">{error}</p>}
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} onRequestAccess={requestAccess} />
         ))}
-        {!error && messages.length === 0 && <p className="text-xs text-slate-500">No messages yet.</p>}
+        {!error && messages.length === 0 && <p className="text-xs text-tertiary">No messages yet.</p>}
       </div>
       <MessageComposer conversationId={conversationId} channel={channel} onSent={load} />
     </div>

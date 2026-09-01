@@ -12,7 +12,7 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 export default function AgentChatPage({ searchParams }: { searchParams: { number?: string } }) {
   return (
     <div className="flex w-full flex-col items-center gap-6 p-8">
-      <h1 className="text-xl font-semibold text-slate-100">Chat</h1>
+      <h1 className="text-xl font-semibold text-primary">Chat</h1>
       <div className="w-full max-w-4xl">
         <ChatPanel initialNumber={searchParams.number} />
       </div>

@@ -46,8 +46,8 @@ export default function AuditPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Audit Log</h1>
-      <p className="max-w-xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Audit Log</h1>
+      <p className="max-w-xl text-center text-xs text-tertiary">
         Every recorded administrative/security-relevant action — sign-ins, recording hide/delete, supervisor
         intervention, settings changes, password resets, extension deletion.
       </p>
@@ -65,26 +65,26 @@ export default function AuditPage() {
           placeholder="Filter by actor email"
           className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
         />
-        <button onClick={load} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+        <button onClick={load} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
           Filter
         </button>
       </div>
 
       {error && (
-        <div className="w-full max-w-3xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-3xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {error}
         </div>
       )}
 
       <div className="glass-card w-full max-w-3xl overflow-x-auto p-6">
         {loading ? (
-          <p className="text-slate-500">Loading…</p>
+          <p className="text-tertiary">Loading…</p>
         ) : logs.length === 0 ? (
-          <p className="text-slate-500">No matching entries.</p>
+          <p className="text-tertiary">No matching entries.</p>
         ) : (
-          <table className="w-full text-left text-xs text-slate-300">
+          <table className="w-full text-left text-xs text-secondary">
             <thead>
-              <tr className="border-b border-border text-slate-500">
+              <tr className="border-b border-border text-tertiary">
                 <th className="pb-2 pr-3">When</th>
                 <th className="pb-2 pr-3">Action</th>
                 <th className="pb-2 pr-3">Actor</th>
@@ -94,12 +94,12 @@ export default function AuditPage() {
             <tbody>
               {logs.map((l) => (
                 <tr key={l.id} className="border-b border-border/50">
-                  <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{new Date(l.createdAt).toLocaleString()}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap text-tertiary">{new Date(l.createdAt).toLocaleString()}</td>
                   <td className="py-2 pr-3 font-mono text-cyan">{l.action}</td>
                   <td className="py-2 pr-3">
-                    {l.actor.name} <span className="text-slate-500">({l.actor.role})</span>
+                    {l.actor.name} <span className="text-tertiary">({l.actor.role})</span>
                   </td>
-                  <td className="py-2 text-slate-500">
+                  <td className="py-2 text-tertiary">
                     {l.targetId && <span className="mr-2">target: {l.targetId}</span>}
                     {l.metadata && Object.keys(l.metadata).length > 0 && <span className="break-all">{JSON.stringify(l.metadata)}</span>}
                   </td>

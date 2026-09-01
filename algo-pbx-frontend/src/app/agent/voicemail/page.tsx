@@ -10,7 +10,7 @@ import { AgentVoicemail } from "@/components/agent-voicemail";
 export default function AgentVoicemailPage() {
   return (
     <div className="flex w-full flex-col items-center gap-6 p-8">
-      <h1 className="text-xl font-semibold text-slate-100">Voicemail</h1>
+      <h1 className="text-xl font-semibold text-primary">Voicemail</h1>
       <AgentVoicemail />
     </div>
   );

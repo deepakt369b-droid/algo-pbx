@@ -159,21 +159,21 @@ export default function RoomsPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Rooms</h1>
-      <p className="max-w-2xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Rooms</h1>
+      <p className="max-w-2xl text-center text-xs text-tertiary">
         A saved group of agents to supervise together — live calls and WhatsApp/SMS conversations,
         side by side. No data isolation: this only changes what you see, not what agents can access.
       </p>
 
       {loadError && (
-        <div className="w-full max-w-4xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-4xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {loadError}
         </div>
       )}
 
       <div className="flex w-full max-w-4xl gap-6">
         <div className="glass-card flex w-64 flex-shrink-0 flex-col gap-3 p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Rooms</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Rooms</h2>
           <ul className="flex flex-col gap-1">
             {rooms.map((r) => (
               <li key={r.id} className="flex items-center justify-between">
@@ -182,21 +182,21 @@ export default function RoomsPage() {
                     setSelectedRoomId(r.id);
                     setRenaming(false);
                   }}
-                  className={`flex-1 rounded px-2 py-1 text-left text-sm ${selectedRoomId === r.id ? "bg-surface text-cyan" : "text-slate-300 hover:text-slate-100"}`}
+                  className={`flex-1 rounded px-2 py-1 text-left text-sm ${selectedRoomId === r.id ? "bg-surface text-cyan" : "text-secondary hover:text-primary"}`}
                 >
-                  {r.name} <span className="text-xs text-slate-500">({r.memberUserIds.length})</span>
+                  {r.name} <span className="text-xs text-tertiary">({r.memberUserIds.length})</span>
                 </button>
                 {confirmDeleteId === r.id ? (
                   <span className="flex items-center gap-1 text-xs">
-                    <button onClick={() => deleteRoom(r.id)} className="text-red-400 hover:text-red-300">
+                    <button onClick={() => deleteRoom(r.id)} className="text-danger hover:text-danger">
                       Confirm
                     </button>
-                    <button onClick={() => setConfirmDeleteId(null)} className="text-slate-500">
+                    <button onClick={() => setConfirmDeleteId(null)} className="text-tertiary">
                       x
                     </button>
                   </span>
                 ) : (
-                  <button onClick={() => setConfirmDeleteId(r.id)} className="px-1 text-xs text-red-400 hover:text-red-300">
+                  <button onClick={() => setConfirmDeleteId(r.id)} className="px-1 text-xs text-danger hover:text-danger">
                     delete
                   </button>
                 )}
@@ -205,7 +205,7 @@ export default function RoomsPage() {
           </ul>
 
           {users.length <= 1 ? (
-            <p className="border-t border-border pt-3 text-xs text-slate-600">
+            <p className="border-t border-border pt-3 text-xs text-tertiary">
               Only one staff account exists. Rooms group multiple agents — create agents first in{" "}
               <a href="/admin/users" className="text-cyan hover:underline">
                 Users
@@ -222,17 +222,17 @@ export default function RoomsPage() {
               />
               <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
                 {users.map((u) => (
-                  <label key={u.id} className="flex items-center gap-2 text-xs text-slate-300">
+                  <label key={u.id} className="flex items-center gap-2 text-xs text-secondary">
                     <input type="checkbox" checked={newRoomMembers.has(u.id)} onChange={() => toggleMember(u.id)} />
                     {u.name} ({u.role})
                   </label>
                 ))}
               </div>
-              <button onClick={createRoom} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background">
+              <button onClick={createRoom} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg">
                 Create room
               </button>
               {createMessage && (
-                <p className={`text-xs ${createMessage.kind === "error" ? "text-red-400" : "text-green-400"}`}>{createMessage.text}</p>
+                <p className={`text-xs ${createMessage.kind === "error" ? "text-danger" : "text-success"}`}>{createMessage.text}</p>
               )}
             </div>
           )}
@@ -240,7 +240,7 @@ export default function RoomsPage() {
 
         <div className="flex flex-1 flex-col gap-4">
           {!selectedRoom ? (
-            <p className="text-slate-500">Select a room to view its activity.</p>
+            <p className="text-tertiary">Select a room to view its activity.</p>
           ) : (
             <>
               <div className="flex items-center gap-2">
@@ -254,19 +254,19 @@ export default function RoomsPage() {
                     <button onClick={rename} className="text-xs text-cyan hover:underline">
                       Save
                     </button>
-                    <button onClick={() => setRenaming(false)} className="text-xs text-slate-500">
+                    <button onClick={() => setRenaming(false)} className="text-xs text-tertiary">
                       Cancel
                     </button>
                   </>
                 ) : (
                   <>
-                    <h2 className="text-sm font-semibold text-slate-200">{selectedRoom.name}</h2>
+                    <h2 className="text-sm font-semibold text-primary">{selectedRoom.name}</h2>
                     <button
                       onClick={() => {
                         setRenaming(true);
                         setRenameValue(selectedRoom.name);
                       }}
-                      className="text-xs text-slate-500 hover:text-slate-300"
+                      className="text-xs text-tertiary hover:text-primary"
                     >
                       rename
                     </button>
@@ -275,22 +275,22 @@ export default function RoomsPage() {
               </div>
 
               {activityError && (
-                <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-xs text-red-300">{activityError}</div>
+                <div className="rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-xs text-danger">{activityError}</div>
               )}
 
               {activity && (
                 <>
                   <div className="glass-card p-4">
-                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">Members</h3>
+                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-secondary">Members</h3>
                     {activity.members.length === 0 ? (
-                      <p className="text-xs text-slate-500">No members in this room yet.</p>
+                      <p className="text-xs text-tertiary">No members in this room yet.</p>
                     ) : (
                       <ul className="flex flex-col gap-2">
                         {activity.members.map((m) => (
                           <li key={m.id} className="flex items-center justify-between border-t border-border pt-2 text-sm first:border-0 first:pt-0">
                             <div>
-                              <p className="text-slate-200">{m.name}</p>
-                              <p className="text-xs text-slate-500">
+                              <p className="text-primary">{m.name}</p>
+                              <p className="text-xs text-tertiary">
                                 {m.extension ? `ext. ${m.extension.number} · ${m.extension.status}` : "no extension"}
                                 {m.extension?.liveChannel && (
                                   <span className="ml-2 text-cyan">
@@ -299,7 +299,7 @@ export default function RoomsPage() {
                                 )}
                               </p>
                               {m.waInstance && (
-                                <p className="text-xs text-slate-500">
+                                <p className="text-xs text-tertiary">
                                   WhatsApp SIM {m.waInstance.simPort} · {m.waInstance.status}
                                 </p>
                               )}
@@ -311,13 +311,13 @@ export default function RoomsPage() {
                   </div>
 
                   <div className="glass-card p-4">
-                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">
+                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-secondary">
                       WhatsApp / SMS activity
                     </h3>
                     {activity.conversations.length === 0 ? (
-                      <p className="text-xs text-slate-500">No conversations assigned to this room&apos;s members yet.</p>
+                      <p className="text-xs text-tertiary">No conversations assigned to this room&apos;s members yet.</p>
                     ) : (
-                      <ul className="flex flex-col gap-3 text-sm text-slate-200">
+                      <ul className="flex flex-col gap-3 text-sm text-primary">
                         {activity.conversations.map((c) => (
                           <li key={c.id} className="border-t border-border pt-2 first:border-0 first:pt-0">
                             <button
@@ -331,20 +331,20 @@ export default function RoomsPage() {
                                   <span className="mr-2 rounded bg-surface px-1.5 py-0.5 text-xs text-cyan">{c.channel}</span>
                                   {c.contact.displayName ?? c.contact.numberE164}
                                   {c.unreadCount > 0 && (
-                                    <span className="ml-2 rounded-full bg-cyan px-1.5 py-0.5 text-[10px] font-semibold text-background">
+                                    <span className="ml-2 rounded-full bg-cyan px-1.5 py-0.5 text-[10px] font-semibold text-accent-fg">
                                       {c.unreadCount} unread
                                     </span>
                                   )}
                                   {c.assignedAgentId && membersById.get(c.assignedAgentId) && (
-                                    <span className="ml-2 text-xs text-slate-500">— {membersById.get(c.assignedAgentId)!.name}</span>
+                                    <span className="ml-2 text-xs text-tertiary">— {membersById.get(c.assignedAgentId)!.name}</span>
                                   )}
                                 </span>
-                                <span className="text-xs text-slate-500">
+                                <span className="text-xs text-tertiary">
                                   {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : ""}
                                 </span>
                               </div>
                               {c.recentMessages.length > 0 && (
-                                <p className="mt-1 truncate text-xs text-slate-500">
+                                <p className="mt-1 truncate text-xs text-tertiary">
                                   {c.recentMessages[0].body ?? (c.recentMessages[0].sensitive ? "(sensitive — hidden)" : "(no text)")}
                                 </p>
                               )}
@@ -368,8 +368,8 @@ export default function RoomsPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Conversation</h3>
-              <button onClick={() => setOpenThreadId(null)} className="text-xs text-slate-500 hover:text-slate-200">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-secondary">Conversation</h3>
+              <button onClick={() => setOpenThreadId(null)} className="text-xs text-tertiary hover:text-primary">
                 Close
               </button>
             </div>

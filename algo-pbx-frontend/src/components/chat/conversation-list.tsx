@@ -15,8 +15,8 @@ interface ConversationSummary {
 }
 
 const CHANNEL_BADGE: Record<ConversationSummary["channel"], string> = {
-  WHATSAPP: "bg-green-900/40 text-green-400",
-  SMS: "bg-blue-900/40 text-blue-300",
+  WHATSAPP: "bg-success-subtle text-success",
+  SMS: "bg-accent-subtle text-accent",
 };
 
 // Polls GET /api/messaging/conversations every 5s — same pattern as
@@ -119,9 +119,9 @@ export function ConversationList({
   return (
     <div className="glass-card flex h-full w-72 flex-shrink-0 flex-col gap-2 p-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Conversations</h2>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-secondary">Conversations</h2>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-slate-500">
+          <label className="flex items-center gap-1 text-xs text-tertiary">
             <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
             Mine
           </label>
@@ -146,38 +146,38 @@ export function ConversationList({
             placeholder="Phone number, e.g. +9715XXXXXXXX"
             value={composeNumber}
             onChange={(e) => setComposeNumber(e.target.value)}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary"
           />
           <select
             value={composeChannel}
             onChange={(e) => setComposeChannel(e.target.value as ConversationSummary["channel"])}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary"
           >
             <option value="WHATSAPP">WhatsApp</option>
             <option value="SMS">SMS</option>
           </select>
-          {composeError && <p className="text-[10px] text-red-400">{composeError}</p>}
+          {composeError && <p className="text-[10px] text-danger">{composeError}</p>}
           <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setComposing(false)}
-              className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-surface"
+              className="rounded px-2 py-1 text-xs text-tertiary hover:bg-surface"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={composeBusy}
-              className="rounded bg-cyan px-2 py-1 text-xs font-medium text-background disabled:opacity-50"
+              className="rounded bg-cyan px-2 py-1 text-xs font-medium text-accent-fg disabled:opacity-50"
             >
               {composeBusy ? "Starting…" : "Start"}
             </button>
           </div>
         </form>
       )}
-      {stale && <p className="text-[10px] text-yellow-500">Live updates unavailable — retrying…</p>}
+      {stale && <p className="text-[10px] text-warning">Live updates unavailable — retrying…</p>}
       <ul className="flex flex-1 flex-col gap-1 overflow-y-auto">
-        {conversations.length === 0 && <li className="text-xs text-slate-500">No conversations yet.</li>}
+        {conversations.length === 0 && <li className="text-xs text-tertiary">No conversations yet.</li>}
         {conversations.map((c) => {
           const unread = clearedIds.has(c.id) ? 0 : c.unreadCount;
           return (
@@ -198,11 +198,11 @@ export function ConversationList({
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="truncate text-slate-200">
+                  <span className="truncate text-primary">
                     {c.contact.displayName ?? c.contact.numberE164}
                   </span>
                   {unread > 0 && (
-                    <span className="rounded-full bg-cyan px-1.5 text-xs font-medium text-background">
+                    <span className="rounded-full bg-cyan px-1.5 text-xs font-medium text-accent-fg">
                       {unread}
                     </span>
                   )}
@@ -211,7 +211,7 @@ export function ConversationList({
                   <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", CHANNEL_BADGE[c.channel])}>
                     {c.channel}
                   </span>
-                  {!c.assignedAgentId && <span className="text-[10px] text-slate-500">unassigned</span>}
+                  {!c.assignedAgentId && <span className="text-[10px] text-tertiary">unassigned</span>}
                   <Link
                     href={`/agent?contact=${c.contact.id}`}
                     onClick={(e) => e.stopPropagation()}
@@ -221,7 +221,7 @@ export function ConversationList({
                     CRM
                   </Link>
                   {c.lastMessageAt && (
-                    <span className="ml-auto text-[10px] text-slate-600">
+                    <span className="ml-auto text-[10px] text-tertiary">
                       {new Date(c.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                     </span>
                   )}

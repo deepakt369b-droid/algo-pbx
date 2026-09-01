@@ -393,35 +393,35 @@ export default function ContactsAdminPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Contacts</h1>
-      <p className="max-w-2xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Contacts</h1>
+      <p className="max-w-2xl text-center text-xs text-tertiary">
         The CRM contact directory — owner, tags, notes, and history for every phone number. Every
         other messaging surface (conversation-list.tsx, admin/sms/page.tsx) reads
-        <code className="mx-1 text-slate-400">contact.displayName ?? contact.numberE164</code>
+        <code className="mx-1 text-secondary">contact.displayName ?? contact.numberE164</code>
         off this same table.
       </p>
 
       {loadError && (
-        <div className="w-full max-w-4xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-4xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {loadError}
         </div>
       )}
       {message && (
-        <div className="w-full max-w-4xl rounded-lg border border-cyan/30 bg-cyan/5 px-4 py-2 text-center text-xs text-slate-300">
+        <div className="w-full max-w-4xl rounded-lg border border-cyan/30 bg-cyan/5 px-4 py-2 text-center text-xs text-secondary">
           {message}
-          <button onClick={() => setMessage(null)} className="ml-3 text-slate-500 hover:text-slate-300">
+          <button onClick={() => setMessage(null)} className="ml-3 text-tertiary hover:text-primary">
             dismiss
           </button>
         </div>
       )}
 
       <div className="flex w-full max-w-5xl flex-wrap gap-2">
-        <button onClick={openCreate} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+        <button onClick={openCreate} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
           Add contact
         </button>
         <button
           onClick={() => setShowImport((v) => !v)}
-          className="rounded-lg border border-border px-4 py-2 text-sm text-slate-300 hover:border-cyan"
+          className="rounded-lg border border-border px-4 py-2 text-sm text-secondary hover:border-cyan"
         >
           {showImport ? "Hide bulk import" : "Bulk import"}
         </button>
@@ -430,37 +430,37 @@ export default function ContactsAdminPage() {
       {/* --- Create/edit form --- */}
       {showForm && (
         <div className="glass-card flex w-full max-w-5xl flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">
             {editingId ? "Edit contact" : "Add a contact"}
           </h2>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Name *
               <input
                 value={form.displayName}
                 onChange={(e) => setForm({ ...form, displayName: e.target.value })}
                 placeholder="e.g. Asha Rao"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               />
             </label>
 
             <div className="flex gap-2">
-              <label className="flex flex-1 flex-col gap-1 text-xs text-slate-400">
+              <label className="flex flex-1 flex-col gap-1 text-xs text-secondary">
                 Phone number *
                 <input
                   value={form.number}
                   onChange={(e) => setForm({ ...form, number: e.target.value })}
                   placeholder="050 123 4567 or +14155552671"
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
                 />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-slate-400">
+              <label className="flex flex-col gap-1 text-xs text-secondary">
                 Country
                 <select
                   value={form.country}
                   onChange={(e) => setForm({ ...form, country: e.target.value })}
-                  className="rounded-lg border border-border bg-background px-2 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                  className="rounded-lg border border-border bg-background px-2 py-2 text-sm text-primary outline-none focus:border-cyan"
                 >
                   {COMMON_COUNTRIES.map((c) => (
                     <option key={c.code} value={c.code}>
@@ -471,42 +471,42 @@ export default function ContactsAdminPage() {
               </label>
             </div>
 
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Email
               <input
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="optional"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               />
             </label>
 
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Company
               <input
                 value={form.company}
                 onChange={(e) => setForm({ ...form, company: e.target.value })}
                 placeholder="optional"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               />
             </label>
 
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Tags (comma-separated)
               <input
                 value={form.tagsInput}
                 onChange={(e) => setForm({ ...form, tagsInput: e.target.value })}
                 placeholder="e.g. vip, renewal"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               />
             </label>
 
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Owner
               <select
                 value={form.ownerId}
                 onChange={(e) => setForm({ ...form, ownerId: e.target.value })}
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               >
                 <option value="">Unassigned</option>
                 {activeAgents.map((a) => (
@@ -519,20 +519,20 @@ export default function ContactsAdminPage() {
             </label>
 
             {!editingId && (
-              <label className="flex flex-col gap-1 text-xs text-slate-400 sm:col-span-2">
+              <label className="flex flex-col gap-1 text-xs text-secondary sm:col-span-2">
                 Initial note (optional)
                 <textarea
                   value={form.initialNote}
                   onChange={(e) => setForm({ ...form, initialNote: e.target.value })}
                   rows={2}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
                 />
               </label>
             )}
           </div>
 
           {formError && (
-            <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+            <div className="rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger">
               {formError}
               {duplicateOf && (
                 <button
@@ -553,13 +553,13 @@ export default function ContactsAdminPage() {
             <button
               onClick={submitForm}
               disabled={saving}
-              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               {saving ? "Saving…" : editingId ? "Save changes" : "Add contact"}
             </button>
             <button
               onClick={() => setShowForm(false)}
-              className="rounded-lg border border-border px-4 py-2 text-sm text-slate-300"
+              className="rounded-lg border border-border px-4 py-2 text-sm text-secondary"
             >
               Cancel
             </button>
@@ -570,7 +570,7 @@ export default function ContactsAdminPage() {
       {/* --- Bulk import --- */}
       {showImport && (
         <div className="glass-card flex w-full max-w-5xl flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Bulk import</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Bulk import</h2>
 
           <div
             onDragOver={(e) => {
@@ -581,7 +581,7 @@ export default function ContactsAdminPage() {
             onDrop={onDrop}
             onClick={() => fileInputRef.current?.click()}
             className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center text-xs transition-colors ${
-              dragActive ? "border-cyan bg-cyan/5" : "border-border text-slate-500"
+              dragActive ? "border-cyan bg-cyan/5" : "border-border text-tertiary"
             }`}
           >
             <input
@@ -600,7 +600,7 @@ export default function ContactsAdminPage() {
               }}
             />
             {bulkFile ? (
-              <span className="text-slate-200">
+              <span className="text-primary">
                 {bulkFile.name}{" "}
                 <button
                   type="button"
@@ -610,7 +610,7 @@ export default function ContactsAdminPage() {
                     setPreview(null);
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}
-                  className="text-red-400 hover:text-red-300"
+                  className="text-danger hover:text-danger"
                 >
                   remove
                 </button>
@@ -620,7 +620,7 @@ export default function ContactsAdminPage() {
             )}
           </div>
 
-          <p className="text-center text-xs text-slate-500">— or paste &quot;name, phone&quot; lines below —</p>
+          <p className="text-center text-xs text-tertiary">— or paste &quot;name, phone&quot; lines below —</p>
 
           <textarea
             value={bulkText}
@@ -638,7 +638,7 @@ export default function ContactsAdminPage() {
           />
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Country for bare (non-+) numbers
               <select
                 value={bulkCountry}
@@ -662,7 +662,7 @@ export default function ContactsAdminPage() {
                 className="mt-5 w-16 rounded-lg border border-border bg-background px-2 py-2 text-sm uppercase outline-none focus:border-cyan"
               />
             )}
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
+            <label className="flex flex-col gap-1 text-xs text-secondary">
               Owner for the whole batch
               <select
                 value={bulkOwnerId}
@@ -679,21 +679,21 @@ export default function ContactsAdminPage() {
             </label>
           </div>
 
-          {bulkError && <p className="text-xs text-red-300">{bulkError}</p>}
+          {bulkError && <p className="text-xs text-danger">{bulkError}</p>}
 
           {!preview && !commitResult && (
             <button
               onClick={runPreview}
               disabled={bulkBusy || (bulkCountry === "OTHER" && customCountry.length !== 2)}
-              className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"
             >
               {bulkBusy ? "Parsing…" : "Preview import"}
             </button>
           )}
 
           {preview && (
-            <div className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-3 text-xs text-slate-300">
-              <p className="font-semibold text-slate-200">Preview — nothing has been imported yet</p>
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-3 text-xs text-secondary">
+              <p className="font-semibold text-primary">Preview — nothing has been imported yet</p>
 
               {preview.columns.length > 1 && (
                 <div className="flex flex-wrap gap-3">
@@ -740,17 +740,17 @@ export default function ContactsAdminPage() {
               <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <li>Total rows: {preview.total}</li>
                 <li className="text-cyan">Valid: {preview.validCount}</li>
-                <li className="text-red-400">Invalid: {preview.invalidCount}</li>
+                <li className="text-danger">Invalid: {preview.invalidCount}</li>
                 <li>Duplicates in file: {preview.duplicatesInFile}</li>
               </ul>
 
               {preview.invalidSample.length > 0 && (
                 <details>
-                  <summary className="cursor-pointer text-slate-400">
+                  <summary className="cursor-pointer text-secondary">
                     Sample of unparseable values ({preview.invalidSample.length}
                     {preview.invalidCount > preview.invalidSample.length ? "+" : ""})
                   </summary>
-                  <p className="mt-1 break-all text-slate-500">{preview.invalidSample.join(", ")}</p>
+                  <p className="mt-1 break-all text-tertiary">{preview.invalidSample.join(", ")}</p>
                 </details>
               )}
 
@@ -758,7 +758,7 @@ export default function ContactsAdminPage() {
                 <button
                   onClick={runCommit}
                   disabled={bulkBusy || preview.validCount === 0}
-                  className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+                  className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
                 >
                   {bulkBusy ? "Importing…" : `Import ${preview.validCount} contact${preview.validCount === 1 ? "" : "s"}`}
                 </button>
@@ -769,7 +769,7 @@ export default function ContactsAdminPage() {
                     setPhoneColumnOverride(null);
                     setNameColumnOverride(null);
                   }}
-                  className="rounded-lg border border-border px-4 py-2 text-sm text-slate-300"
+                  className="rounded-lg border border-border px-4 py-2 text-sm text-secondary"
                 >
                   Cancel
                 </button>
@@ -778,7 +778,7 @@ export default function ContactsAdminPage() {
           )}
 
           {commitResult && (
-            <div className="flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs text-slate-300">
+            <div className="flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs text-secondary">
               <p>
                 Imported {commitResult.imported} contact{commitResult.imported === 1 ? "" : "s"}.
                 {commitResult.alreadyExisted > 0 && ` ${commitResult.alreadyExisted} already existed and were skipped.`}
@@ -789,7 +789,7 @@ export default function ContactsAdminPage() {
                   Download rejected rows (CSV)
                 </button>
               )}
-              <button onClick={() => setCommitResult(null)} className="self-start text-slate-500 hover:text-slate-300">
+              <button onClick={() => setCommitResult(null)} className="self-start text-tertiary hover:text-primary">
                 Dismiss
               </button>
             </div>
@@ -800,21 +800,21 @@ export default function ContactsAdminPage() {
       {/* --- Search / filter bar --- */}
       <div className="glass-card w-full max-w-5xl p-6">
         <div className="mb-4 flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-xs text-slate-500">
+          <label className="flex flex-col gap-1 text-xs text-tertiary">
             Search
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Name, number, or company"
-              className="w-56 rounded border border-border bg-background px-2 py-1 text-sm text-slate-100 outline-none focus:border-cyan"
+              className="w-56 rounded border border-border bg-background px-2 py-1 text-sm text-primary outline-none focus:border-cyan"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs text-slate-500">
+          <label className="flex flex-col gap-1 text-xs text-tertiary">
             Owner
             <select
               value={ownerFilter}
               onChange={(e) => setOwnerFilter(e.target.value)}
-              className="rounded border border-border bg-background px-2 py-1 text-sm text-slate-100 outline-none focus:border-cyan"
+              className="rounded border border-border bg-background px-2 py-1 text-sm text-primary outline-none focus:border-cyan"
             >
               <option value="">All</option>
               <option value="unassigned">Unassigned</option>
@@ -825,12 +825,12 @@ export default function ContactsAdminPage() {
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-xs text-slate-500">
+          <label className="flex flex-col gap-1 text-xs text-tertiary">
             Tag
             <select
               value={tagFilter}
               onChange={(e) => setTagFilter(e.target.value)}
-              className="rounded border border-border bg-background px-2 py-1 text-sm text-slate-100 outline-none focus:border-cyan"
+              className="rounded border border-border bg-background px-2 py-1 text-sm text-primary outline-none focus:border-cyan"
             >
               <option value="">All</option>
               {allTags.map((t) => (
@@ -840,24 +840,24 @@ export default function ContactsAdminPage() {
               ))}
             </select>
           </label>
-          <button onClick={applyFilters} className="rounded bg-cyan px-3 py-1.5 text-xs font-medium text-background">
+          <button onClick={applyFilters} className="rounded bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg">
             Apply
           </button>
-          <button onClick={resetFilters} className="text-xs text-slate-400 hover:text-slate-200">
+          <button onClick={resetFilters} className="text-xs text-secondary hover:text-primary">
             Reset
           </button>
         </div>
 
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Contacts ({contacts.length})
         </h2>
-        {loading && <p className="text-slate-500">Loading contacts…</p>}
-        {!loading && contacts.length === 0 && <p className="text-slate-500">No contacts yet.</p>}
+        {loading && <p className="text-tertiary">Loading contacts…</p>}
+        {!loading && contacts.length === 0 && <p className="text-tertiary">No contacts yet.</p>}
         {!loading && contacts.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-300">
+            <table className="w-full text-left text-xs text-secondary">
               <thead>
-                <tr className="border-b border-border text-slate-500">
+                <tr className="border-b border-border text-tertiary">
                   <th className="pb-2 pr-3">Name</th>
                   <th className="pb-2 pr-3">Number</th>
                   <th className="pb-2 pr-3">Company</th>
@@ -870,17 +870,17 @@ export default function ContactsAdminPage() {
               <tbody>
                 {contacts.map((c) => (
                   <tr key={c.id} className="border-b border-border/50">
-                    <td className="py-2 pr-3 text-slate-100">{c.displayName ?? <span className="text-slate-500">—</span>}</td>
-                    <td className="py-2 pr-3 font-mono text-slate-400">{c.numberE164}</td>
-                    <td className="py-2 pr-3">{c.company ?? <span className="text-slate-600">—</span>}</td>
+                    <td className="py-2 pr-3 text-primary">{c.displayName ?? <span className="text-tertiary">—</span>}</td>
+                    <td className="py-2 pr-3 font-mono text-secondary">{c.numberE164}</td>
+                    <td className="py-2 pr-3">{c.company ?? <span className="text-tertiary">—</span>}</td>
                     <td className="py-2 pr-3">
                       {c.owner ? (
                         <span>
                           {c.owner.name}
-                          {c.owner.extension ? <span className="text-slate-500"> (ext. {c.owner.extension.number})</span> : null}
+                          {c.owner.extension ? <span className="text-tertiary"> (ext. {c.owner.extension.number})</span> : null}
                         </span>
                       ) : (
-                        <span className="text-slate-600">Unassigned</span>
+                        <span className="text-tertiary">Unassigned</span>
                       )}
                     </td>
                     <td className="py-2 pr-3">
@@ -893,29 +893,29 @@ export default function ContactsAdminPage() {
                           ))}
                         </div>
                       ) : (
-                        <span className="text-slate-600">—</span>
+                        <span className="text-tertiary">—</span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{new Date(c.updatedAt).toLocaleString()}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap text-tertiary">{new Date(c.updatedAt).toLocaleString()}</td>
                     <td className="py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <button onClick={() => openEdit(c)} className="text-cyan hover:text-cyan/80">
                           Edit
                         </button>
-                        <button onClick={() => openMerge(c.id)} className="text-slate-400 hover:text-slate-200">
+                        <button onClick={() => openMerge(c.id)} className="text-secondary hover:text-primary">
                           Merge
                         </button>
                         {confirmRemoveId === c.id ? (
                           <span className="flex items-center gap-2">
-                            <button onClick={() => remove(c.id, c.displayName ?? c.numberE164)} className="text-red-400 hover:text-red-300">
+                            <button onClick={() => remove(c.id, c.displayName ?? c.numberE164)} className="text-danger hover:text-danger">
                               Confirm
                             </button>
-                            <button onClick={() => setConfirmRemoveId(null)} className="text-slate-500">
+                            <button onClick={() => setConfirmRemoveId(null)} className="text-tertiary">
                               Cancel
                             </button>
                           </span>
                         ) : (
-                          <button onClick={() => setConfirmRemoveId(c.id)} className="text-red-400 hover:text-red-300">
+                          <button onClick={() => setConfirmRemoveId(c.id)} className="text-danger hover:text-danger">
                             Remove
                           </button>
                         )}
@@ -923,7 +923,7 @@ export default function ContactsAdminPage() {
 
                       {mergeLoserId === c.id && (
                         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-border bg-background/60 p-2">
-                          <p className="text-slate-400">
+                          <p className="text-secondary">
                             Merge &quot;{c.displayName ?? c.numberE164}&quot; into another contact:
                           </p>
                           <div className="flex gap-1">
@@ -933,10 +933,10 @@ export default function ContactsAdminPage() {
                               placeholder="Search name or number"
                               className="flex-1 rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan"
                             />
-                            <button onClick={searchMergeTarget} className="rounded bg-cyan px-2 py-1 text-background">
+                            <button onClick={searchMergeTarget} className="rounded bg-cyan px-2 py-1 text-accent-fg">
                               Find
                             </button>
-                            <button onClick={() => setMergeLoserId(null)} className="text-slate-500">
+                            <button onClick={() => setMergeLoserId(null)} className="text-tertiary">
                               Cancel
                             </button>
                           </div>
@@ -945,7 +945,7 @@ export default function ContactsAdminPage() {
                               {mergeResults.map((r) => (
                                 <li key={r.id} className="flex items-center justify-between">
                                   <span>
-                                    {r.displayName ?? r.numberE164} <span className="text-slate-500">{r.numberE164}</span>
+                                    {r.displayName ?? r.numberE164} <span className="text-tertiary">{r.numberE164}</span>
                                   </span>
                                   <button
                                     onClick={() => confirmMerge(r.id)}

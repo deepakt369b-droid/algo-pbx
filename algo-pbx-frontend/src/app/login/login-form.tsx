@@ -118,8 +118,8 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
   if (phase === "otp") {
     return (
       <form onSubmit={submitOtp} className="glass-card flex w-full max-w-sm flex-col gap-4 p-8">
-        <h1 className="text-lg font-semibold text-slate-100">Verify your device</h1>
-        <p className="text-xs text-slate-400">
+        <h1 className="text-lg font-semibold text-primary">Verify your device</h1>
+        <p className="text-xs text-secondary">
           We sent a code via WhatsApp to {maskedPhone ?? "your registered number"}.
         </p>
         <input
@@ -127,17 +127,17 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
           onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
           placeholder="6-digit code"
           autoFocus
-          className="rounded-lg border border-border bg-background px-3 py-2 text-center text-lg tracking-widest text-slate-100 outline-none focus:border-cyan"
+          className="rounded-lg border border-border bg-background px-3 py-2 text-center text-lg tracking-widest text-primary outline-none focus:border-cyan"
         />
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
         <button
           type="submit"
           disabled={pending || code.length !== 6}
-          className="rounded-lg bg-cyan px-4 py-2 font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending ? "Verifying…" : "Verify and sign in"}
         </button>
-        <button type="button" onClick={() => setPhase("credentials")} className="text-xs text-slate-500 hover:text-slate-300">
+        <button type="button" onClick={() => setPhase("credentials")} className="text-xs text-tertiary hover:text-primary">
           Back
         </button>
       </form>
@@ -146,14 +146,14 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
 
   return (
     <form onSubmit={submitCredentials} className="glass-card flex w-full max-w-sm flex-col gap-4 p-8">
-      <h1 className="text-lg font-semibold text-slate-100">Algo PBX Sign In</h1>
+      <h1 className="text-lg font-semibold text-primary">Algo PBX Sign In</h1>
       <input
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         type="email"
         required
         placeholder="you@algopbx.local"
-        className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+        className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
       />
       <input
         value={password}
@@ -162,17 +162,17 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
         required
         minLength={8}
         placeholder="Password"
-        className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+        className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
       />
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-cyan px-4 py-2 font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+        className="rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {pending ? "Signing in…" : "Sign in"}
       </button>
-      <a href="/forgot-password" className="text-center text-xs text-slate-500 hover:text-slate-300">
+      <a href="/forgot-password" className="text-center text-xs text-tertiary hover:text-primary">
         Forgot your password?
       </a>
     </form>

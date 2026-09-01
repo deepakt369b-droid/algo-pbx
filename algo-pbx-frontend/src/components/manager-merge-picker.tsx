@@ -70,7 +70,7 @@ export function ManagerMergePicker() {
 
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-3">
-      <p className="text-xs uppercase tracking-wide text-slate-500">Merge manager into call</p>
+      <p className="text-xs uppercase tracking-wide text-tertiary">Merge manager into call</p>
       <div className="flex gap-2">
         <select
           value={selected}
@@ -89,7 +89,7 @@ export function ManagerMergePicker() {
           onClick={merge}
           disabled={!selected || busy}
           title="Bring this manager into the current call"
-          className="flex items-center gap-1 rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1 rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Users className="h-3.5 w-3.5" />
           {busy ? "Merging…" : "Merge"}
@@ -98,7 +98,7 @@ export function ManagerMergePicker() {
       {result && (
         <p
           className={`text-xs ${
-            result.tone === "ok" ? "text-green-400" : result.tone === "warn" ? "text-amber-400" : "text-red-400"
+            result.tone === "ok" ? "text-success" : result.tone === "warn" ? "text-warning" : "text-danger"
           }`}
         >
           {result.text}

@@ -87,14 +87,14 @@ export default function EscalationsPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Manager Escalation</h1>
-      <p className="max-w-md text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Manager Escalation</h1>
+      <p className="max-w-md text-center text-xs text-tertiary">
         Managers agents can transfer a live call to with one click. If a target does not answer,
         the agent sees it immediately and (when the target has a WhatsApp number) they are pinged.
       </p>
 
       <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Add a manager</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Add a manager</h2>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -116,40 +116,40 @@ export default function EscalationsPage() {
         <button
           onClick={add}
           disabled={!name || (!extension && !phoneE164)}
-          className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-40"
+          className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-40"
         >
           Add
         </button>
-        {message && <p className="text-xs text-red-400">{message}</p>}
+        {message && <p className="text-xs text-danger">{message}</p>}
       </div>
 
       <div className="glass-card w-full max-w-md p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Managers ({targets.length})</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">Managers ({targets.length})</h2>
         {targets.length === 0 ? (
-          <p className="text-slate-500">None yet.</p>
+          <p className="text-tertiary">None yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {targets.map((t) => (
               <li key={t.id} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
                 <div>
-                  <p className={t.active ? "" : "text-slate-500 line-through"}>{t.name}</p>
-                  <p className="text-xs text-slate-500">{[t.extension, t.phoneE164].filter(Boolean).join(" · ")}</p>
+                  <p className={t.active ? "" : "text-tertiary line-through"}>{t.name}</p>
+                  <p className="text-xs text-tertiary">{[t.extension, t.phoneE164].filter(Boolean).join(" · ")}</p>
                 </div>
                 <span className="flex items-center gap-2 text-xs">
-                  <button onClick={() => toggleActive(t)} className="text-slate-400 hover:text-cyan">
+                  <button onClick={() => toggleActive(t)} className="text-secondary hover:text-cyan">
                     {t.active ? "Deactivate" : "Reactivate"}
                   </button>
                   {confirmRemoveId === t.id ? (
                     <>
-                      <button onClick={() => remove(t.id)} className="text-red-400 hover:text-red-300">
+                      <button onClick={() => remove(t.id)} className="text-danger hover:text-danger">
                         Confirm
                       </button>
-                      <button onClick={() => setConfirmRemoveId(null)} className="text-slate-500">
+                      <button onClick={() => setConfirmRemoveId(null)} className="text-tertiary">
                         Cancel
                       </button>
                     </>
                   ) : (
-                    <button onClick={() => setConfirmRemoveId(t.id)} className="text-red-400 hover:text-red-300">
+                    <button onClick={() => setConfirmRemoveId(t.id)} className="text-danger hover:text-danger">
                       Remove
                     </button>
                   )}
@@ -161,11 +161,11 @@ export default function EscalationsPage() {
       </div>
 
       <div className="glass-card w-full max-w-md p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Recent Attempts</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">Recent Attempts</h2>
         {attempts.length === 0 ? (
-          <p className="text-slate-500">None yet.</p>
+          <p className="text-tertiary">None yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {attempts.map((a) => (
               <li key={a.id} className="flex flex-col gap-0.5 border-t border-border pt-2 first:border-0 first:pt-0">
                 <p>
@@ -173,16 +173,16 @@ export default function EscalationsPage() {
                   <span
                     className={
                       a.outcome === "ANSWERED"
-                        ? "text-green-400"
+                        ? "text-success"
                         : a.outcome === "UNKNOWN"
-                          ? "text-slate-500"
-                          : "text-yellow-500"
+                          ? "text-tertiary"
+                          : "text-warning"
                     }
                   >
                     {a.outcome}
                   </span>
                 </p>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-tertiary">
                   {new Date(a.createdAt).toLocaleString()}
                   {a.waNotified && " · WhatsApp notified"}
                   {a.waError && ` · ${a.waError}`}

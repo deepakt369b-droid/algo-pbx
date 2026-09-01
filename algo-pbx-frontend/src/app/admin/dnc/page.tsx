@@ -205,21 +205,21 @@ export default function DncPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Do Not Call List</h1>
-      <p className="max-w-md text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Do Not Call List</h1>
+      <p className="max-w-md text-center text-xs text-tertiary">
         Blocks outbound dialing to these numbers from the softphone (immediate UX feedback) and,
         separately, at the Asterisk dialplan level (the enforcement that actually matters —
         see pbx_configs/func_odbc.conf).
       </p>
 
       {loadError && (
-        <div className="w-full max-w-md rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-md rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {loadError}
         </div>
       )}
 
       <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Add a number</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Add a number</h2>
         <input
           value={number}
           onChange={(e) => setNumber(e.target.value)}
@@ -232,13 +232,13 @@ export default function DncPage() {
           placeholder="Reason (optional)"
           className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
         />
-        <button onClick={add} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+        <button onClick={add} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
           Add
         </button>
       </div>
 
       <div className="glass-card flex w-full max-w-lg flex-col gap-3 p-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Bulk import</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Bulk import</h2>
 
         <div
           onDragOver={(e) => {
@@ -249,7 +249,7 @@ export default function DncPage() {
           onDrop={onDrop}
           onClick={() => fileInputRef.current?.click()}
           className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center text-xs transition-colors ${
-            dragActive ? "border-cyan bg-cyan/5" : "border-border text-slate-500"
+            dragActive ? "border-cyan bg-cyan/5" : "border-border text-tertiary"
           }`}
         >
           <input
@@ -268,7 +268,7 @@ export default function DncPage() {
             }}
           />
           {bulkFile ? (
-            <span className="text-slate-200">
+            <span className="text-primary">
               {bulkFile.name}{" "}
               <button
                 type="button"
@@ -278,7 +278,7 @@ export default function DncPage() {
                   setPreview(null);
                   if (fileInputRef.current) fileInputRef.current.value = "";
                 }}
-                className="text-red-400 hover:text-red-300"
+                className="text-danger hover:text-danger"
               >
                 remove
               </button>
@@ -288,7 +288,7 @@ export default function DncPage() {
           )}
         </div>
 
-        <p className="text-center text-xs text-slate-500">— or paste numbers below —</p>
+        <p className="text-center text-xs text-tertiary">— or paste numbers below —</p>
 
         <textarea
           value={bulkText}
@@ -306,7 +306,7 @@ export default function DncPage() {
         />
 
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex flex-col gap-1 text-xs text-slate-400">
+          <label className="flex flex-col gap-1 text-xs text-secondary">
             Country for bare (non-+) numbers
             <select
               value={bulkCountry}
@@ -339,21 +339,21 @@ export default function DncPage() {
           className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
         />
 
-        {bulkError && <p className="text-xs text-red-300">{bulkError}</p>}
+        {bulkError && <p className="text-xs text-danger">{bulkError}</p>}
 
         {!preview && !commitResult && (
           <button
             onClick={runPreview}
             disabled={bulkBusy || (bulkCountry === "OTHER" && customCountry.length !== 2)}
-            className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"
           >
             {bulkBusy ? "Parsing…" : "Preview import"}
           </button>
         )}
 
         {preview && (
-          <div className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-3 text-xs text-slate-300">
-            <p className="font-semibold text-slate-200">Preview — nothing has been imported yet</p>
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-3 text-xs text-secondary">
+            <p className="font-semibold text-primary">Preview — nothing has been imported yet</p>
 
             {preview.columns.length > 1 && (
               <label className="flex flex-col gap-1">
@@ -383,16 +383,16 @@ export default function DncPage() {
             <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
               <li>Total rows: {preview.total}</li>
               <li className="text-cyan">Valid: {preview.validCount}</li>
-              <li className="text-red-400">Invalid: {preview.invalidCount}</li>
+              <li className="text-danger">Invalid: {preview.invalidCount}</li>
               <li>Duplicates in file: {preview.duplicatesInFile}</li>
             </ul>
 
             {preview.invalidSample.length > 0 && (
               <details>
-                <summary className="cursor-pointer text-slate-400">
+                <summary className="cursor-pointer text-secondary">
                   Sample of unparseable values ({preview.invalidSample.length}{preview.invalidCount > preview.invalidSample.length ? "+" : ""})
                 </summary>
-                <p className="mt-1 break-all text-slate-500">{preview.invalidSample.join(", ")}</p>
+                <p className="mt-1 break-all text-tertiary">{preview.invalidSample.join(", ")}</p>
               </details>
             )}
 
@@ -400,7 +400,7 @@ export default function DncPage() {
               <button
                 onClick={runCommit}
                 disabled={bulkBusy || preview.validCount === 0}
-                className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+                className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
               >
                 {bulkBusy ? "Importing…" : `Import ${preview.validCount} number${preview.validCount === 1 ? "" : "s"}`}
               </button>
@@ -410,7 +410,7 @@ export default function DncPage() {
                   setHasHeaderOverride(null);
                   setPhoneColumnOverride(null);
                 }}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-slate-300"
+                className="rounded-lg border border-border px-4 py-2 text-sm text-secondary"
               >
                 Cancel
               </button>
@@ -419,7 +419,7 @@ export default function DncPage() {
         )}
 
         {commitResult && (
-          <div className="flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs text-slate-300">
+          <div className="flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs text-secondary">
             <p>
               Imported {commitResult.imported} number{commitResult.imported === 1 ? "" : "s"}.
               {commitResult.alreadyOnList > 0 && ` ${commitResult.alreadyOnList} were already on the list.`}
@@ -430,40 +430,40 @@ export default function DncPage() {
                 Download rejected rows (CSV)
               </button>
             )}
-            <button onClick={() => setCommitResult(null)} className="self-start text-slate-500 hover:text-slate-300">
+            <button onClick={() => setCommitResult(null)} className="self-start text-tertiary hover:text-primary">
               Dismiss
             </button>
           </div>
         )}
 
-        {message && <p className="text-xs text-slate-500">{message}</p>}
+        {message && <p className="text-xs text-tertiary">{message}</p>}
       </div>
 
       <div className="glass-card w-full max-w-md p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Blocked Numbers ({entries.length})
         </h2>
         {entries.length === 0 ? (
-          <p className="text-slate-500">None yet.</p>
+          <p className="text-tertiary">None yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {entries.map((e) => (
               <li key={e.id} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
                 <div>
                   <p>{e.numberE164}</p>
-                  {e.reason && <p className="text-xs text-slate-500">{e.reason}</p>}
+                  {e.reason && <p className="text-xs text-tertiary">{e.reason}</p>}
                 </div>
                 {confirmRemoveId === e.id ? (
                   <span className="flex items-center gap-2 text-xs">
-                    <button onClick={() => remove(e.id, e.numberE164)} className="text-red-400 hover:text-red-300">
+                    <button onClick={() => remove(e.id, e.numberE164)} className="text-danger hover:text-danger">
                       Confirm
                     </button>
-                    <button onClick={() => setConfirmRemoveId(null)} className="text-slate-500">
+                    <button onClick={() => setConfirmRemoveId(null)} className="text-tertiary">
                       Cancel
                     </button>
                   </span>
                 ) : (
-                  <button onClick={() => setConfirmRemoveId(e.id)} className="text-xs text-red-400 hover:text-red-300">
+                  <button onClick={() => setConfirmRemoveId(e.id)} className="text-xs text-danger hover:text-danger">
                     Remove
                   </button>
                 )}

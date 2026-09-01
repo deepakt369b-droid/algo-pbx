@@ -6,7 +6,7 @@ import { AgentCallLog } from "@/components/agent-call-log";
 export default function AgentCallsPage() {
   return (
     <div className="flex w-full flex-col items-center gap-6 p-8">
-      <h1 className="text-xl font-semibold text-slate-100">Call history</h1>
+      <h1 className="text-xl font-semibold text-primary">Call history</h1>
       <AgentCallLog />
     </div>
   );

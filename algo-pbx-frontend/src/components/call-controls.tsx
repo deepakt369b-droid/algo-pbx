@@ -40,7 +40,7 @@ export function CallControls() {
   if (callState === "idle") {
     return (
       <div className="glass-card flex w-full max-w-xs flex-col items-center gap-2 p-6 text-center">
-        <p className="text-slate-500">No active call</p>
+        <p className="text-tertiary">No active call</p>
         {/* Surfaces WHY the call just ended when it wasn't an ordinary
             hangup — a failed hold re-INVITE or a failed/unconfirmed
             transfer (see sip-context.tsx's classifyTermination usage in
@@ -49,9 +49,9 @@ export function CallControls() {
             one, leaving the agent with nothing but a call that "just
             ended". */}
         {callError && (
-          <div className="flex flex-col items-center gap-1 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
+          <div className="flex flex-col items-center gap-1 rounded-lg border border-warning/40 bg-warning-subtle px-3 py-2 text-xs text-warning">
             <p>{callError}</p>
-            <button onClick={clearCallError} className="underline hover:text-yellow-300">
+            <button onClick={clearCallError} className="underline hover:text-warning">
               Dismiss
             </button>
           </div>
@@ -64,13 +64,13 @@ export function CallControls() {
     return (
       <div className="glass-card flex w-full max-w-xs flex-col items-center gap-4 p-6">
         <PhoneIncoming className="h-8 w-8 text-cyan" />
-        <p className="text-slate-200">Incoming call from {incomingCallerId ?? "Unknown"}</p>
+        <p className="text-primary">Incoming call from {incomingCallerId ?? "Unknown"}</p>
         <ActiveCallContact identity={incomingCallerId} />
         <div className="flex gap-3">
-          <button onClick={answerCall} aria-label="Answer call" className="rounded-lg bg-cyan px-4 py-2 font-medium text-background">
+          <button onClick={answerCall} aria-label="Answer call" className="rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg">
             Answer
           </button>
-          <button onClick={declineCall} aria-label="Decline call" className="rounded-lg bg-red-500/80 px-4 py-2 font-medium text-white">
+          <button onClick={declineCall} aria-label="Decline call" className="rounded-lg bg-danger-subtle px-4 py-2 font-medium text-primary">
             Decline
           </button>
         </div>
@@ -123,14 +123,14 @@ export function CallControls() {
 
   return (
     <div className="glass-card flex w-full max-w-xs flex-col gap-4 p-6">
-      <p className="text-center text-sm uppercase tracking-wide text-slate-400">
+      <p className="text-center text-sm uppercase tracking-wide text-secondary">
         {callState === "held" ? "On hold" : "In call"}
       </p>
       <ActiveCallContact identity={incomingCallerId} />
       {callError && (
-        <div className="flex items-start justify-between gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
+        <div className="flex items-start justify-between gap-2 rounded-lg border border-warning/40 bg-warning-subtle px-3 py-2 text-xs text-warning">
           <p>{callError}</p>
-          <button onClick={clearCallError} className="shrink-0 underline hover:text-yellow-300">
+          <button onClick={clearCallError} className="shrink-0 underline hover:text-warning">
             Dismiss
           </button>
         </div>
@@ -138,7 +138,7 @@ export function CallControls() {
       {audioBlocked && (
         <button
           onClick={retryAudioPlayback}
-          className="flex items-center justify-center gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400 hover:bg-yellow-500/20"
+          className="flex items-center justify-center gap-2 rounded-lg border border-warning/40 bg-warning-subtle px-3 py-2 text-xs text-warning hover:bg-warning-subtle"
         >
           <VolumeX className="h-4 w-4" />
           Audio blocked by browser — click to unmute
@@ -180,7 +180,7 @@ export function CallControls() {
         </button>
         <button
           onClick={hangupCall}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/80 text-white"
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-danger-subtle text-primary"
           aria-label="Hang up"
           disabled={consultState !== "idle"}
         >
@@ -200,14 +200,14 @@ export function CallControls() {
             <button
               type="button"
               onClick={() => switchMode("blind")}
-              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${transferMode === "blind" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${transferMode === "blind" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
             >
               Blind
             </button>
             <button
               type="button"
               onClick={() => switchMode("attended")}
-              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${transferMode === "attended" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${transferMode === "attended" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
             >
               Attended
             </button>
@@ -215,7 +215,7 @@ export function CallControls() {
               type="button"
               onClick={() => switchMode("conference")}
               aria-label="Conference mode"
-              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${transferMode === "conference" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${transferMode === "conference" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
             >
               <Users className="mx-auto h-3.5 w-3.5" />
             </button>
@@ -228,13 +228,13 @@ export function CallControls() {
               aria-label={transferMode === "conference" ? "Participant number" : "Transfer target extension"}
               className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-cyan"
             />
-            <button type="submit" disabled={transferBusy} className="rounded-lg bg-blue px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">
+            <button type="submit" disabled={transferBusy} className="rounded-lg bg-blue px-3 py-1.5 text-sm font-medium text-primary disabled:opacity-40">
               {transferBusy ? "…" : transferMode === "blind" ? "Send" : "Call"}
             </button>
           </div>
-          {transferError && <p className="text-xs text-red-400">{transferError}</p>}
+          {transferError && <p className="text-xs text-danger">{transferError}</p>}
           {transferMode === "conference" && conferenceStatus && (
-            <p className="text-xs text-slate-500">{conferenceStatus}</p>
+            <p className="text-xs text-tertiary">{conferenceStatus}</p>
           )}
         </form>
       )}
@@ -244,7 +244,7 @@ export function CallControls() {
           consult call to the transfer target is dialed/answered. */}
       {consultState !== "idle" && (
         <div className="flex flex-col gap-2 rounded-lg border border-cyan/40 bg-cyan/5 p-3">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-secondary">
             {consultState === "calling" ? `Calling ${transferTarget}…` : `Connected to ${transferTarget}`}
           </p>
           <div className="flex gap-2">
@@ -262,7 +262,7 @@ export function CallControls() {
                 })
               }
               disabled={consultState !== "active"}
-              className="flex-1 rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex-1 rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-40"
             >
               Complete Transfer
             </button>
@@ -272,7 +272,7 @@ export function CallControls() {
                 setShowTransfer(false);
                 setTransferTarget("");
               }}
-              className="flex-1 rounded-lg border border-border px-3 py-1.5 text-xs text-slate-400 hover:border-red-400 hover:text-red-400"
+              className="flex-1 rounded-lg border border-border px-3 py-1.5 text-xs text-secondary hover:border-danger/40 hover:text-danger"
             >
               Cancel
             </button>

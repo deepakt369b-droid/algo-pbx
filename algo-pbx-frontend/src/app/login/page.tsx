@@ -41,26 +41,26 @@ export default async function LoginPage({
     return (
       <main className="flex min-h-screen items-center justify-center bg-background p-8">
         <div className="glass-card flex w-full max-w-sm flex-col gap-4 p-8">
-          <h1 className="text-lg font-semibold text-slate-100">Already signed in</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-lg font-semibold text-primary">Already signed in</h1>
+          <p className="text-sm text-secondary">
             This browser is signed in as{" "}
-            <span className="font-medium text-slate-200">{session.user.email}</span>
+            <span className="font-medium text-primary">{session.user.email}</span>
             {session.user.role ? ` (${session.user.role.toLowerCase()})` : ""}.
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-tertiary">
             Signing in as someone else replaces this session in every tab of this
             browser, including any open softphone. Sign out first.
           </p>
           <Link
             href={workspace}
-            className="rounded-lg bg-cyan px-4 py-2 text-center font-medium text-background transition hover:brightness-110"
+            className="rounded-lg bg-cyan px-4 py-2 text-center font-medium text-accent-fg transition hover:brightness-110"
           >
             Continue as {session.user.email}
           </Link>
           <form action={signOutAction}>
             <button
               type="submit"
-              className="w-full rounded-lg border border-border px-4 py-2 text-sm text-slate-300 transition hover:border-cyan hover:text-slate-100"
+              className="w-full rounded-lg border border-border px-4 py-2 text-sm text-secondary transition hover:border-cyan hover:text-primary"
             >
               Sign out and use a different account
             </button>

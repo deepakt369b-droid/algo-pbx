@@ -28,13 +28,13 @@ export default function AgentCrmPage() {
 
   return (
     <main className="p-8">
-      <h1 className="mb-6 text-center text-xl font-semibold text-slate-100 lg:text-left">Contacts</h1>
+      <h1 className="mb-6 text-center text-xl font-semibold text-primary lg:text-left">Contacts</h1>
       <div className="mx-auto flex max-w-6xl flex-col gap-6 lg:flex-row lg:items-start">
         <ContactList selectedId={selectedId} onSelect={setSelectedId} refreshToken={refreshToken} />
         {selectedId ? (
           <ContactDetail contactId={selectedId} onChanged={() => setRefreshToken((n) => n + 1)} />
         ) : (
-          <div className="glass-card flex flex-1 items-center justify-center p-10 text-sm text-slate-500">
+          <div className="glass-card flex flex-1 items-center justify-center p-10 text-sm text-tertiary">
             Select a contact, or create a new one.
           </div>
         )}

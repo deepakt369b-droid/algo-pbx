@@ -166,13 +166,13 @@ export default function DinstarWizardPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Dinstar Gateway Setup</h1>
-      <p className="max-w-2xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Dinstar Gateway Setup</h1>
+      <p className="max-w-2xl text-center text-xs text-tertiary">
         Finds and configures the Dinstar UC2000 SIM gateway automatically. Every step can be entered
         manually if automation doesn&apos;t find what you need.
       </p>
 
-      <div className="flex gap-2 text-xs text-slate-500">
+      <div className="flex gap-2 text-xs text-tertiary">
         {(["find", "signin", "confirm", "link", "done"] as Step[]).map((s, i) => (
           <span key={s} className={step === s ? "text-cyan" : ""}>
             {i > 0 && " → "}
@@ -183,19 +183,19 @@ export default function DinstarWizardPage() {
 
       {step === "find" && (
         <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">1. Find the device</h2>
-          <p className="text-xs text-slate-500">Scans a local network range for a Dinstar-shaped device. Takes 10-20 seconds.</p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">1. Find the device</h2>
+          <p className="text-xs text-tertiary">Scans a local network range for a Dinstar-shaped device. Takes 10-20 seconds.</p>
           <input
             value={cidr}
             onChange={(e) => setCidr(e.target.value)}
             placeholder="192.168.1.0/24"
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
           />
-          <button onClick={scan} disabled={scanning} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50">
+          <button onClick={scan} disabled={scanning} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">
             {scanning ? "Scanning…" : "Scan network"}
           </button>
-          {scanError && <p className="text-xs text-red-400">{scanError}</p>}
-          {!scanError && scanReasonHint && <p className="text-xs text-yellow-500">{scanReasonHint}</p>}
+          {scanError && <p className="text-xs text-danger">{scanError}</p>}
+          {!scanError && scanReasonHint && <p className="text-xs text-warning">{scanReasonHint}</p>}
 
           {hosts.length > 0 && (
             <div className="flex flex-col gap-1 border-t border-border pt-3">
@@ -208,13 +208,13 @@ export default function DinstarWizardPage() {
                   }}
                   className="rounded-lg border border-border px-3 py-2 text-left text-sm hover:border-cyan"
                 >
-                  {h.ip} {h.fingerprint === "dinstar" ? <span className="text-cyan">(looks like a Dinstar)</span> : <span className="text-slate-500">(unknown device)</span>}
+                  {h.ip} {h.fingerprint === "dinstar" ? <span className="text-cyan">(looks like a Dinstar)</span> : <span className="text-tertiary">(unknown device)</span>}
                 </button>
               ))}
             </div>
           )}
 
-          <button onClick={() => setManualHost(true)} className="text-xs text-slate-500 hover:text-slate-300">
+          <button onClick={() => setManualHost(true)} className="text-xs text-tertiary hover:text-primary">
             I&apos;ll enter the IP manually instead
           </button>
           {manualHost && (
@@ -228,7 +228,7 @@ export default function DinstarWizardPage() {
               <button
                 onClick={() => setStep("signin")}
                 disabled={!host.trim()}
-                className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+                className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
               >
                 Continue with {host || "this address"}
               </button>
@@ -239,8 +239,8 @@ export default function DinstarWizardPage() {
 
       {step === "signin" && (
         <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">2. Sign in</h2>
-          <p className="text-xs text-slate-500">Device: {host}. Tries both known firmware auth styles automatically.</p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">2. Sign in</h2>
+          <p className="text-xs text-tertiary">Device: {host}. Tries both known firmware auth styles automatically.</p>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -254,11 +254,11 @@ export default function DinstarWizardPage() {
             placeholder="Admin password"
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
           />
-          <button onClick={signIn} disabled={probing || !password} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50">
+          <button onClick={signIn} disabled={probing || !password} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">
             {probing ? "Signing in…" : "Sign in"}
           </button>
-          {probeError && <p className="text-xs text-red-400">{probeError}</p>}
-          <button onClick={() => setStep("find")} className="text-xs text-slate-500 hover:text-slate-300">
+          {probeError && <p className="text-xs text-danger">{probeError}</p>}
+          <button onClick={() => setStep("find")} className="text-xs text-tertiary hover:text-primary">
             ← Back
           </button>
         </div>
@@ -266,22 +266,22 @@ export default function DinstarWizardPage() {
 
       {step === "confirm" && probeResult && (
         <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">3. Confirm SIM ports</h2>
-          <p className="text-xs text-slate-500">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">3. Confirm SIM ports</h2>
+          <p className="text-xs text-tertiary">
             Signed in via {probeResult.authStyle} auth. {probeResult.ports.length} port(s) reported.
           </p>
-          <ul className="flex flex-col gap-1 text-sm text-slate-200">
+          <ul className="flex flex-col gap-1 text-sm text-primary">
             {probeResult.ports.map((p) => (
               <li key={p.port} className="flex justify-between border-t border-border pt-1 first:border-0 first:pt-0">
                 <span>Port {p.port + 1}</span>
-                <span className={p.simPresent ? "text-green-400" : "text-slate-500"}>{p.simPresent ? p.type ?? "SIM present" : "no SIM"}</span>
+                <span className={p.simPresent ? "text-success" : "text-tertiary"}>{p.simPresent ? p.type ?? "SIM present" : "no SIM"}</span>
               </li>
             ))}
           </ul>
-          <button onClick={() => setStep("link")} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+          <button onClick={() => setStep("link")} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
             Continue
           </button>
-          <button onClick={() => setStep("signin")} className="text-xs text-slate-500 hover:text-slate-300">
+          <button onClick={() => setStep("signin")} className="text-xs text-tertiary hover:text-primary">
             ← Back
           </button>
         </div>
@@ -289,17 +289,17 @@ export default function DinstarWizardPage() {
 
       {step === "link" && (
         <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">4. Link to Asterisk</h2>
-          <p className="text-xs text-slate-500">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">4. Link to Asterisk</h2>
+          <p className="text-xs text-tertiary">
             Save these settings, and optionally rewrite the Asterisk trunk config to point at {host} — no more SSH to change the gateway IP.
           </p>
-          <label className="flex flex-col gap-1 text-xs text-slate-500">
+          <label className="flex flex-col gap-1 text-xs text-tertiary">
             Dinstar&apos;s own local SIP port
             <input
               value={sipPort}
               onChange={(e) => setSipPort(e.target.value)}
               placeholder="5060"
-              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
             />
             <span>
               The gateway&apos;s own local SIP port (not Asterisk&apos;s). Default 5060 — but the UC2000 refuses a trunk peer
@@ -307,36 +307,36 @@ export default function DinstarWizardPage() {
               local SIP port (e.g. 5061) and enter it here.
             </span>
           </label>
-          <button onClick={() => link(true)} disabled={applying} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50">
+          <button onClick={() => link(true)} disabled={applying} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">
             {applying ? "Applying…" : "Save settings and update Asterisk"}
           </button>
-          <button onClick={() => link(false)} disabled={applying} className="rounded-lg border border-border px-4 py-2 text-sm text-slate-300 disabled:opacity-50">
+          <button onClick={() => link(false)} disabled={applying} className="rounded-lg border border-border px-4 py-2 text-sm text-secondary disabled:opacity-50">
             Save settings only (I&apos;ll update Asterisk manually)
           </button>
-          {applyError && <p className="text-xs text-red-400">{applyError}</p>}
+          {applyError && <p className="text-xs text-danger">{applyError}</p>}
         </div>
       )}
 
       {step === "done" && applyResult && (
         <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">5. Done</h2>
-          <p className="text-xs text-green-400">Settings saved — {host} via {applyResult.probe.authStyle} auth.</p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">5. Done</h2>
+          <p className="text-xs text-success">Settings saved — {host} via {applyResult.probe.authStyle} auth.</p>
           {applyResult.asterisk.attempted && (
             <div className="text-xs">
               {applyResult.asterisk.verified ? (
-                <p className="text-green-400">Asterisk trunk updated and verified.</p>
+                <p className="text-success">Asterisk trunk updated and verified.</p>
               ) : (
-                <p className="text-yellow-500">{applyResult.asterisk.error ?? "Could not verify the Asterisk update."}</p>
+                <p className="text-warning">{applyResult.asterisk.error ?? "Could not verify the Asterisk update."}</p>
               )}
             </div>
           )}
-          <div className="rounded-lg border border-border p-3 text-xs text-slate-400">
-            <p className="mb-1 font-medium text-slate-300">Apply standard SIM config</p>
+          <div className="rounded-lg border border-border p-3 text-xs text-secondary">
+            <p className="mb-1 font-medium text-secondary">Apply standard SIM config</p>
             <p className="mb-2">
               Writes a hotline to every port with real modem hardware on this gateway, so inserting a SIM
               just works — no manual Dinstar UI steps. This writes to the gateway&apos;s admin web UI directly
               (a different login than the SMS API above) and cannot read current values back first — see{" "}
-              <span className="text-slate-300">Apply</span> below for what it will overwrite.
+              <span className="text-secondary">Apply</span> below for what it will overwrite.
             </p>
             <label className="mb-2 flex flex-col gap-1">
               To VOIP Hotline value
@@ -344,28 +344,28 @@ export default function DinstarWizardPage() {
                 value={hotline}
                 onChange={(e) => setHotline(e.target.value)}
                 placeholder="100"
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               />
               <span>Matches extensions.conf&apos;s [from-dinstar] handler — &quot;100&quot; or the literal &quot;s&quot; both work.</span>
             </label>
             <button
               onClick={applyPortConfig}
               disabled={portsApplying || !hotline.trim()}
-              className="w-full rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="w-full rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               {portsApplying ? "Applying…" : "Apply standard SIM config"}
             </button>
-            {portsError && <p className="mt-2 text-red-400">{portsError}</p>}
+            {portsError && <p className="mt-2 text-danger">{portsError}</p>}
             {portsResult?.ok && (
-              <p className="mt-2 text-green-400">
+              <p className="mt-2 text-success">
                 Applied to port{portsResult.ports && portsResult.ports.length !== 1 ? "s" : ""}{" "}
                 {portsResult.ports?.map((p) => p + 1).join(", ")}. Insert a SIM in any of those ports and it
                 should register without any further gateway configuration.
               </p>
             )}
           </div>
-          <div className="rounded-lg border border-border p-3 text-xs text-slate-400">
-            <p className="mb-1 font-medium text-slate-300">Still manual — configure on the Dinstar itself:</p>
+          <div className="rounded-lg border border-border p-3 text-xs text-secondary">
+            <p className="mb-1 font-medium text-secondary">Still manual — configure on the Dinstar itself:</p>
             <ul className="list-disc pl-4">
               <li>Insert SIM cards and any PIN they require (this device only reads SIM presence at power-on, not on hot-insertion — a reboot may be needed)</li>
               <li>Change the gateway&apos;s admin password if it&apos;s still the factory default</li>

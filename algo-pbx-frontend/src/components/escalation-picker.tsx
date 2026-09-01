@@ -87,7 +87,7 @@ export function EscalationPicker() {
 
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-3">
-      <p className="text-xs uppercase tracking-wide text-slate-500">Escalate to manager</p>
+      <p className="text-xs uppercase tracking-wide text-tertiary">Escalate to manager</p>
       <div className="flex gap-2">
         <select
           value={selected}
@@ -105,14 +105,14 @@ export function EscalationPicker() {
           onClick={escalate}
           disabled={!selected || busy}
           aria-label="Escalate to manager"
-          className="flex items-center gap-1 rounded-lg bg-blue px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1 rounded-lg bg-blue px-3 py-1.5 text-xs font-medium text-primary disabled:cursor-not-allowed disabled:opacity-40"
         >
           <PhoneCall className="h-3.5 w-3.5" />
           {busy ? "…" : "Go"}
         </button>
       </div>
       {result && (
-        <p className={`text-xs ${result.tone === "ok" ? "text-green-400" : result.tone === "warn" ? "text-yellow-500" : "text-red-400"}`}>
+        <p className={`text-xs ${result.tone === "ok" ? "text-success" : result.tone === "warn" ? "text-warning" : "text-danger"}`}>
           {result.text}
         </p>
       )}

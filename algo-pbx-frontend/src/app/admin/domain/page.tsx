@@ -13,10 +13,10 @@ interface HealthCheck {
 }
 
 const STATUS_STYLE: Record<HealthCheck["status"], { dot: string; text: string; label: string }> = {
-  ok: { dot: "bg-green-400", text: "text-green-400", label: "OK" },
-  warn: { dot: "bg-yellow-400", text: "text-yellow-400", label: "Warning" },
-  fail: { dot: "bg-red-400", text: "text-red-400", label: "Failing" },
-  unknown: { dot: "bg-slate-500", text: "text-slate-500", label: "Unknown" },
+  ok: { dot: "bg-success", text: "text-success", label: "OK" },
+  warn: { dot: "bg-warning", text: "text-warning", label: "Warning" },
+  fail: { dot: "bg-danger", text: "text-danger", label: "Failing" },
+  unknown: { dot: "bg-surface-hover", text: "text-tertiary", label: "Unknown" },
 };
 
 const REFRESH_INTERVAL_MS = 15000;
@@ -135,8 +135,8 @@ export default function DomainWizardPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6 pb-12">
-      <h1 className="text-xl font-semibold text-slate-100">Connect Domain</h1>
-      <p className="max-w-2xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Connect Domain</h1>
+      <p className="max-w-2xl text-center text-xs text-tertiary">
         Cloudflare has no OAuth grant that lets this app obtain a DNS-edit token on your behalf — every ACME DNS
         client (certbot, acme.sh, Caddy) has the same limitation, which is why step 3 below is a manual token paste
         rather than a one-click connect. Everything else here is automated.
@@ -147,19 +147,19 @@ export default function DomainWizardPage() {
           <span className={`h-2.5 w-2.5 rounded-full ${overallStyle.dot}`} />
           Overall: {overallStyle.label}
         </span>
-        <button onClick={loadStatus} disabled={refreshing} className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50">
+        <button onClick={loadStatus} disabled={refreshing} className="text-xs text-secondary hover:text-primary disabled:opacity-50">
           {refreshing ? "Checking…" : "Re-check all"}
         </button>
       </div>
       {statusError && (
-        <div className="w-full max-w-2xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-2xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {statusError}
         </div>
       )}
 
       {/* Step 1 — domain */}
       <div className="glass-card flex w-full max-w-2xl flex-col gap-2 p-4">
-        <h2 className="text-sm font-medium text-slate-200">1. Domain</h2>
+        <h2 className="text-sm font-medium text-primary">1. Domain</h2>
         <div className="flex gap-2">
           <input
             value={domain}
@@ -170,7 +170,7 @@ export default function DomainWizardPage() {
           <button
             onClick={saveDomain}
             disabled={savingDomain || !domain.trim()}
-            className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-background disabled:opacity-30"
+            className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-accent-fg disabled:opacity-30"
           >
             Save
           </button>
@@ -179,8 +179,8 @@ export default function DomainWizardPage() {
 
       {/* Step 2 — nameservers */}
       <div className="glass-card flex w-full max-w-2xl flex-col gap-2 p-4">
-        <h2 className="text-sm font-medium text-slate-200">2. Nameservers at Cloudflare</h2>
-        <p className="text-xs text-slate-500">
+        <h2 className="text-sm font-medium text-primary">2. Nameservers at Cloudflare</h2>
+        <p className="text-xs text-tertiary">
           In Cloudflare, &quot;Add a site&quot; for this domain if you haven&apos;t already, then update the
           nameservers at your registrar (GoDaddy: Domain Settings → Nameservers) to the two Cloudflare assigns. This
           step can&apos;t be automated — Cloudflare only assigns nameservers once the zone exists, and your
@@ -191,16 +191,16 @@ export default function DomainWizardPage() {
 
       {/* Step 3 — token */}
       <div className="glass-card flex w-full max-w-2xl flex-col gap-2 p-4">
-        <h2 className="text-sm font-medium text-slate-200">3. Cloudflare API token</h2>
+        <h2 className="text-sm font-medium text-primary">3. Cloudflare API token</h2>
         <a
           href="https://dash.cloudflare.com/profile/api-tokens"
           target="_blank"
           rel="noreferrer"
-          className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-white"
+          className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-primary"
         >
           Open Cloudflare API Tokens →
         </a>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-tertiary">
           Create Token → use the <strong>&quot;Edit zone DNS&quot;</strong> template → under Zone Resources choose
           <strong> Specific zone → {domain || "your domain"}</strong> → Continue to summary → Create Token → copy
           it (Cloudflare shows it once) and paste below.
@@ -216,19 +216,19 @@ export default function DomainWizardPage() {
           <button
             onClick={saveToken}
             disabled={savingToken || !token.trim()}
-            className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-background disabled:opacity-30"
+            className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-accent-fg disabled:opacity-30"
           >
             Save
           </button>
         </div>
-        {saveMessage && <p className="text-xs text-slate-400">{saveMessage}</p>}
+        {saveMessage && <p className="text-xs text-secondary">{saveMessage}</p>}
       </div>
 
       {/* Step 4 — A record */}
       <div className="glass-card flex w-full max-w-2xl flex-col gap-2 p-4">
-        <h2 className="text-sm font-medium text-slate-200">4. A record</h2>
-        <p className="text-xs text-slate-500">
-          Detected outbound IP: <span className="text-slate-300">{detectedIp ?? "detecting…"}</span>. If this VM is
+        <h2 className="text-sm font-medium text-primary">4. A record</h2>
+        <p className="text-xs text-tertiary">
+          Detected outbound IP: <span className="text-secondary">{detectedIp ?? "detecting…"}</span>. If this VM is
           only reachable on your local network right now, type its LAN address instead — grey-cloud (not proxied)
           is required either way, since Cloudflare&apos;s proxy does not forward the WSS/TURN ports this stack needs.
         </p>
@@ -242,33 +242,33 @@ export default function DomainWizardPage() {
           <button
             onClick={writeARecord}
             disabled={writingRecord || (!manualIp.trim() && !detectedIp)}
-            className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-background disabled:opacity-30"
+            className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-accent-fg disabled:opacity-30"
           >
             {writingRecord ? "Writing…" : "Create / update A record"}
           </button>
         </div>
         {recordMessage && (
-          <p className={`text-xs ${recordMessage.ok ? "text-green-400" : "text-red-400"}`}>{recordMessage.text}</p>
+          <p className={`text-xs ${recordMessage.ok ? "text-success" : "text-danger"}`}>{recordMessage.text}</p>
         )}
       </div>
 
       {/* Step 5 — verify + apply */}
       <div className="glass-card flex w-full max-w-2xl flex-col gap-3 p-4">
-        <h2 className="text-sm font-medium text-slate-200">5. Verify and connect</h2>
+        <h2 className="text-sm font-medium text-primary">5. Verify and connect</h2>
         <div className="flex flex-col gap-2">
           {checks.map((c) => {
             const style = STATUS_STYLE[c.status];
             return (
               <div key={c.id} className="flex flex-col gap-0.5 rounded-lg border border-border p-3">
                 <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-xs font-medium text-slate-200">
+                  <span className="flex items-center gap-2 text-xs font-medium text-primary">
                     <span className={`h-2 w-2 rounded-full ${style.dot}`} />
                     {c.label}
                   </span>
                   <span className={`text-xs ${style.text}`}>{style.label}</span>
                 </div>
-                <p className="text-xs text-slate-500">{c.detail}</p>
-                {c.hint && (c.status === "warn" || c.status === "fail") && <p className="text-xs text-slate-400">{c.hint}</p>}
+                <p className="text-xs text-tertiary">{c.detail}</p>
+                {c.hint && (c.status === "warn" || c.status === "fail") && <p className="text-xs text-secondary">{c.hint}</p>}
               </div>
             );
           })}
@@ -276,13 +276,13 @@ export default function DomainWizardPage() {
         <button
           onClick={applyDomain}
           disabled={applying}
-          className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+          className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-primary disabled:opacity-50"
         >
           {applying ? "Connecting…" : "Connect domain"}
         </button>
-        {applyMessage && <p className={`text-xs ${applyMessage.ok ? "text-green-400" : "text-red-400"}`}>{applyMessage.text}</p>}
+        {applyMessage && <p className={`text-xs ${applyMessage.ok ? "text-success" : "text-danger"}`}>{applyMessage.text}</p>}
         {domain && (
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-tertiary">
             Once the certificate shows OK above,{" "}
             <a href={`https://${domain}`} target="_blank" rel="noreferrer" className="text-cyan hover:underline">
               open https://{domain} yourself

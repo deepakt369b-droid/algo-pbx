@@ -33,10 +33,10 @@ const POLL_INTERVAL_MS = 2000;
 const QR_WINDOW_SECONDS = 20;
 
 const STATUS_STYLE: Record<WaInstance["status"], { dot: string; label: string }> = {
-  CONNECTED: { dot: "bg-green-400", label: "Connected" },
+  CONNECTED: { dot: "bg-success", label: "Connected" },
   PAIRING: { dot: "bg-cyan animate-pulse", label: "Pairing" },
-  DISCONNECTED: { dot: "bg-red-400", label: "Disconnected" },
-  LOGGED_OUT: { dot: "bg-slate-500", label: "Logged out" },
+  DISCONNECTED: { dot: "bg-danger", label: "Disconnected" },
+  LOGGED_OUT: { dot: "bg-surface-hover", label: "Logged out" },
 };
 
 // The four fixed slots mirror the Dinstar's physical GSM ports 1-4. Every
@@ -142,10 +142,10 @@ function SlotFooter({ instance, onChanged }: SlotActionsProps) {
   return (
     <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
       {message && (
-        <p className={`text-xs ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}>{message.text}</p>
+        <p className={`text-xs ${message.kind === "error" ? "text-danger" : "text-success"}`}>{message.text}</p>
       )}
       <div className="flex flex-wrap gap-3">
-        <button onClick={() => act("refresh")} disabled={busy !== null} className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50">
+        <button onClick={() => act("refresh")} disabled={busy !== null} className="text-xs text-secondary hover:text-primary disabled:opacity-50">
           {busy === "refresh" ? "Refreshing…" : "Refresh"}
         </button>
         {instance.status !== "CONNECTED" && (
@@ -154,38 +154,38 @@ function SlotFooter({ instance, onChanged }: SlotActionsProps) {
           </button>
         )}
         {instance.status === "CONNECTED" && (
-          <button onClick={() => act("logout")} disabled={busy !== null} className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50">
+          <button onClick={() => act("logout")} disabled={busy !== null} className="text-xs text-danger hover:text-danger disabled:opacity-50">
             {busy === "logout" ? "Logging out…" : "Log out"}
           </button>
         )}
         {!confirmRemove ? (
-          <button onClick={() => setConfirmRemove(true)} className="text-xs text-red-400 hover:text-red-300">
+          <button onClick={() => setConfirmRemove(true)} className="text-xs text-danger hover:text-danger">
             Remove
           </button>
         ) : (
           <span className="flex items-center gap-2 text-xs">
-            <span className="text-slate-400">Remove &quot;{instance.label}&quot;?</span>
-            <button onClick={() => remove(false)} disabled={busy === "remove"} className="text-red-400 hover:text-red-300">
+            <span className="text-secondary">Remove &quot;{instance.label}&quot;?</span>
+            <button onClick={() => remove(false)} disabled={busy === "remove"} className="text-danger hover:text-danger">
               Confirm
             </button>
-            <button onClick={() => setConfirmRemove(false)} className="text-slate-500 hover:text-slate-300">
+            <button onClick={() => setConfirmRemove(false)} className="text-tertiary hover:text-primary">
               Cancel
             </button>
           </span>
         )}
-        <button onClick={() => setShowTechnical((v) => !v)} className="ml-auto text-xs text-slate-600 hover:text-slate-400">
+        <button onClick={() => setShowTechnical((v) => !v)} className="ml-auto text-xs text-tertiary hover:text-primary">
           {showTechnical ? "Hide" : "Details"}
         </button>
       </div>
 
       {removeFailed && (
-        <button onClick={() => remove(true)} className="self-start text-xs text-red-400 underline hover:text-red-300">
+        <button onClick={() => remove(true)} className="self-start text-xs text-danger underline hover:text-danger">
           Force remove anyway (leaves the sidecar session orphaned)
         </button>
       )}
 
       {showTechnical && (
-        <div className="rounded-lg bg-background/60 px-3 py-2 text-xs text-slate-500">
+        <div className="rounded-lg bg-background/60 px-3 py-2 text-xs text-tertiary">
           <p>sessionName: {instance.sessionName ?? "—"}</p>
           <p>openwaSessionId: {instance.openwaSessionId ?? "—"}</p>
         </div>
@@ -209,7 +209,7 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
   // A calls-only port (provider NONE) is always DISCONNECTED — it never
   // pairs — so STATUS_STYLE's red "Disconnected" dot would misleadingly
   // read as a fault rather than the intended, permanent state.
-  const style = instance.provider === "NONE" ? { dot: "bg-slate-500", label: "Calls only" } : STATUS_STYLE[instance.status];
+  const style = instance.provider === "NONE" ? { dot: "bg-surface-hover", label: "Calls only" } : STATUS_STYLE[instance.status];
   const lastError = poll?.lastError ?? instance.lastError;
   const qrAge = poll?.qrAgeSeconds ?? null;
   const qrExpired = qrAge !== null && qrAge > QR_WINDOW_SECONDS;
@@ -236,25 +236,25 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate font-medium text-slate-100">{instance.label}</p>
-          <p className="text-xs text-slate-500">{poll?.phoneE164 ?? instance.phoneE164 ?? "not yet linked"}</p>
+          <p className="truncate font-medium text-primary">{instance.label}</p>
+          <p className="text-xs text-tertiary">{poll?.phoneE164 ?? instance.phoneE164 ?? "not yet linked"}</p>
           {(poll?.pushName ?? instance.pushName) && (
-            <p className="truncate text-xs text-slate-500">{poll?.pushName ?? instance.pushName}</p>
+            <p className="truncate text-xs text-tertiary">{poll?.pushName ?? instance.pushName}</p>
           )}
         </div>
         <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-background/60 px-2 py-1">
           <span className={`h-2 w-2 rounded-full ${style.dot}`} />
-          <span className="text-[11px] font-medium text-slate-300">SIM {instance.simPort} · {style.label}</span>
+          <span className="text-[11px] font-medium text-secondary">SIM {instance.simPort} · {style.label}</span>
         </div>
       </div>
 
       {(poll && !poll.sidecarReachable) && (
-        <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+        <div className="rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger">
           Sidecar unreachable — pairing status can&apos;t refresh until it&apos;s back.
         </div>
       )}
       {lastError && (
-        <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">{lastError}</div>
+        <div className="rounded-lg border border-danger/40 bg-danger-subtle px-3 py-2 text-xs text-danger">{lastError}</div>
       )}
 
       {/* Scan-ready area */}
@@ -262,7 +262,7 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
         <div className="flex flex-1 flex-col items-center justify-center gap-2">
           {poll?.pairingCode ? (
             <>
-              <p className="text-center text-[11px] text-slate-500">
+              <p className="text-center text-[11px] text-tertiary">
                 On the phone: WhatsApp → Linked Devices → Link with phone number instead
               </p>
               <button
@@ -273,7 +273,7 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
               >
                 {poll.pairingCode}
               </button>
-              <p className="text-[11px] text-slate-600">Tap to copy · refreshes automatically</p>
+              <p className="text-[11px] text-tertiary">Tap to copy · refreshes automatically</p>
             </>
           ) : (
             <div className="flex w-full max-w-xs flex-col gap-2">
@@ -287,7 +287,7 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
               <button
                 onClick={requestPairingCode}
                 disabled={codeBusy || phoneInput.replace(/[^\d]/g, "").length < 7}
-                className="w-full rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+                className="w-full rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
               >
                 {codeBusy ? "Requesting…" : "Get pairing code"}
               </button>
@@ -303,17 +303,17 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
               {/* data-URL QR from the sidecar — next/image can't optimize data URLs */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={poll.qrCode} alt={`WhatsApp pairing QR for SIM port ${instance.simPort}`} className={`h-40 w-40 ${qrExpired ? "opacity-30" : ""}`} />
-              <p className="text-[11px] text-slate-500">{qrExpired ? "Expired — refreshing…" : "Scan with the phone's camera"}</p>
+              <p className="text-[11px] text-tertiary">{qrExpired ? "Expired — refreshing…" : "Scan with the phone's camera"}</p>
             </div>
           ) : (
-            <p className="py-6 text-xs text-slate-500">Waiting for a QR code…</p>
+            <p className="py-6 text-xs text-tertiary">Waiting for a QR code…</p>
           )}
         </div>
       )}
 
       {instance.status === "CONNECTED" && (
         <div className="flex flex-1 items-center justify-center py-2">
-          <p className="text-sm text-green-400">Linked{instance.assignedUser ? ` · assigned to ${instance.assignedUser.name}` : " · no agent assigned yet"}</p>
+          <p className="text-sm text-success">Linked{instance.assignedUser ? ` · assigned to ${instance.assignedUser.name}` : " · no agent assigned yet"}</p>
         </div>
       )}
 
@@ -322,13 +322,13 @@ function InstanceSlot({ instance, onChanged }: InstanceSlotProps) {
         <div className="flex gap-2 self-start text-xs">
           <button
             onClick={() => setMode("code")}
-            className={`rounded px-2 py-1 ${mode === "code" ? "bg-cyan text-background" : "text-slate-400"}`}
+            className={`rounded px-2 py-1 ${mode === "code" ? "bg-cyan text-accent-fg" : "text-secondary"}`}
           >
             Code
           </button>
           <button
             onClick={() => setMode("qr")}
-            className={`rounded px-2 py-1 ${mode === "qr" ? "bg-cyan text-background" : "text-slate-400"}`}
+            className={`rounded px-2 py-1 ${mode === "qr" ? "bg-cyan text-accent-fg" : "text-secondary"}`}
           >
             Scan QR instead
           </button>
@@ -370,10 +370,10 @@ function EmptySlot({ simPort, onCreated }: EmptySlotProps) {
   return (
     <div className="glass-card flex min-h-[16rem] flex-col items-center justify-center gap-3 p-5">
       <div className="flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full bg-slate-600" />
-        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">SIM Port {simPort}</span>
+        <span className="h-2 w-2 rounded-full bg-surface-hover" />
+        <span className="text-[11px] font-medium uppercase tracking-wide text-tertiary">SIM Port {simPort}</span>
       </div>
-      <p className="max-w-[16rem] text-center text-xs text-slate-500">
+      <p className="max-w-[16rem] text-center text-xs text-tertiary">
         Vacant. Enter the SIM&apos;s label to start pairing this port.
       </p>
       <input
@@ -386,7 +386,7 @@ function EmptySlot({ simPort, onCreated }: EmptySlotProps) {
       <button
         onClick={() => create("OPENWA")}
         disabled={creating || !label.trim()}
-        className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+        className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
       >
         {creating ? "Starting…" : "Start pairing"}
       </button>
@@ -397,11 +397,11 @@ function EmptySlot({ simPort, onCreated }: EmptySlotProps) {
       <button
         onClick={() => create("NONE")}
         disabled={creating || !label.trim()}
-        className="text-xs text-slate-500 underline hover:text-slate-300 disabled:opacity-50"
+        className="text-xs text-tertiary underline hover:text-primary disabled:opacity-50"
       >
         Reserve as calls-only (no WhatsApp)
       </button>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   );
 }
@@ -423,7 +423,7 @@ export function SimPortBoard({
   return (
     <div className="flex w-full max-w-5xl flex-col gap-3">
       {loadError && (
-        <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">{loadError}</div>
+        <div className="rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">{loadError}</div>
       )}
       <div className="grid gap-4 md:grid-cols-2">
         {SIM_PORTS.map((port) => {

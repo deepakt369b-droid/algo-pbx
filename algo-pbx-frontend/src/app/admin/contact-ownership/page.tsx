@@ -98,37 +98,37 @@ export default function ContactOwnershipPage() {
     load();
   };
 
-  if (loading) return <p className="text-center text-sm text-slate-500">Loading…</p>;
+  if (loading) return <p className="text-center text-sm text-tertiary">Loading…</p>;
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Contact Ownership</h1>
-      <p className="max-w-xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Contact Ownership</h1>
+      <p className="max-w-xl text-center text-xs text-tertiary">
         One contact, one owner. Deactivating an agent (Users → disable) automatically returns their contacts here.
       </p>
-      {message && <p className="text-xs text-red-400">{message}</p>}
+      {message && <p className="text-xs text-danger">{message}</p>}
 
       <div className="glass-card w-full max-w-3xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Pending transfer requests ({requests.length})
         </h2>
         {requests.length === 0 ? (
-          <p className="text-sm text-slate-500">None pending.</p>
+          <p className="text-sm text-tertiary">None pending.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {requests.map((r) => (
               <li key={r.id} className="flex items-center justify-between gap-2 border-t border-border pt-2 first:border-0 first:pt-0">
                 <div>
                   <p>
                     {r.requestedBy.name} wants {r.contact.displayName || r.contact.numberE164} from {r.currentOwner.name}
                   </p>
-                  <p className="text-xs text-slate-500">{new Date(r.createdAt).toLocaleString()}</p>
+                  <p className="text-xs text-tertiary">{new Date(r.createdAt).toLocaleString()}</p>
                 </div>
                 <div className="flex shrink-0 gap-2 text-xs">
-                  <button onClick={() => decideTransfer(r.id, "approve")} className="rounded-lg bg-cyan px-3 py-1.5 font-medium text-background">
+                  <button onClick={() => decideTransfer(r.id, "approve")} className="rounded-lg bg-cyan px-3 py-1.5 font-medium text-accent-fg">
                     Approve
                   </button>
-                  <button onClick={() => decideTransfer(r.id, "decline")} className="rounded-lg border border-border px-3 py-1.5 text-slate-300 hover:border-red-400 hover:text-red-400">
+                  <button onClick={() => decideTransfer(r.id, "decline")} className="rounded-lg border border-border px-3 py-1.5 text-secondary hover:border-danger/40 hover:text-danger">
                     Decline
                   </button>
                 </div>
@@ -139,18 +139,18 @@ export default function ContactOwnershipPage() {
       </div>
 
       <div className="glass-card w-full max-w-3xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Unassigned pool ({unassigned.length})
         </h2>
         {unassigned.length === 0 ? (
-          <p className="text-sm text-slate-500">Nothing unassigned.</p>
+          <p className="text-sm text-tertiary">Nothing unassigned.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {unassigned.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 first:border-0 first:pt-0">
                 <div>
                   <p>{c.displayName || c.numberE164}</p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-tertiary">
                     {c.company ? `${c.company} · ` : ""}last activity {new Date(c.updatedAt).toLocaleString()}
                   </p>
                 </div>
@@ -170,7 +170,7 @@ export default function ContactOwnershipPage() {
                   <button
                     onClick={() => reassign(c.id)}
                     disabled={!reassignTarget[c.id]}
-                    className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background disabled:opacity-40"
+                    className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg disabled:opacity-40"
                   >
                     Assign
                   </button>
@@ -182,15 +182,15 @@ export default function ContactOwnershipPage() {
       </div>
 
       <div className="glass-card w-full max-w-3xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Contacts per agent</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">Contacts per agent</h2>
         {counts.length === 0 ? (
-          <p className="text-sm text-slate-500">No owned contacts yet.</p>
+          <p className="text-sm text-tertiary">No owned contacts yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {counts.map((c) => (
               <li key={c.owner?.id ?? "unknown"} className="flex items-center justify-between border-t border-border pt-2 first:border-0 first:pt-0">
                 <span>{c.owner?.name ?? "(deleted user)"}</span>
-                <span className="text-slate-400">{c.contactCount}</span>
+                <span className="text-secondary">{c.contactCount}</span>
               </li>
             ))}
           </ul>

@@ -36,7 +36,7 @@ export function IncomingCallBanner({ hidden }: { hidden: boolean }) {
             kicks in for the fallback case (a bare number or no caller-ID
             at all), same "identity may be a name OR a number" ambiguity
             active-call-contact.tsx's own comment documents. */}
-        <p className="text-sm text-slate-100">
+        <p className="text-sm text-primary">
           Incoming call from {incomingCallerId && !/^\+?\d[\d\s-]{5,}\d$/.test(incomingCallerId) ? incomingCallerId : formatUnknownCaller(incomingCallerId)}
         </p>
       </div>
@@ -44,14 +44,14 @@ export function IncomingCallBanner({ hidden }: { hidden: boolean }) {
         <button
           onClick={answerCall}
           aria-label="Answer call"
-          className="rounded-lg bg-cyan px-3 py-1.5 text-sm font-medium text-background"
+          className="rounded-lg bg-cyan px-3 py-1.5 text-sm font-medium text-accent-fg"
         >
           Answer
         </button>
         <button
           onClick={declineCall}
           aria-label="Decline call"
-          className="rounded-lg bg-red-500/80 px-3 py-1.5 text-sm font-medium text-white"
+          className="rounded-lg bg-danger-subtle px-3 py-1.5 text-sm font-medium text-primary"
         >
           Decline
         </button>

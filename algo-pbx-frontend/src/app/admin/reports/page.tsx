@@ -68,8 +68,8 @@ export default function AgentHoursReportPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Agent Call Hours</h1>
-      <p className="max-w-xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Agent Call Hours</h1>
+      <p className="max-w-xl text-center text-xs text-tertiary">
         Answered talk time per agent (excludes ringing/hold time). Reporting and monitoring only.
       </p>
 
@@ -78,7 +78,7 @@ export default function AgentHoursReportPage() {
           <button
             key={p.value}
             onClick={() => setPeriod(p.value)}
-            className={`rounded-lg border px-3 py-1.5 text-xs ${period === p.value ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+            className={`rounded-lg border px-3 py-1.5 text-xs ${period === p.value ? "border-cyan text-cyan" : "border-border text-secondary"}`}
           >
             {p.label}
           </button>
@@ -86,13 +86,13 @@ export default function AgentHoursReportPage() {
       </div>
 
       <div className="glass-card w-full max-w-2xl overflow-x-auto p-6">
-        {error && <p className="mb-3 text-xs text-red-400">{error}</p>}
+        {error && <p className="mb-3 text-xs text-danger">{error}</p>}
         {rows.length === 0 ? (
-          <p className="text-slate-500">{loading ? "Loading…" : "No answered calls in this period."}</p>
+          <p className="text-tertiary">{loading ? "Loading…" : "No answered calls in this period."}</p>
         ) : (
-          <table className="w-full text-sm text-slate-200">
+          <table className="w-full text-sm text-primary">
             <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-tertiary">
                 <th className="pb-2">Agent</th>
                 <th className="pb-2">Extension</th>
                 <th className="pb-2 text-right">Calls</th>
@@ -103,7 +103,7 @@ export default function AgentHoursReportPage() {
               {rows.map((r) => (
                 <tr key={r.extension} className="border-b border-border last:border-0">
                   <td className="py-2">{r.agentName ?? "Unassigned"}</td>
-                  <td className="py-2 text-slate-400">{r.extension}</td>
+                  <td className="py-2 text-secondary">{r.extension}</td>
                   <td className="py-2 text-right">{r.callCount}</td>
                   <td className="py-2 text-right">{formatHours(r.totalTalkSeconds)}</td>
                 </tr>

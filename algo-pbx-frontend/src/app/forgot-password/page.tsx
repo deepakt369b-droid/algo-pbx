@@ -70,8 +70,8 @@ export default function ForgotPasswordPage() {
     <main className="flex min-h-screen items-center justify-center bg-background p-8">
       {phase === "request" && (
         <form onSubmit={requestCode} className="glass-card flex w-full max-w-sm flex-col gap-4 p-8">
-          <h1 className="text-lg font-semibold text-slate-100">Reset your password</h1>
-          <p className="text-xs text-slate-400">
+          <h1 className="text-lg font-semibold text-primary">Reset your password</h1>
+          <p className="text-xs text-secondary">
             We&apos;ll send a code via WhatsApp to the phone number on your account, if you have one verified.
           </p>
           <input
@@ -80,17 +80,17 @@ export default function ForgotPasswordPage() {
             type="email"
             required
             placeholder="you@algopbx.local"
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
           <button
             type="submit"
             disabled={pending}
-            className="rounded-lg bg-cyan px-4 py-2 font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {pending ? "Sending…" : "Send code"}
           </button>
-          <a href="/login" className="text-center text-xs text-slate-500 hover:text-slate-300">
+          <a href="/login" className="text-center text-xs text-tertiary hover:text-primary">
             Back to sign in
           </a>
         </form>
@@ -98,14 +98,14 @@ export default function ForgotPasswordPage() {
 
       {phase === "reset" && (
         <form onSubmit={submitReset} className="glass-card flex w-full max-w-sm flex-col gap-4 p-8">
-          <h1 className="text-lg font-semibold text-slate-100">Enter your code</h1>
-          {message && <p className="text-xs text-slate-400">{message}</p>}
+          <h1 className="text-lg font-semibold text-primary">Enter your code</h1>
+          {message && <p className="text-xs text-secondary">{message}</p>}
           <input
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
             placeholder="6-digit code"
             autoFocus
-            className="rounded-lg border border-border bg-background px-3 py-2 text-center text-lg tracking-widest text-slate-100 outline-none focus:border-cyan"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-center text-lg tracking-widest text-primary outline-none focus:border-cyan"
           />
           <input
             value={newPassword}
@@ -114,17 +114,17 @@ export default function ForgotPasswordPage() {
             required
             minLength={8}
             placeholder="New password"
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
           <button
             type="submit"
             disabled={pending || code.length !== 6 || newPassword.length < 8}
-            className="rounded-lg bg-cyan px-4 py-2 font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {pending ? "Resetting…" : "Reset password"}
           </button>
-          <button type="button" onClick={() => setPhase("request")} className="text-xs text-slate-500 hover:text-slate-300">
+          <button type="button" onClick={() => setPhase("request")} className="text-xs text-tertiary hover:text-primary">
             Back
           </button>
         </form>
@@ -132,8 +132,8 @@ export default function ForgotPasswordPage() {
 
       {phase === "done" && (
         <div className="glass-card flex w-full max-w-sm flex-col gap-3 p-8 text-center">
-          <h1 className="text-lg font-semibold text-slate-100">Password reset</h1>
-          <p className="text-sm text-slate-400">Redirecting you to sign in…</p>
+          <h1 className="text-lg font-semibold text-primary">Password reset</h1>
+          <p className="text-sm text-secondary">Redirecting you to sign in…</p>
         </div>
       )}
     </main>

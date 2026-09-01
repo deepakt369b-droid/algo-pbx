@@ -142,14 +142,14 @@ export default function SettingsPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Runtime Settings</h1>
-      <p className="max-w-xl text-center text-xs text-slate-500">
+      <h1 className="text-xl font-semibold text-primary">Runtime Settings</h1>
+      <p className="max-w-xl text-center text-xs text-tertiary">
         These take effect immediately — no restart needed. Secret values are never shown again once saved;
         leaving a field blank keeps the existing value.
       </p>
 
       {loadError && (
-        <div className="w-full max-w-2xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-2xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {loadError}
         </div>
       )}
@@ -157,7 +157,7 @@ export default function SettingsPage() {
       {sections.map((section) => (
         <div key={section} className="glass-card w-full max-w-2xl p-6">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">
               {SECTION_LABELS[section] ?? section}
             </h2>
             {testableSections.includes(section) && (
@@ -172,7 +172,7 @@ export default function SettingsPage() {
           </div>
 
           {testResults[section] && (
-            <p className={`mb-3 text-xs ${testResults[section].ok ? "text-green-400" : "text-red-400"}`}>
+            <p className={`mb-3 text-xs ${testResults[section].ok ? "text-success" : "text-danger"}`}>
               {testResults[section].message}
             </p>
           )}
@@ -182,8 +182,8 @@ export default function SettingsPage() {
               .filter((s) => s.section === section)
               .map((s) => (
                 <div key={s.key} className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-slate-300">{s.label}</label>
-                  {s.help && <p className="text-xs text-slate-500">{s.help}</p>}
+                  <label className="text-xs font-medium text-secondary">{s.label}</label>
+                  {s.help && <p className="text-xs text-tertiary">{s.help}</p>}
                   <div className="flex gap-2">
                     <input
                       type={s.secret ? "password" : "text"}
@@ -195,25 +195,25 @@ export default function SettingsPage() {
                     <button
                       onClick={() => save(s.key)}
                       disabled={edits[s.key] === undefined || savingKey === s.key}
-                      className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-background disabled:opacity-30"
+                      className="rounded-lg bg-cyan px-3 py-2 text-xs font-medium text-accent-fg disabled:opacity-30"
                     >
                       Save
                     </button>
                   </div>
                   {s.hasValue && (
-                    <p className="text-xs text-slate-600">
+                    <p className="text-xs text-tertiary">
                       {s.secret ? `Configured (ending ${s.lastFour})` : "Configured"}
                       {s.updatedAt && ` — updated ${new Date(s.updatedAt).toLocaleString()}`}
                     </p>
                   )}
-                  {saveMessage?.key === s.key && <p className="text-xs text-red-400">{saveMessage.text}</p>}
+                  {saveMessage?.key === s.key && <p className="text-xs text-danger">{saveMessage.text}</p>}
                 </div>
               ))}
           </div>
 
           {section === "domain_tls" && (
             <div className="mt-4 flex flex-col gap-2 border-t border-border pt-4">
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-tertiary">
                 Save the domain and token above first, then Connect — this writes the config Caddy actually reads
                 and asks it to recreate itself with a fresh Let&apos;s Encrypt certificate. Save alone does not do this.
                 First time setting this up?{" "}
@@ -225,12 +225,12 @@ export default function SettingsPage() {
               <button
                 onClick={applyDomain}
                 disabled={applying}
-                className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+                className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-primary disabled:opacity-50"
               >
                 {applying ? "Connecting…" : "Connect domain"}
               </button>
               {applyResult && (
-                <p className={`text-xs ${applyResult.ok ? "text-green-400" : "text-red-400"}`}>{applyResult.text}</p>
+                <p className={`text-xs ${applyResult.ok ? "text-success" : "text-danger"}`}>{applyResult.text}</p>
               )}
             </div>
           )}

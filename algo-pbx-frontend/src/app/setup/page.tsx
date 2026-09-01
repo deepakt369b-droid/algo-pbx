@@ -73,7 +73,7 @@ export default function SetupPage() {
   if (checking) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background">
-        <p className="text-sm text-slate-400">Checking setup status...</p>
+        <p className="text-sm text-secondary">Checking setup status...</p>
       </main>
     );
   }
@@ -81,14 +81,14 @@ export default function SetupPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-8">
       <div className="glass-card w-full max-w-sm p-8">
-        <h1 className="mb-1 text-lg font-semibold text-slate-100">Welcome to Algo PBX</h1>
-        <p className="mb-4 text-xs text-slate-500">Create the first administrator account to get started.</p>
+        <h1 className="mb-1 text-lg font-semibold text-primary">Welcome to Algo PBX</h1>
+        <p className="mb-4 text-xs text-tertiary">Create the first administrator account to get started.</p>
 
         {settingsKeyMissing && (
-          <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/5 p-3">
-            <p className="text-xs text-red-400">
+          <div className="mb-4 rounded-lg border border-danger/40 bg-danger-subtle p-3">
+            <p className="text-xs text-danger">
               SETTINGS_ENCRYPTION_KEY is not set. Generate one with{" "}
-              <code className="text-red-300">openssl rand -hex 32</code>, add it to your <code>.env</code>, and
+              <code className="text-danger">openssl rand -hex 32</code>, add it to your <code>.env</code>, and
               restart the container before continuing — runtime settings (Resend, WhatsApp, etc.) can&apos;t be
               stored without it.
             </p>
@@ -129,17 +129,17 @@ export default function SetupPage() {
               required
               className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
             />
-            {error && <p className="text-xs text-red-400">{error}</p>}
+            {error && <p className="text-xs text-danger">{error}</p>}
             <button
               type="submit"
               disabled={submitting || settingsKeyMissing}
-              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               {submitting ? "Creating..." : "Create admin account"}
             </button>
           </form>
         ) : (
-          <p className="text-sm text-green-400">Admin account created. Signing you in...</p>
+          <p className="text-sm text-success">Admin account created. Signing you in...</p>
         )}
       </div>
     </main>

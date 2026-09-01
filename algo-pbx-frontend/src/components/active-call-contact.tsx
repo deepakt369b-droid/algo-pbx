@@ -89,10 +89,10 @@ export function ActiveCallContact({ identity }: { identity: string | null }) {
     };
 
     return (
-      <div className="text-center text-xs text-slate-400">
+      <div className="text-center text-xs text-secondary">
         {isOwnedByOther ? (
           <p>
-            Customer of <span className="text-slate-200">{match.owner!.name}</span> —{" "}
+            Customer of <span className="text-primary">{match.owner!.name}</span> —{" "}
             <Link href={`/agent?contact=${match.id}`} className="text-cyan hover:underline">
               view
             </Link>
@@ -113,14 +113,14 @@ export function ActiveCallContact({ identity }: { identity: string | null }) {
                   {transferring ? "Transferring…" : `Warm transfer to ${match.owner!.name}`}
                 </button>
               ) : (
-                <span className="text-slate-500">{ownerOnline ? "Warm transfer available once on an active call." : `${match.owner!.name} is offline.`}</span>
+                <span className="text-tertiary">{ownerOnline ? "Warm transfer available once on an active call." : `${match.owner!.name} is offline.`}</span>
               )
             ) : (
-              <span className="text-slate-500">{match.owner!.name} has no extension to transfer to.</span>
+              <span className="text-tertiary">{match.owner!.name} has no extension to transfer to.</span>
             )}
           </p>
         )}
-        {transferError && <p className="mt-1 text-red-400">{transferError}</p>}
+        {transferError && <p className="mt-1 text-danger">{transferError}</p>}
       </div>
     );
   }
@@ -153,7 +153,7 @@ export function ActiveCallContact({ identity }: { identity: string | null }) {
   // where it can determine them, and degrades to the raw identity when it
   // can't parse it as a phone number at all (e.g. a bare SIP URI).
   return (
-    <p className="text-center text-xs text-slate-500">
+    <p className="text-center text-xs text-tertiary">
       {formatUnknownCaller(identity)} —{" "}
       <button onClick={createContact} disabled={creating} className="text-cyan hover:underline disabled:opacity-50">
         {creating ? "Adding…" : "Add to CRM"}

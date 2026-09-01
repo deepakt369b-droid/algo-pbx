@@ -68,7 +68,7 @@ export function useMissedCallsRefresh(): () => void {
 function Badge({ count }: { count: number }) {
   if (count <= 0) return null;
   return (
-    <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 text-[10px] font-semibold text-background">
+    <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 text-[10px] font-semibold text-accent-fg">
       {count > 99 ? "99+" : count}
     </span>
   );
@@ -170,13 +170,13 @@ export function AgentShell({
         style={{ width: SIDEBAR_WIDTH }}
       >
         <div className="flex flex-col gap-2 border-b border-border px-4 py-4">
-          <span className="text-sm font-semibold text-slate-100">Algo PBX</span>
+          <span className="text-sm font-semibold text-primary">Algo PBX</span>
           <span
             className="flex w-fit items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs"
             title={isConnected ? "Softphone registered" : "Softphone not connected — you cannot receive calls"}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-green-400" : "bg-red-400"}`} />
-            <span className={isConnected ? "text-green-400" : "text-red-400"}>{isConnected ? "Connected" : "Disconnected"}</span>
+            <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-success" : "bg-danger"}`} />
+            <span className={isConnected ? "text-success" : "text-danger"}>{isConnected ? "Connected" : "Disconnected"}</span>
           </span>
         </div>
 
@@ -195,7 +195,7 @@ export function AgentShell({
                 title={title}
                 aria-current={isActive ? "page" : undefined}
                 className={`glass-card flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                  isActive ? "border-cyan/60 bg-cyan/10 text-cyan" : "text-slate-300 hover:border-cyan/40 hover:text-cyan"
+                  isActive ? "border-cyan/60 bg-cyan/10 text-cyan" : "text-secondary hover:border-cyan/40 hover:text-cyan"
                 }`}
               >
                 <Icon className="h-4 w-4 flex-shrink-0" />
@@ -213,13 +213,13 @@ export function AgentShell({
               Admin
             </Link>
           )}
-          <span className="truncate text-xs text-slate-500" title={userEmail ?? undefined}>
+          <span className="truncate text-xs text-tertiary" title={userEmail ?? undefined}>
             {userEmail}
           </span>
           <form action={signOutAction}>
             <button
               type="submit"
-              className="w-full rounded-lg border border-border px-3 py-1.5 text-xs text-slate-300 hover:border-cyan hover:text-cyan"
+              className="w-full rounded-lg border border-border px-3 py-1.5 text-xs text-secondary hover:border-cyan hover:text-cyan"
             >
               Sign out
             </button>
@@ -234,9 +234,9 @@ export function AgentShell({
             ringtone must never again be invisible — clicking this banner is
             itself the user gesture that unlocks it. */}
         {ringtoneBlocked && (
-          <div className="sticky top-0 z-20 flex items-center justify-center gap-2 border-b border-yellow-500/40 bg-yellow-500/10 px-4 py-2 text-xs text-yellow-400">
+          <div className="sticky top-0 z-20 flex items-center justify-center gap-2 border-b border-warning/40 bg-warning-subtle px-4 py-2 text-xs text-warning">
             <span>🔔 Call sounds are blocked by your browser — you may miss incoming calls.</span>
-            <button onClick={retryRingtone} className="underline hover:text-yellow-300">
+            <button onClick={retryRingtone} className="underline hover:text-warning">
               Enable call sounds
             </button>
           </div>

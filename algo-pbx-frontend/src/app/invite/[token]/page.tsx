@@ -63,20 +63,20 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-8">
       <div className="glass-card w-full max-w-sm p-6">
-        <h1 className="mb-4 text-lg font-semibold text-slate-100">Set your password</h1>
+        <h1 className="mb-4 text-lg font-semibold text-primary">Set your password</h1>
 
-        {status === "loading" && <p className="text-sm text-slate-400">Checking invite link...</p>}
+        {status === "loading" && <p className="text-sm text-secondary">Checking invite link...</p>}
 
         {status === "invalid" && (
-          <p className="text-sm text-red-400">
+          <p className="text-sm text-danger">
             This invite link is invalid or has expired. Ask an administrator to send a new one.
           </p>
         )}
 
         {status === "valid" && (
           <div className="flex flex-col gap-3">
-            <p className="text-sm text-slate-400">
-              Account: <span className="text-slate-200">{email}</span>
+            <p className="text-sm text-secondary">
+              Account: <span className="text-primary">{email}</span>
             </p>
             <input
               type="password"
@@ -92,15 +92,15 @@ export default function InvitePage({ params }: { params: { token: string } }) {
               placeholder="Confirm password"
               className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
             />
-            {error && <p className="text-xs text-red-400">{error}</p>}
+            {error && <p className="text-xs text-danger">{error}</p>}
             <button
               onClick={submit}
               disabled={submitting}
-              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               Set password
             </button>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-tertiary">
               This link can only be used once. Your email address is your username and cannot be
               changed by you — contact an administrator if it needs to change.
             </p>
@@ -108,7 +108,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         )}
 
         {status === "done" && (
-          <p className="text-sm text-green-400">Password set. Redirecting to sign in...</p>
+          <p className="text-sm text-success">Password set. Redirecting to sign in...</p>
         )}
       </div>
     </main>

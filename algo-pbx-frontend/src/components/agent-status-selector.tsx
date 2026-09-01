@@ -6,10 +6,10 @@ import { useSIP } from "@/contexts/sip-context";
 import type { AgentStatus } from "@/types";
 
 const STATUSES: { value: AgentStatus; label: string; color: string }[] = [
-  { value: "AVAILABLE", label: "Available", color: "bg-emerald-500" },
-  { value: "BUSY", label: "Busy", color: "bg-amber-500" },
+  { value: "AVAILABLE", label: "Available", color: "bg-success" },
+  { value: "BUSY", label: "Busy", color: "bg-warning" },
   { value: "BREAK", label: "On Break", color: "bg-blue" },
-  { value: "OFFLINE", label: "Offline", color: "bg-slate-500" },
+  { value: "OFFLINE", label: "Offline", color: "bg-surface-hover" },
 ];
 
 export function AgentStatusSelector() {
@@ -39,7 +39,7 @@ export function AgentStatusSelector() {
             onClick={() => select(s.value)}
             className={cn(
               "flex flex-1 flex-col items-center gap-1 rounded-lg px-2 py-2 text-xs transition",
-              agentStatus === s.value ? "bg-surface text-slate-100" : "text-slate-500 hover:text-slate-300"
+              agentStatus === s.value ? "bg-surface text-primary" : "text-tertiary hover:text-primary"
             )}
           >
             <span className={cn("h-2 w-2 rounded-full", s.color)} />
@@ -47,7 +47,7 @@ export function AgentStatusSelector() {
           </button>
         ))}
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   );
 }

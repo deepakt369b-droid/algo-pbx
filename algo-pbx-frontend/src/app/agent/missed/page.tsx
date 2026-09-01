@@ -9,7 +9,7 @@ import { AgentMissedCalls } from "@/components/agent-missed-calls";
 export default function AgentMissedCallsPage() {
   return (
     <div className="flex w-full flex-col items-center gap-6 p-8">
-      <h1 className="text-xl font-semibold text-slate-100">Missed calls</h1>
+      <h1 className="text-xl font-semibold text-primary">Missed calls</h1>
       <AgentMissedCalls />
     </div>
   );

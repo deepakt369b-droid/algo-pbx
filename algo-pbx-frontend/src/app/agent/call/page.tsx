@@ -13,7 +13,7 @@ import { Dialpad } from "@/components/dialpad";
 export default function AgentCallPage() {
   return (
     <main className="p-8">
-      <h1 className="mb-6 text-center text-xl font-semibold text-slate-100 lg:text-left">Call</h1>
+      <h1 className="mb-6 text-center text-xl font-semibold text-primary lg:text-left">Call</h1>
       <div className="mx-auto flex max-w-3xl flex-col items-center gap-6">
         <AgentStatusSelector />
         <div className="flex flex-col gap-6 md:flex-row">

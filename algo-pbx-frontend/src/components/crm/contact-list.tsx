@@ -106,7 +106,7 @@ export function ContactList({
         <button
           onClick={() => setShowCreate((v) => !v)}
           title="New contact"
-          className="rounded-lg border border-border px-3 py-2 text-sm text-slate-300 hover:border-cyan hover:text-cyan"
+          className="rounded-lg border border-border px-3 py-2 text-sm text-secondary hover:border-cyan hover:text-cyan"
         >
           +
         </button>
@@ -115,13 +115,13 @@ export function ContactList({
       <div className="flex gap-1 rounded-lg border border-border p-0.5 text-xs">
         <button
           onClick={() => setScope("mine")}
-          className={`flex-1 rounded-md px-2 py-1 ${scope === "mine" ? "bg-cyan/10 text-cyan" : "text-slate-400 hover:text-slate-200"}`}
+          className={`flex-1 rounded-md px-2 py-1 ${scope === "mine" ? "bg-cyan/10 text-cyan" : "text-secondary hover:text-primary"}`}
         >
           Mine
         </button>
         <button
           onClick={() => setScope("all")}
-          className={`flex-1 rounded-md px-2 py-1 ${scope === "all" ? "bg-cyan/10 text-cyan" : "text-slate-400 hover:text-slate-200"}`}
+          className={`flex-1 rounded-md px-2 py-1 ${scope === "all" ? "bg-cyan/10 text-cyan" : "text-secondary hover:text-primary"}`}
         >
           All
         </button>
@@ -141,11 +141,11 @@ export function ContactList({
             placeholder="Name (optional)"
             className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-cyan"
           />
-          {createError && <p className="text-xs text-red-400">{createError}</p>}
+          {createError && <p className="text-xs text-danger">{createError}</p>}
           <button
             onClick={createContact}
             disabled={creating}
-            className="rounded-lg bg-cyan px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+            className="rounded-lg bg-cyan px-3 py-1.5 text-sm font-medium text-accent-fg disabled:opacity-50"
           >
             {creating ? "Creating…" : "Create contact"}
           </button>
@@ -154,11 +154,11 @@ export function ContactList({
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <p className="p-3 text-sm text-slate-500">Loading…</p>
+          <p className="p-3 text-sm text-tertiary">Loading…</p>
         ) : error ? (
-          <p className="p-3 text-sm text-red-400">{error}</p>
+          <p className="p-3 text-sm text-danger">{error}</p>
         ) : contacts.length === 0 ? (
-          <p className="p-3 text-sm text-slate-500">No contacts found.</p>
+          <p className="p-3 text-sm text-tertiary">No contacts found.</p>
         ) : (
           <ul className="flex flex-col gap-1">
             {contacts.map((c) => {
@@ -168,20 +168,20 @@ export function ContactList({
                   <button
                     onClick={() => onSelect(c.id)}
                     className={`w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-border/40 ${
-                      isActive ? "bg-cyan/10 text-cyan" : "text-slate-200"
+                      isActive ? "bg-cyan/10 text-cyan" : "text-primary"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-medium">{c.displayName || c.numberE164}</div>
                       <span
                         className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
-                          c.owner ? "bg-blue/10 text-blue" : "bg-slate-500/10 text-slate-500"
+                          c.owner ? "bg-blue/10 text-blue" : "bg-surface-hover text-tertiary"
                         }`}
                       >
                         {c.owner ? c.owner.name : "Unowned"}
                       </span>
                     </div>
-                    <div className="text-xs text-slate-500">
+                    <div className="text-xs text-tertiary">
                       {c.displayName ? c.numberE164 : ""}
                       {c.company ? ` · ${c.company}` : ""}
                     </div>

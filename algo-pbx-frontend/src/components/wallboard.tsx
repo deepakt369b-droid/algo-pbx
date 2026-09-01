@@ -33,7 +33,7 @@ export function Wallboard() {
       <Stat
         label="AMI Link"
         value={snapshot ? (snapshot.amiConnected ? "Connected" : "Down") : "—"}
-        accent={snapshot && !snapshot.amiConnected ? "text-red-400" : "text-emerald-400"}
+        accent={snapshot && !snapshot.amiConnected ? "text-danger" : "text-success"}
       />
     </div>
   );
@@ -43,7 +43,7 @@ function Stat({ label, value, accent }: { label: string; value: string | number;
   return (
     <div className="flex flex-col items-center gap-1">
       <span className={`text-2xl font-semibold ${accent ?? "text-cyan"}`}>{value}</span>
-      <span className="text-xs uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="text-xs uppercase tracking-wide text-tertiary">{label}</span>
     </div>
   );
 }

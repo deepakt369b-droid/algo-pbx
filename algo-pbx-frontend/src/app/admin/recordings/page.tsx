@@ -113,10 +113,10 @@ export default function AdminRecordingsPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Call Recordings</h1>
+      <h1 className="text-xl font-semibold text-primary">Call Recordings</h1>
 
       {loadError && (
-        <div className="w-full max-w-3xl rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-3xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {loadError}
         </div>
       )}
@@ -129,16 +129,16 @@ export default function AdminRecordingsPage() {
             placeholder="Filter by number, agent extension, or call id"
             className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
           />
-          <label className="flex items-center gap-2 text-xs text-slate-400">
+          <label className="flex items-center gap-2 text-xs text-secondary">
             <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
             Show agent-hidden
           </label>
-          <button onClick={load} className="rounded-lg border border-border px-3 py-2 text-xs text-slate-300 hover:border-cyan">
+          <button onClick={load} className="rounded-lg border border-border px-3 py-2 text-xs text-secondary hover:border-cyan">
             Refresh
           </button>
         </div>
-        {message && <p className={`text-xs ${messageKind === "error" ? "text-red-400" : "text-slate-500"}`}>{message}</p>}
-        <p className="text-xs text-slate-600">
+        {message && <p className={`text-xs ${messageKind === "error" ? "text-danger" : "text-tertiary"}`}>{message}</p>}
+        <p className="text-xs text-tertiary">
           {visible.length} recording{visible.length === 1 ? "" : "s"}. Playback and download stream through the byte-serving
           route, which re-checks access on every request.
         </p>
@@ -146,8 +146,8 @@ export default function AdminRecordingsPage() {
 
       <div className="glass-card w-full max-w-3xl p-4">
         {visible.length === 0 ? (
-          <p className="p-4 text-sm text-slate-500">
-            No recordings. They are created as inbound calls are answered (see <span className="text-slate-400">extensions.conf</span>&apos;s
+          <p className="p-4 text-sm text-tertiary">
+            No recordings. They are created as inbound calls are answered (see <span className="text-secondary">extensions.conf</span>&apos;s
             MixMonitor) and ingested by the CDR listener.
           </p>
         ) : (
@@ -155,11 +155,11 @@ export default function AdminRecordingsPage() {
             {visible.map((r) => (
               <li key={r.id} className="flex flex-col gap-2 py-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                  <span className="text-slate-200">
+                  <span className="text-primary">
                     {r.cdr.direction === "inbound" ? "◀ " : "▶ "}
                     {r.cdr.callerNumber || "unknown"} → {r.cdr.destination || r.cdr.agentExtension || "—"}
                   </span>
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-tertiary">
                     {fmtWhen(r.cdr.startedAt || r.createdAt)} · {fmtDuration(r.cdr.durationSec)} · agent {r.cdr.agentExtension || "—"}
                   </span>
                 </div>
@@ -169,21 +169,21 @@ export default function AdminRecordingsPage() {
                     Download
                   </a>
                   {r.hiddenFromAgentAt ? (
-                    <span className="text-yellow-500">hidden from agents ({fmtWhen(r.hiddenFromAgentAt)})</span>
+                    <span className="text-warning">hidden from agents ({fmtWhen(r.hiddenFromAgentAt)})</span>
                   ) : (
-                    <span className="text-slate-600">visible to owning agent</span>
+                    <span className="text-tertiary">visible to owning agent</span>
                   )}
                   <button
                     onClick={() => toggleHidden(r)}
                     disabled={busyId === r.id}
-                    className="text-slate-400 hover:text-slate-200 disabled:opacity-50"
+                    className="text-secondary hover:text-primary disabled:opacity-50"
                   >
                     {r.hiddenFromAgentAt ? "Un-hide" : "Hide from agent"}
                   </button>
                   <button
                     onClick={() => hardDelete(r)}
                     disabled={busyId === r.id}
-                    className="text-red-400 hover:text-red-300 disabled:opacity-50"
+                    className="text-danger hover:text-danger disabled:opacity-50"
                   >
                     Delete permanently
                   </button>

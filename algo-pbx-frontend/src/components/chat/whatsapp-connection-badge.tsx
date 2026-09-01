@@ -13,10 +13,10 @@ interface WhatsAppSelf {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  CONNECTED: "bg-green-400",
+  CONNECTED: "bg-success",
   PAIRING: "bg-cyan animate-pulse",
-  DISCONNECTED: "bg-red-400",
-  LOGGED_OUT: "bg-slate-500",
+  DISCONNECTED: "bg-danger",
+  LOGGED_OUT: "bg-surface-hover",
 };
 
 // Read-only connection badge for the agent's own chat panel — no control
@@ -59,24 +59,24 @@ export function WhatsAppConnectionBadge() {
   }, []);
 
   if (failed && !data) {
-    return <p className="px-1 text-xs text-slate-600">WhatsApp status unavailable.</p>;
+    return <p className="px-1 text-xs text-tertiary">WhatsApp status unavailable.</p>;
   }
   if (!data) return null;
 
   if (!data.assigned) {
-    return <p className="px-1 text-xs text-slate-600">No WhatsApp number assigned to you.</p>;
+    return <p className="px-1 text-xs text-tertiary">No WhatsApp number assigned to you.</p>;
   }
 
   return (
     <div className="px-1">
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        <span className={`h-1.5 w-1.5 rounded-full ${STATUS_COLOR[data.status ?? ""] ?? "bg-slate-500"}`} />
+      <div className="flex items-center gap-2 text-xs text-secondary">
+        <span className={`h-1.5 w-1.5 rounded-full ${STATUS_COLOR[data.status ?? ""] ?? "bg-surface-hover"}`} />
         <span>
           {data.phoneE164 ?? `SIM ${data.simPort}`} — {data.status?.toLowerCase()}
         </span>
       </div>
       {data.lastError && (
-        <p className="mt-1 rounded border border-red-900 bg-red-950/40 px-2 py-1 text-[11px] leading-snug text-red-300">
+        <p className="mt-1 rounded border border-danger/40 bg-danger-subtle px-2 py-1 text-[11px] leading-snug text-danger">
           {data.lastError}
         </p>
       )}

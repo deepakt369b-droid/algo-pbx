@@ -59,7 +59,7 @@ export function InterventionControls({ supervisorExtension }: { supervisorExtens
 
   return (
     <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">
         Live Call Intervention
       </h2>
       {channels ? (
@@ -89,17 +89,17 @@ export function InterventionControls({ supervisorExtension }: { supervisorExtens
             key={m.value}
             onClick={() => setMode(m.value)}
             className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${
-              mode === m.value ? "border-cyan text-cyan" : "border-border text-slate-400"
+              mode === m.value ? "border-cyan text-cyan" : "border-border text-secondary"
             }`}
           >
             {m.label}
           </button>
         ))}
       </div>
-      <button onClick={trigger} className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-white">
+      <button onClick={trigger} className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-primary">
         Start
       </button>
-      {status && <p className="text-xs text-slate-500">{status}</p>}
+      {status && <p className="text-xs text-tertiary">{status}</p>}
     </div>
   );
 }

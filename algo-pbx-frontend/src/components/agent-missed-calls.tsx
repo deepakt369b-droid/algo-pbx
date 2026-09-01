@@ -73,29 +73,29 @@ export function AgentMissedCalls() {
   if (error && calls.length === 0) {
     return (
       <div className="glass-card w-full max-w-2xl p-6">
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-danger">{error}</p>
       </div>
     );
   }
   if (calls.length === 0) {
     return (
       <div className="glass-card w-full max-w-2xl p-6">
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Missed Calls</h2>
-        <p className="text-xs text-slate-500">No missed calls.</p>
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-secondary">Missed Calls</h2>
+        <p className="text-xs text-tertiary">No missed calls.</p>
       </div>
     );
   }
 
   return (
     <div className="glass-card w-full max-w-2xl p-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Missed Calls</h2>
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-      <ul className="flex flex-col gap-3 text-sm text-slate-200">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">Missed Calls</h2>
+      {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+      <ul className="flex flex-col gap-3 text-sm text-primary">
         {calls.map((c) => (
           <li key={c.id} className="flex items-center justify-between gap-3 border-t border-border pt-3 first:border-0 first:pt-0">
             <div>
               <p>{c.callerDisplayName ?? c.callerNumber}</p>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-tertiary">
                 {new Date(c.startedAt).toLocaleString()} · {c.disposition}
                 {c.callerContactId && (
                   <>

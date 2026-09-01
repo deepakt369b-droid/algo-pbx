@@ -44,7 +44,7 @@ export function Dialpad() {
         placeholder="Enter number"
         aria-label="Number to dial"
         disabled={callState !== "idle"}
-        className="w-full rounded-lg border border-border bg-background px-4 py-2 text-center text-lg tracking-wider text-slate-100 outline-none focus:border-cyan"
+        className="w-full rounded-lg border border-border bg-background px-4 py-2 text-center text-lg tracking-wider text-primary outline-none focus:border-cyan"
       />
       <div className="grid grid-cols-3 gap-3">
         {KEYS.map((key) => (
@@ -53,7 +53,7 @@ export function Dialpad() {
             onClick={() => onKeyPress(key)}
             aria-label={callState === "active" ? `Send DTMF ${key}` : `Digit ${key}`}
             className={cn(
-              "aspect-square rounded-full border border-border bg-surface text-lg font-medium text-slate-200",
+              "aspect-square rounded-full border border-border bg-surface text-lg font-medium text-primary",
               "transition hover:border-cyan hover:text-cyan active:scale-95"
             )}
           >
@@ -65,7 +65,7 @@ export function Dialpad() {
         <button
           onClick={onCall}
           disabled={!digits || callState !== "idle"}
-          className="flex-1 rounded-lg bg-cyan px-4 py-2 font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex-1 rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Call
         </button>
@@ -73,7 +73,7 @@ export function Dialpad() {
           onClick={() => setDigits((d) => d.slice(0, -1))}
           disabled={!digits || callState !== "idle"}
           aria-label="Backspace"
-          className="rounded-lg border border-border px-3 py-2 text-sm text-slate-300 hover:border-cyan hover:text-cyan disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg border border-border px-3 py-2 text-sm text-secondary hover:border-cyan hover:text-cyan disabled:cursor-not-allowed disabled:opacity-40"
         >
           ⌫
         </button>
@@ -81,12 +81,12 @@ export function Dialpad() {
       {callState !== "idle" && (
         <button
           onClick={() => hangupCall()}
-          className="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600"
+          className="rounded-lg bg-danger-subtle px-4 py-2 text-sm font-medium text-primary transition hover:bg-danger"
         >
           End call
         </button>
       )}
-      {dialError && <p className="text-xs text-red-400">{dialError}</p>}
+      {dialError && <p className="text-xs text-danger">{dialError}</p>}
     </div>
   );
 }

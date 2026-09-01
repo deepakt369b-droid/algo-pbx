@@ -243,7 +243,7 @@ export default function RegisterPage() {
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background">
-        <p className="text-sm text-slate-400">Loading...</p>
+        <p className="text-sm text-secondary">Loading...</p>
       </main>
     );
   }
@@ -251,8 +251,8 @@ export default function RegisterPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-8">
       <div className="glass-card w-full max-w-md p-6">
-        <h1 className="mb-1 text-lg font-semibold text-slate-100">Complete your registration</h1>
-        <p className="mb-4 text-xs text-slate-500">
+        <h1 className="mb-1 text-lg font-semibold text-primary">Complete your registration</h1>
+        <p className="mb-4 text-xs text-tertiary">
           {step === "profile" && "Step 1 of 3 — your details"}
           {step === "verify" && "Step 2 of 3 — verify your phone number"}
           {step === "photo" && "Step 3 of 3 — profile photo (optional)"}
@@ -280,11 +280,11 @@ export default function RegisterPage() {
               placeholder="Contact number, e.g. 98765 43210 or +91 98765 43210"
               className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
             />
-            {error && <p className="text-xs text-red-400">{error}</p>}
+            {error && <p className="text-xs text-danger">{error}</p>}
             <button
               onClick={submitProfile}
               disabled={submitting}
-              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               Continue
             </button>
@@ -293,7 +293,7 @@ export default function RegisterPage() {
 
         {step === "verify" && (
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-secondary">
               We&apos;ll send a code to {phone} via {otpChannel === "FIREBASE" ? "SMS" : "WhatsApp"}.
             </p>
 
@@ -302,7 +302,7 @@ export default function RegisterPage() {
                 <div id="firebase-recaptcha-container" />
 
                 {!firebaseSent && !fallbackOffered && (
-                  <button onClick={sendFirebaseCode} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+                  <button onClick={sendFirebaseCode} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
                     Send verification code
                   </button>
                 )}
@@ -318,14 +318,14 @@ export default function RegisterPage() {
                     <button
                       onClick={confirmFirebaseCode}
                       disabled={!OTP_INPUT_PATTERN.test(firebaseCode) || submitting}
-                      className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+                      className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
                     >
                       Verify
                     </button>
                   </>
                 )}
 
-                {firebaseError && <p className="text-xs text-red-400">{firebaseError}</p>}
+                {firebaseError && <p className="text-xs text-danger">{firebaseError}</p>}
               </>
             )}
 
@@ -334,9 +334,9 @@ export default function RegisterPage() {
                 "fallback" framing; or the in-page fallback offered after a
                 Firebase send/verify error when otpChannel is FIREBASE. */}
             {(otpChannel !== "FIREBASE" || fallbackOffered) && (
-              <div className={otpChannel === "FIREBASE" ? "mt-2 flex flex-col gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3" : "flex flex-col gap-2"}>
+              <div className={otpChannel === "FIREBASE" ? "mt-2 flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning-subtle p-3" : "flex flex-col gap-2"}>
                 {otpChannel === "FIREBASE" && (
-                  <p className="text-xs text-yellow-400">
+                  <p className="text-xs text-warning">
                     SMS verification didn&apos;t go through. We can send a code via WhatsApp instead.
                   </p>
                 )}
@@ -344,7 +344,7 @@ export default function RegisterPage() {
                   <button
                     onClick={sendFallbackOtp}
                     disabled={submitting}
-                    className={otpChannel === "FIREBASE" ? "rounded-lg bg-blue px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50" : "rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"}
+                    className={otpChannel === "FIREBASE" ? "rounded-lg bg-blue px-3 py-1.5 text-xs font-medium text-primary disabled:opacity-50" : "rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"}
                   >
                     Send verification code
                   </button>
@@ -359,14 +359,14 @@ export default function RegisterPage() {
                     <button
                       onClick={confirmFallbackOtp}
                       disabled={!OTP_INPUT_PATTERN.test(fallbackCode) || submitting}
-                      className={otpChannel === "FIREBASE" ? "rounded-lg bg-blue px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50" : "rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"}
+                      className={otpChannel === "FIREBASE" ? "rounded-lg bg-blue px-3 py-1.5 text-xs font-medium text-primary disabled:opacity-50" : "rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"}
                     >
                       Verify
                     </button>
                   </>
                 )}
-                {error && <p className="text-xs text-red-400">{error}</p>}
-                <p className="text-xs text-slate-600">
+                {error && <p className="text-xs text-danger">{error}</p>}
+                <p className="text-xs text-tertiary">
                   Not receiving a code? Ask an administrator to verify your number manually.
                 </p>
               </div>
@@ -384,20 +384,20 @@ export default function RegisterPage() {
               type="file"
               accept="image/jpeg,image/png,image/webp"
               onChange={(e) => onPhotoChange(e.target.files?.[0] ?? null)}
-              className="text-xs text-slate-400"
+              className="text-xs text-secondary"
             />
-            {error && <p className="text-xs text-red-400">{error}</p>}
+            {error && <p className="text-xs text-danger">{error}</p>}
             <button
               onClick={submitPhoto}
               disabled={submitting}
-              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               {photoFile ? "Upload and finish" : "Skip and finish"}
             </button>
           </div>
         )}
 
-        {step === "done" && <p className="text-sm text-green-400">Registration complete. Taking you to your workspace...</p>}
+        {step === "done" && <p className="text-sm text-success">Registration complete. Taking you to your workspace...</p>}
       </div>
     </main>
   );

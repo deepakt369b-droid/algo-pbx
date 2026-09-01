@@ -243,8 +243,8 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
     }
   };
 
-  if (loading) return <div className="glass-card flex-1 p-6 text-sm text-slate-500">Loading…</div>;
-  if (error || !contact) return <div className="glass-card flex-1 p-6 text-sm text-red-400">{error ?? "Not found."}</div>;
+  if (loading) return <div className="glass-card flex-1 p-6 text-sm text-tertiary">Loading…</div>;
+  if (error || !contact) return <div className="glass-card flex-1 p-6 text-sm text-danger">{error ?? "Not found."}</div>;
 
   const canCall = callState === "idle";
 
@@ -252,19 +252,19 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
     <div className="glass-card flex-1 overflow-y-auto p-5">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100">{contact.displayName || contact.numberE164}</h2>
-          <p className="text-sm text-slate-400">{contact.numberE164}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <h2 className="text-lg font-semibold text-primary">{contact.displayName || contact.numberE164}</h2>
+          <p className="text-sm text-secondary">{contact.numberE164}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-tertiary">
             {contact.company && <span>{contact.company}</span>}
             {contact.email && <span>{contact.email}</span>}
             {contact.owner && (
               <span
-                className={`rounded-full px-2 py-0.5 ${readOnly ? "bg-blue/20 text-blue" : "bg-slate-500/10 text-slate-400"}`}
+                className={`rounded-full px-2 py-0.5 ${readOnly ? "bg-blue/20 text-blue" : "bg-surface-hover text-secondary"}`}
               >
                 Owned by {contact.owner.name}
               </span>
             )}
-            {contact.dncBlocked && <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-red-400">DNC blocked</span>}
+            {contact.dncBlocked && <span className="rounded-full bg-danger-subtle px-2 py-0.5 text-danger">DNC blocked</span>}
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -273,13 +273,13 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
               onClick={() => makeCall(contact.numberE164)}
               disabled={!canCall}
               title={canCall ? "Call this contact" : `Cannot call — ${callState}`}
-              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               Call
             </button>
             <Link
               href={`/agent/chat?number=${encodeURIComponent(contact.numberE164)}`}
-              className="rounded-lg border border-border px-4 py-2 text-sm text-slate-200 hover:border-cyan hover:text-cyan"
+              className="rounded-lg border border-border px-4 py-2 text-sm text-primary hover:border-cyan hover:text-cyan"
             >
               WhatsApp
             </Link>
@@ -295,8 +295,8 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
           )}
         </div>
       </div>
-      {dialError && <p className="mt-2 text-xs text-red-400">{dialError}</p>}
-      {actionError && <p className="mt-2 text-xs text-red-400">{actionError}</p>}
+      {dialError && <p className="mt-2 text-xs text-danger">{dialError}</p>}
+      {actionError && <p className="mt-2 text-xs text-danger">{actionError}</p>}
       {readOnly && (
         <p className="mt-2 rounded-lg border border-blue/30 bg-blue/5 p-2 text-xs text-blue">
           This contact is owned by {contact.owner?.name}. The form is read-only — request a transfer to edit it.
@@ -308,7 +308,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
           shouldn't be prompted to edit a contact they can't save). */}
       {canWrite && !contact.displayName && !nameSkipped && (
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3">
-          <span className="text-xs text-slate-300">Who was this?</span>
+          <span className="text-xs text-secondary">Who was this?</span>
           <input
             value={nameGuess}
             onChange={(e) => setNameGuess(e.target.value)}
@@ -316,10 +316,10 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
             onKeyDown={(e) => e.key === "Enter" && saveNameGuess()}
             className="flex-1 rounded-lg border border-border bg-background px-2 py-1 text-xs outline-none focus:border-cyan"
           />
-          <button onClick={saveNameGuess} disabled={savingName || !nameGuess.trim()} className="rounded-lg bg-cyan px-3 py-1 text-xs font-medium text-background disabled:opacity-50">
+          <button onClick={saveNameGuess} disabled={savingName || !nameGuess.trim()} className="rounded-lg bg-cyan px-3 py-1 text-xs font-medium text-accent-fg disabled:opacity-50">
             {savingName ? "Saving…" : "Save"}
           </button>
-          <button onClick={() => setNameSkipped(true)} className="text-xs text-slate-500 hover:text-slate-300">
+          <button onClick={() => setNameSkipped(true)} className="text-xs text-tertiary hover:text-primary">
             Skip
           </button>
         </div>
@@ -327,14 +327,14 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
 
       {/* Disposition bar */}
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border p-3">
-        <span className="text-xs text-slate-500">Disposition:</span>
+        <span className="text-xs text-tertiary">Disposition:</span>
         {(Object.keys(DISPOSITION_LABELS) as Disposition["outcome"][]).map((outcome) => (
           <button
             key={outcome}
             onClick={() => recordDisposition(outcome)}
             disabled={savingDisposition !== null || readOnly}
             className={`rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
-              outcome === "DNC" ? "border-red-500/50 text-red-400 hover:bg-red-500/10" : "border-border text-slate-300 hover:border-cyan hover:text-cyan"
+              outcome === "DNC" ? "border-danger/40 text-danger hover:bg-danger-subtle" : "border-border text-secondary hover:border-cyan hover:text-cyan"
             }`}
           >
             {savingDisposition === outcome ? "Saving…" : DISPOSITION_LABELS[outcome]}
@@ -352,7 +352,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Notes */}
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-slate-200">Notes</h3>
+          <h3 className="mb-2 text-sm font-semibold text-primary">Notes</h3>
           {!readOnly && (
             <div className="flex gap-2">
               <input
@@ -362,17 +362,17 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
                 onKeyDown={(e) => e.key === "Enter" && addNote()}
                 className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-cyan"
               />
-              <button onClick={addNote} disabled={savingNote} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50">
+              <button onClick={addNote} disabled={savingNote} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg disabled:opacity-50">
                 Add
               </button>
             </div>
           )}
           <ul className="mt-2 flex max-h-48 flex-col gap-2 overflow-y-auto">
-            {contact.notes.length === 0 && <li className="text-xs text-slate-500">No notes yet.</li>}
+            {contact.notes.length === 0 && <li className="text-xs text-tertiary">No notes yet.</li>}
             {contact.notes.map((n) => (
               <li key={n.id} className="rounded-lg border border-border p-2 text-xs">
-                <p className="text-slate-200">{n.body}</p>
-                <p className="mt-1 text-slate-500">
+                <p className="text-primary">{n.body}</p>
+                <p className="mt-1 text-tertiary">
                   {n.author.name} · {new Date(n.createdAt).toLocaleString()}
                 </p>
               </li>
@@ -382,7 +382,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
 
         {/* Tasks */}
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-slate-200">Tasks</h3>
+          <h3 className="mb-2 text-sm font-semibold text-primary">Tasks</h3>
           {!readOnly && (
             <div className="flex gap-2">
               <input
@@ -392,13 +392,13 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
                 onKeyDown={(e) => e.key === "Enter" && addTask()}
                 className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-cyan"
               />
-              <button onClick={addTask} disabled={savingTask} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50">
+              <button onClick={addTask} disabled={savingTask} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg disabled:opacity-50">
                 Add
               </button>
             </div>
           )}
           <ul className="mt-2 flex max-h-48 flex-col gap-2 overflow-y-auto">
-            {contact.tasks.length === 0 && <li className="text-xs text-slate-500">No tasks yet.</li>}
+            {contact.tasks.length === 0 && <li className="text-xs text-tertiary">No tasks yet.</li>}
             {contact.tasks.map((t) => (
               <li key={t.id} className="flex items-start gap-2 rounded-lg border border-border p-2 text-xs">
                 <input
@@ -408,9 +408,9 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
                   disabled={readOnly}
                   className="mt-0.5"
                 />
-                <div className={t.completedAt ? "text-slate-500 line-through" : "text-slate-200"}>
+                <div className={t.completedAt ? "text-tertiary line-through" : "text-primary"}>
                   {t.title}
-                  <p className="text-slate-500">{t.assignee.name}{t.dueAt ? ` · due ${new Date(t.dueAt).toLocaleDateString()}` : ""}</p>
+                  <p className="text-tertiary">{t.assignee.name}{t.dueAt ? ` · due ${new Date(t.dueAt).toLocaleDateString()}` : ""}</p>
                 </div>
               </li>
             ))}
@@ -420,20 +420,20 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
 
       {/* Timeline */}
       <section className="mt-5">
-        <h3 className="mb-2 text-sm font-semibold text-slate-200">Timeline</h3>
+        <h3 className="mb-2 text-sm font-semibold text-primary">Timeline</h3>
         <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto">
-          {timeline.length === 0 && <li className="text-xs text-slate-500">No calls or messages yet.</li>}
+          {timeline.length === 0 && <li className="text-xs text-tertiary">No calls or messages yet.</li>}
           {timeline.map((entry, i) =>
             entry.type === "call" ? (
               <li key={`call-${entry.uniqueId}-${i}`} className="rounded-lg border border-border p-2 text-xs">
                 <span className="text-cyan">Call</span> · {entry.direction} · {entry.disposition} · {entry.durationSec}s
-                <p className="text-slate-500">{new Date(entry.timestamp).toLocaleString()}</p>
+                <p className="text-tertiary">{new Date(entry.timestamp).toLocaleString()}</p>
               </li>
             ) : (
               <li key={`msg-${i}`} className="rounded-lg border border-border p-2 text-xs">
                 <span className="text-cyan">{entry.channel ?? "Message"}</span> · {entry.direction}
-                <p className="text-slate-200">{entry.sensitive ? "(sensitive — request access in Chat)" : entry.body}</p>
-                <p className="text-slate-500">{new Date(entry.timestamp).toLocaleString()}</p>
+                <p className="text-primary">{entry.sensitive ? "(sensitive — request access in Chat)" : entry.body}</p>
+                <p className="text-tertiary">{new Date(entry.timestamp).toLocaleString()}</p>
               </li>
             )
           )}
@@ -443,13 +443,13 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       {/* Disposition history */}
       {contact.dispositions.length > 0 && (
         <section className="mt-5">
-          <h3 className="mb-2 text-sm font-semibold text-slate-200">Disposition history</h3>
+          <h3 className="mb-2 text-sm font-semibold text-primary">Disposition history</h3>
           <ul className="flex flex-col gap-2">
             {contact.dispositions.map((d) => (
               <li key={d.id} className="rounded-lg border border-border p-2 text-xs">
-                <span className={d.outcome === "DNC" ? "text-red-400" : "text-cyan"}>{DISPOSITION_LABELS[d.outcome]}</span>
-                {d.note && <span className="text-slate-300"> — {d.note}</span>}
-                <p className="text-slate-500">{d.agent.name} · {new Date(d.createdAt).toLocaleString()}</p>
+                <span className={d.outcome === "DNC" ? "text-danger" : "text-cyan"}>{DISPOSITION_LABELS[d.outcome]}</span>
+                {d.note && <span className="text-secondary"> — {d.note}</span>}
+                <p className="text-tertiary">{d.agent.name} · {new Date(d.createdAt).toLocaleString()}</p>
               </li>
             ))}
           </ul>

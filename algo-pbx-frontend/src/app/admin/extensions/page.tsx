@@ -112,7 +112,7 @@ export default function ExtensionsPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Extension & Trunk Provisioning</h1>
+      <h1 className="text-xl font-semibold text-primary">Extension & Trunk Provisioning</h1>
 
       <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
         <input
@@ -124,20 +124,20 @@ export default function ExtensionsPage() {
         <div className="flex gap-2">
           <button
             onClick={() => setKind("webrtc")}
-            className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${kind === "webrtc" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+            className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${kind === "webrtc" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
           >
             WebRTC Agent
           </button>
           <button
             onClick={() => setKind("hardware")}
-            className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${kind === "hardware" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+            className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${kind === "hardware" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
           >
             IP Phone
           </button>
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-300">Dial permission</label>
-          <p className="text-xs text-slate-500">
+          <label className="text-xs font-medium text-secondary">Dial permission</label>
+          <p className="text-xs text-tertiary">
             Which numbers this extension can dial out to (Loop C2 toll-fraud guard) — defaults to the most
             restrictive tier; widen only if the agent actually needs it.
           </p>
@@ -153,19 +153,19 @@ export default function ExtensionsPage() {
             ))}
           </select>
         </div>
-        <button onClick={create} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background">
+        <button onClick={create} className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg">
           Provision
         </button>
-        {message && <p className="text-xs text-slate-500">{message}</p>}
+        {message && <p className="text-xs text-tertiary">{message}</p>}
         {revealedSecret && (
           <div className="rounded-lg border border-cyan/40 bg-cyan/5 p-3">
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-secondary">
               SIP secret for extension {revealedSecret.number} (shown once):
             </p>
             <code className="mt-1 block break-all text-sm text-cyan">{revealedSecret.secret}</code>
             {revealedSecret.voicemailPin && (
               <>
-                <p className="mt-2 text-xs text-slate-400">Voicemail PIN (shown once, *97 self-service):</p>
+                <p className="mt-2 text-xs text-secondary">Voicemail PIN (shown once, *97 self-service):</p>
                 <code className="mt-1 block text-sm text-cyan">{revealedSecret.voicemailPin}</code>
               </>
             )}
@@ -174,19 +174,19 @@ export default function ExtensionsPage() {
       </div>
 
       <div className="glass-card w-full max-w-md p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Existing Extensions
         </h2>
         {extensions.length === 0 ? (
-          <p className="text-slate-500">None yet.</p>
+          <p className="text-tertiary">None yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {extensions.map((ext) => (
               <li key={ext.id} className="flex flex-col gap-1.5 border-t border-border pt-2 first:border-0 first:pt-0">
                 <div className="flex justify-between">
                   <span>{ext.number}</span>
-                  <span className="text-slate-500">{ext.kind}</span>
-                  <span className="text-slate-500">{ext.status}</span>
+                  <span className="text-tertiary">{ext.kind}</span>
+                  <span className="text-tertiary">{ext.status}</span>
                 </div>
                 <select
                   value={ext.dialPermission}
@@ -206,15 +206,15 @@ export default function ExtensionsPage() {
                   </button>
                   {confirmDeleteNumber === ext.number ? (
                     <>
-                      <button onClick={() => deleteExtension(ext.number)} className="text-red-400 hover:text-red-300">
+                      <button onClick={() => deleteExtension(ext.number)} className="text-danger hover:text-danger">
                         Confirm delete
                       </button>
-                      <button onClick={() => setConfirmDeleteNumber(null)} className="text-slate-500">
+                      <button onClick={() => setConfirmDeleteNumber(null)} className="text-tertiary">
                         Cancel
                       </button>
                     </>
                   ) : (
-                    <button onClick={() => setConfirmDeleteNumber(ext.number)} className="text-red-400 hover:text-red-300">
+                    <button onClick={() => setConfirmDeleteNumber(ext.number)} className="text-danger hover:text-danger">
                       Delete
                     </button>
                   )}

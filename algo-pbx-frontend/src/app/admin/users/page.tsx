@@ -218,10 +218,10 @@ export default function UsersPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">User &amp; Agent Management</h1>
+      <h1 className="text-xl font-semibold text-primary">User &amp; Agent Management</h1>
 
       {loadError && (
-        <div className="w-full max-w-md rounded-lg border border-red-900 bg-red-950/40 px-4 py-2 text-center text-xs text-red-300">
+        <div className="w-full max-w-md rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
           {loadError}
         </div>
       )}
@@ -230,13 +230,13 @@ export default function UsersPage() {
         <div className="flex gap-2 text-xs">
           <button
             onClick={() => setMode("invite")}
-            className={`flex-1 rounded-lg border px-2 py-1.5 ${mode === "invite" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+            className={`flex-1 rounded-lg border px-2 py-1.5 ${mode === "invite" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
           >
             Email invite
           </button>
           <button
             onClick={() => setMode("password")}
-            className={`flex-1 rounded-lg border px-2 py-1.5 ${mode === "password" ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+            className={`flex-1 rounded-lg border px-2 py-1.5 ${mode === "password" ? "border-cyan text-cyan" : "border-border text-secondary"}`}
           >
             Set password now
           </button>
@@ -260,7 +260,7 @@ export default function UsersPage() {
             <button
               key={r}
               onClick={() => setRole(r)}
-              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${role === r ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs ${role === r ? "border-cyan text-cyan" : "border-border text-secondary"}`}
             >
               {r}
             </button>
@@ -283,18 +283,18 @@ export default function UsersPage() {
           placeholder="Agent phone, e.g. +971544887712 (for WhatsApp OTP)"
           className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
         />
-        <p className="-mt-1 text-xs text-slate-600">
+        <p className="-mt-1 text-xs text-tertiary">
           Optional. If set, it&apos;s marked admin-verified so the agent can receive a WhatsApp password-reset code right away.
         </p>
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Extension</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-tertiary">Extension</p>
           <div className="flex gap-2 text-xs">
             {(["auto", "manual", "none"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setExtensionMode(m)}
-                className={`flex-1 rounded-lg border px-2 py-1.5 ${extensionMode === m ? "border-cyan text-cyan" : "border-border text-slate-400"}`}
+                className={`flex-1 rounded-lg border px-2 py-1.5 ${extensionMode === m ? "border-cyan text-cyan" : "border-border text-secondary"}`}
               >
                 {m === "auto" ? "Auto-assign" : m === "manual" ? "Choose number" : "None"}
               </button>
@@ -311,7 +311,7 @@ export default function UsersPage() {
         </div>
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">WhatsApp SIM port</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-tertiary">WhatsApp SIM port</p>
           <select
             value={simPort}
             onChange={(e) => setSimPort(e.target.value ? Number(e.target.value) : "")}
@@ -325,11 +325,11 @@ export default function UsersPage() {
             ))}
           </select>
           {freePorts.length === 0 && waInstances.length > 0 && (
-            <p className="text-xs text-slate-600">All 4 SIM ports are assigned — this agent will be calls-only.</p>
+            <p className="text-xs text-tertiary">All 4 SIM ports are assigned — this agent will be calls-only.</p>
           )}
           {waInstances.length === 0 && (
-            <p className="text-xs text-slate-600">
-              No WhatsApp instances paired yet — pair one in <span className="text-slate-400">/admin/whatsapp</span> first.
+            <p className="text-xs text-tertiary">
+              No WhatsApp instances paired yet — pair one in <span className="text-secondary">/admin/whatsapp</span> first.
             </p>
           )}
         </div>
@@ -337,14 +337,14 @@ export default function UsersPage() {
         <button
           onClick={create}
           disabled={creating || !email.trim() || !name.trim() || (mode === "password" && password.length < 12)}
-          className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+          className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
         >
           {creating ? "Creating…" : "Create user"}
         </button>
-        {message && <p className={`text-xs ${messageKind === "error" ? "text-red-400" : "text-slate-500"}`}>{message}</p>}
+        {message && <p className={`text-xs ${messageKind === "error" ? "text-danger" : "text-tertiary"}`}>{message}</p>}
         {revealed && (
           <div className="rounded-lg border border-cyan/40 bg-cyan/5 p-3 text-xs">
-            <p className="mb-1 text-slate-400">Shown once — save it now:</p>
+            <p className="mb-1 text-secondary">Shown once — save it now:</p>
             {revealed.inviteUrl && (
               <p className="mb-1">
                 Invite link: <code className="break-all text-cyan">{revealed.inviteUrl}</code>
@@ -365,13 +365,13 @@ export default function UsersPage() {
       </div>
 
       <div className="glass-card w-full max-w-md p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Existing Users
         </h2>
         {users.length === 0 ? (
-          <p className="text-slate-500">None yet.</p>
+          <p className="text-tertiary">None yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {users.map((u) => (
               <li key={u.id} className="flex gap-3 border-t border-border pt-2 first:border-0 first:pt-0">
                 {u.photoPath ? (
@@ -382,9 +382,9 @@ export default function UsersPage() {
                 )}
                 <div className="flex flex-1 flex-col">
                   <div className="flex justify-between">
-                    <span className={u.disabled ? "text-slate-500 line-through" : ""}>{u.name}</span>
+                    <span className={u.disabled ? "text-tertiary line-through" : ""}>{u.name}</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-500">{u.role}</span>
+                      <span className="text-tertiary">{u.role}</span>
                       <button onClick={() => (editing === u.id ? setEditing(null) : beginEdit(u))} className="text-xs text-cyan hover:underline">
                         {editing === u.id ? "Close" : "Edit"}
                       </button>
@@ -393,7 +393,7 @@ export default function UsersPage() {
                       </button>
                       <button
                         onClick={() => toggleDisabled(u)}
-                        className={`text-xs ${u.disabled ? "text-green-400 hover:text-green-300" : "text-red-400 hover:text-red-300"}`}
+                        className={`text-xs ${u.disabled ? "text-success hover:text-success" : "text-danger hover:text-danger"}`}
                       >
                         {u.disabled ? "Enable" : "Disable"}
                       </button>
@@ -403,17 +403,17 @@ export default function UsersPage() {
                   {editing === u.id && (
                     <div className="mt-2 flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs">
                       <label className="flex flex-col gap-1">
-                        <span className="text-slate-400">Name</span>
+                        <span className="text-secondary">Name</span>
                         <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })}
                           className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-slate-400">Email</span>
+                        <span className="text-secondary">Email</span>
                         <input value={edit.email} type="email" onChange={(e) => setEdit({ ...edit, email: e.target.value })}
                           className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-slate-400">Role</span>
+                        <span className="text-secondary">Role</span>
                         <select value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value as "AGENT" | "SUPERVISOR" | "ADMIN" })}
                           className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan">
                           <option value="AGENT">AGENT</option>
@@ -422,19 +422,19 @@ export default function UsersPage() {
                         </select>
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-slate-400">New password (min 12, leave blank to keep)</span>
+                        <span className="text-secondary">New password (min 12, leave blank to keep)</span>
                         <input value={edit.password} type="text" placeholder="unchanged"
                           onChange={(e) => setEdit({ ...edit, password: e.target.value })}
                           className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-slate-400">Linked extension (number, blank to unlink)</span>
+                        <span className="text-secondary">Linked extension (number, blank to unlink)</span>
                         <input value={edit.extensionNumber} placeholder="e.g. 1002"
                           onChange={(e) => setEdit({ ...edit, extensionNumber: e.target.value })}
                           className="rounded border border-border bg-background px-2 py-1 outline-none focus:border-cyan" />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-slate-400">WhatsApp SIM port</span>
+                        <span className="text-secondary">WhatsApp SIM port</span>
                         <select
                           value={edit.simPort === "clear" ? "clear" : edit.simPort === "" ? "" : String(edit.simPort)}
                           onChange={(e) => {
@@ -453,44 +453,44 @@ export default function UsersPage() {
                       </label>
                       <div className="flex gap-2 pt-1">
                         <button onClick={() => saveEdit(u)} disabled={savingEdit}
-                          className="flex-1 rounded bg-cyan px-2 py-1 font-medium text-background disabled:opacity-50">
+                          className="flex-1 rounded bg-cyan px-2 py-1 font-medium text-accent-fg disabled:opacity-50">
                           {savingEdit ? "Saving…" : "Save changes"}
                         </button>
                         <button onClick={() => deleteUser(u)}
-                          className="rounded border border-red-800 px-2 py-1 text-red-400 hover:bg-red-950/40">
+                          className="rounded border border-danger/40 px-2 py-1 text-danger hover:bg-danger-subtle">
                           Delete
                         </button>
                       </div>
                     </div>
                   )}
-                  <div className="flex justify-between text-xs text-slate-500">
+                  <div className="flex justify-between text-xs text-tertiary">
                     <span>{u.email}</span>
                     <span>{u.extension ? `ext. ${u.extension.number} (${u.extension.status})` : "no extension"}</span>
                   </div>
                   {"passwordPlain" in u && (
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-tertiary">
                       Password:{" "}
                       {u.passwordPlain ? (
                         <code className="text-cyan">{u.passwordPlain}</code>
                       ) : (
-                        <span className="text-slate-600">not set yet (invite not consumed)</span>
+                        <span className="text-tertiary">not set yet (invite not consumed)</span>
                       )}
                     </p>
                   )}
                   {u.waInstance && (
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-tertiary">
                       WhatsApp: SIM {u.waInstance.simPort} · {u.waInstance.status}
                       {u.waInstance.phoneE164 ? ` · ${u.waInstance.phoneE164}` : ""}
                     </p>
                   )}
                   {u.invite && !u.invite.consumedAt && (
-                    <p className="text-xs text-yellow-500">
+                    <p className="text-xs text-warning">
                       Invite pending{new Date(u.invite.expiresAt) < new Date() ? " (expired)" : ""}
                     </p>
                   )}
                   {u.role === "AGENT" && u.invite?.consumedAt && (
                     <div className="mt-1 flex items-center justify-between text-xs">
-                      <span className={u.profileCompletedAt ? "text-green-400" : "text-yellow-500"}>
+                      <span className={u.profileCompletedAt ? "text-success" : "text-warning"}>
                         {u.profileCompletedAt
                           ? "Registration complete"
                           : u.phoneE164

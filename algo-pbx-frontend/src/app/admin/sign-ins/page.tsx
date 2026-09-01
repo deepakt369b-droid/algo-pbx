@@ -49,16 +49,16 @@ export default function SignInsPage() {
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-slate-100">Sign-In Activity</h1>
+      <h1 className="text-xl font-semibold text-primary">Sign-In Activity</h1>
 
       <div className="glass-card w-full max-w-2xl p-6">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Recent sign-ins ({events.length})
         </h2>
         {events.length === 0 ? (
-          <p className="text-slate-500">None yet.</p>
+          <p className="text-tertiary">None yet.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm text-slate-200">
+          <ul className="flex flex-col gap-2 text-sm text-primary">
             {events.map((e) => {
               const isUnread = lastSeenAt ? new Date(e.createdAt) > new Date(lastSeenAt) : false;
               return (
@@ -67,15 +67,15 @@ export default function SignInsPage() {
                     {isUnread && <span className="h-2 w-2 rounded-full bg-cyan" title="New since your last visit" />}
                     <div>
                       <p>
-                        {e.user?.name ?? "Unknown"} <span className="text-xs text-slate-500">({e.user?.role})</span>
+                        {e.user?.name ?? "Unknown"} <span className="text-xs text-tertiary">({e.user?.role})</span>
                       </p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-tertiary">
                         {e.metadata?.ip ?? "unknown IP"} · {new Date(e.createdAt).toLocaleString()}
                       </p>
                     </div>
                   </div>
                   {e.metadata?.newDevice && (
-                    <span className="rounded bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-400">New device</span>
+                    <span className="rounded bg-warning-subtle px-2 py-0.5 text-xs text-warning">New device</span>
                   )}
                 </li>
               );

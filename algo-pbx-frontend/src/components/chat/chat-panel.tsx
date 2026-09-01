@@ -60,27 +60,27 @@ export function ChatPanel({ initialNumber }: { initialNumber?: string } = {}) {
       <div className="flex flex-1 gap-3">
         <ConversationList selectedId={selectedId} onSelect={setSelectedId} />
         {phase.kind === "resolving" || phase.kind === "creating" ? (
-          <div className="glass-card flex flex-1 items-center justify-center text-sm text-slate-500">
+          <div className="glass-card flex flex-1 items-center justify-center text-sm text-tertiary">
             {phase.kind === "creating" ? "Starting conversation…" : "Opening conversation…"}
           </div>
         ) : phase.kind === "error" ? (
-          <div className="glass-card flex flex-1 items-center justify-center text-sm text-red-400">{phase.message}</div>
+          <div className="glass-card flex flex-1 items-center justify-center text-sm text-danger">{phase.message}</div>
         ) : phase.kind === "no-instance-agent" ? (
-          <div className="glass-card flex flex-1 items-center justify-center p-6 text-center text-sm text-amber-400">
+          <div className="glass-card flex flex-1 items-center justify-center p-6 text-center text-sm text-warning">
             No WhatsApp line assigned to your account — ask your admin.
           </div>
         ) : phase.kind === "no-instance-admin" ? (
           <div className="glass-card flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <p className="text-sm text-slate-300">Choose a SIM line to send from:</p>
+            <p className="text-sm text-secondary">Choose a SIM line to send from:</p>
             {phase.instances.length === 0 ? (
-              <p className="text-xs text-slate-500">No WhatsApp-capable SIM ports are configured yet.</p>
+              <p className="text-xs text-tertiary">No WhatsApp-capable SIM ports are configured yet.</p>
             ) : (
               <div className="flex flex-wrap justify-center gap-2">
                 {phase.instances.map((inst) => (
                   <button
                     key={inst.id}
                     onClick={() => createWithInstance(inst.id)}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-slate-200 hover:border-cyan hover:text-cyan"
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-primary hover:border-cyan hover:text-cyan"
                   >
                     {inst.label || `SIM ${inst.simPort}`}
                   </button>
@@ -91,7 +91,7 @@ export function ChatPanel({ initialNumber }: { initialNumber?: string } = {}) {
         ) : selectedId ? (
           <ChatThread conversationId={selectedId} />
         ) : (
-          <div className="glass-card flex flex-1 items-center justify-center text-sm text-slate-500">
+          <div className="glass-card flex flex-1 items-center justify-center text-sm text-tertiary">
             Select a conversation
           </div>
         )}
