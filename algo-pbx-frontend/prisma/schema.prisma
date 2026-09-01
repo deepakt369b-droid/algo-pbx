@@ -137,6 +137,20 @@ model User {
   loginAttempts     LoginAttempt[]
   otpChallenges     OtpChallenge[]
   trustedDevices    TrustedDevice[]
+  // P2 CRM data layer (2026-08-31) — see Contact/ContactNote/ContactTask/
+  // CallDisposition for the forward side of each of these.
+  ownedContacts     Contact[]         @relation("ContactOwner")
+  contactNotes      ContactNote[]     @relation("ContactNoteAuthor")
+  contactTasks      ContactTask[]     @relation("ContactTaskAssignee")
+  callDispositions  CallDisposition[] @relation("CallDispositionAgent")
+  // Feature B3 (2026-08-31) — one-contact-one-owner conflict resolution.
+  // Three distinct roles a User can play against the same request row, so
+  // three separately-named relations (Prisma requires each ambiguous
+  // relation on a model pair to be disambiguated) — same reasoning as
+  // SmsAccessRequest's requestedBy/decidedBy split above.
+  contactTransferRequestsMade    ContactTransferRequest[] @relation("ContactTransferRequestedBy")
+  contactTransferRequestsOwned   ContactTransferRequest[] @relation("ContactTransferCurrentOwner")
+  contactTransferRequestsDecided ContactTransferRequest[] @relation("ContactTransferDecidedBy")
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -314,6 +328,15 @@ model CallDetailRecord {
   id           String   @id @default(cuid())
   uniqueId     String   @unique // Asterisk's linkedid/uniqueid for the call
   callerNumber String
+  // Normalized E.164 form of callerNumber (P2, 2026-08-31), backfilled and
+  // indexed — what makes caller-ID -> contact matching correct and O(1)
+  // instead of api/crm/contacts/[id]/activity's pre-existing approach of
+  // pulling the last 2000 CDRs and normalizing every one in-process on
+  // every request (still there for the Bearer-key CRM route; the new
+  // session-authed /api/agent/crm/** routes use this column instead).
+  // Nullable because normalizeToE164() can genuinely fail on a malformed
+  // legacy row — never silently coerced to "".
+  callerNumberE164 String?
   destination  String
   direction    String   // "inbound" | "outbound" | "internal"
   disposition  String   // "ANSWERED" | "NO ANSWER" | "BUSY" | "FAILED"
@@ -330,6 +353,7 @@ model CallDetailRecord {
 
   @@index([startedAt])
   @@index([agentExtension])
+  @@index([callerNumberE164])
 }
 
 // Do Not Call compliance blocklist (Phase C). Enforcement is defense-in-
@@ -623,9 +647,114 @@ model Contact {
   id            String         @id @default(cuid())
   numberE164    String         @unique
   displayName   String?
+  // CRM fields (P2, 2026-08-31) — additive to the pre-existing bare
+  // {id, numberE164, displayName} shape. `dncBlocked` is deliberately NOT
+  // a column here: it is derived at read time from DoNotCallEntry so
+  // there is exactly one source of truth for "is this number blocked",
+  // matching the DNC check's existing design rather than risking the two
+  // drifting apart.
+  email         String?
+  company       String?
+  tags          String[]       @default([])
+  ownerId       String?
+  owner         User?          @relation("ContactOwner", fields: [ownerId], references: [id])
+  notes         ContactNote[]
+  tasks         ContactTask[]
+  dispositions  CallDisposition[]
   conversations Conversation[]
+  transferRequests ContactTransferRequest[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+}
+
+enum ContactTransferRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+// Feature B3 (2026-08-31) — "notifies owner + manager" for a one-contact-
+// one-owner conflict, realistically: a row a polling UI surface picks up.
+// Mirrors SmsAccessRequest's request -> approve/decline shape exactly (see
+// that model's comment) rather than inventing a new pattern.
+// currentOwnerId is denormalized at request time, same reasoning
+// SmsAccessRequest/EscalationAttempt already use — Contact.ownerId can
+// change (approval itself changes it) or be cleared (deactivation, B6)
+// after this row is created, and the request's own history should still
+// read correctly once that's happened.
+model ContactTransferRequest {
+  id              String                        @id @default(cuid())
+  contactId       String
+  contact         Contact                       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  requestedById   String
+  requestedBy     User                          @relation("ContactTransferRequestedBy", fields: [requestedById], references: [id])
+  currentOwnerId  String
+  currentOwner    User                          @relation("ContactTransferCurrentOwner", fields: [currentOwnerId], references: [id])
+  status          ContactTransferRequestStatus  @default(PENDING)
+  decidedById     String?
+  decidedBy       User?                         @relation("ContactTransferDecidedBy", fields: [decidedById], references: [id])
+  decidedAt       DateTime?
+  createdAt       DateTime                      @default(now())
+
+  @@index([status])
+  @@index([contactId])
+  @@index([requestedById])
+  @@index([currentOwnerId])
+}
+
+// P2 CRM data layer (2026-08-31) — agents create/edit these from the
+// unified console (P3); admin gets a read + attribution view over all of
+// it (see /admin/contacts). Every row carries who entered it.
+model ContactNote {
+  id        String   @id @default(cuid())
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("ContactNoteAuthor", fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([contactId])
+}
+
+model ContactTask {
+  id          String    @id @default(cuid())
+  contactId   String
+  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assigneeId  String
+  assignee    User      @relation("ContactTaskAssignee", fields: [assigneeId], references: [id])
+  title       String
+  dueAt       DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([contactId])
+  @@index([assigneeId])
+}
+
+enum CallDispositionOutcome {
+  INTERESTED
+  CALLBACK
+  NOT_INTERESTED
+  DNC
+}
+
+// Choosing DNC also writes a DoNotCallEntry, in the same transaction (see
+// POST /api/agent/crm/dispositions) — this is the one CRM write with a
+// compliance side effect, so it cannot be allowed to record a DNC
+// disposition without the blocklist entry actually landing.
+model CallDisposition {
+  id          String                  @id @default(cuid())
+  contactId   String
+  contact     Contact                 @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  cdrUniqueId String?
+  outcome     CallDispositionOutcome
+  note        String?
+  agentId     String
+  agent       User                    @relation("CallDispositionAgent", fields: [agentId], references: [id])
+  createdAt   DateTime                @default(now())
+
+  @@index([contactId])
 }
 
 // A conversation is scoped to (contact, channel) — a contact can have both
