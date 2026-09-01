@@ -34,8 +34,11 @@ export default function AgentCrmPage() {
         {selectedId ? (
           <ContactDetail contactId={selectedId} onChanged={() => setRefreshToken((n) => n + 1)} />
         ) : (
-          <div className="glass-card flex flex-1 items-center justify-center p-10 text-sm text-tertiary">
-            Select a contact, or create a new one.
+          <div className="glass-card flex flex-1 flex-col items-center justify-center gap-2 p-10 text-center">
+            <p className="text-sm font-medium text-secondary">No contact selected</p>
+            <p className="text-xs text-tertiary">
+              Pick a contact from the list to see their timeline, notes and deals — or use the “+” button to add one.
+            </p>
           </div>
         )}
       </div>

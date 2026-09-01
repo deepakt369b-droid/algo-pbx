@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Skeleton } from "@/components/ui";
 
 export interface CrmContactSummary {
   id: string;
@@ -104,9 +105,12 @@ export function ContactList({
           className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
         />
         <button
+          type="button"
           onClick={() => setShowCreate((v) => !v)}
           title="New contact"
-          className="rounded-lg border border-border px-3 py-2 text-sm text-secondary hover:border-cyan hover:text-cyan"
+          aria-label="New contact"
+          aria-expanded={showCreate}
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-lg leading-none text-secondary hover:border-cyan hover:text-cyan"
         >
           +
         </button>
@@ -114,14 +118,18 @@ export function ContactList({
 
       <div className="flex gap-1 rounded-lg border border-border p-0.5 text-xs">
         <button
+          type="button"
+          aria-pressed={scope === "mine"}
           onClick={() => setScope("mine")}
-          className={`flex-1 rounded-md px-2 py-1 ${scope === "mine" ? "bg-cyan/10 text-cyan" : "text-secondary hover:text-primary"}`}
+          className={`flex-1 rounded-md px-2 py-1.5 ${scope === "mine" ? "bg-cyan/10 text-cyan" : "text-secondary hover:text-primary"}`}
         >
           Mine
         </button>
         <button
+          type="button"
+          aria-pressed={scope === "all"}
           onClick={() => setScope("all")}
-          className={`flex-1 rounded-md px-2 py-1 ${scope === "all" ? "bg-cyan/10 text-cyan" : "text-secondary hover:text-primary"}`}
+          className={`flex-1 rounded-md px-2 py-1.5 ${scope === "all" ? "bg-cyan/10 text-cyan" : "text-secondary hover:text-primary"}`}
         >
           All
         </button>
@@ -154,7 +162,11 @@ export function ContactList({
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <p className="p-3 text-sm text-tertiary">Loading…</p>
+          <div className="flex flex-col gap-1 p-1" aria-busy="true" aria-label="Loading contacts">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-12" />
+            ))}
+          </div>
         ) : error ? (
           <p className="p-3 text-sm text-danger">{error}</p>
         ) : contacts.length === 0 ? (

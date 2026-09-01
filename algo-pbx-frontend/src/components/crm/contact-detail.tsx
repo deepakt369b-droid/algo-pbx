@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useSIP } from "@/contexts/sip-context";
+import { Skeleton } from "@/components/ui";
 
 interface Note {
   id: string;
@@ -104,6 +105,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
   const [dispositionNote, setDispositionNote] = useState("");
   const [savingDisposition, setSavingDisposition] = useState<Disposition["outcome"] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState<string | null>(null);
 
   // Feature B3 — transfer request state for THIS contact/viewer.
   const [pendingTransferRequest, setPendingTransferRequest] = useState(false);
@@ -131,6 +133,14 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
     setNameSkipped(false);
     load();
   }, [load]);
+
+  // Peak-End: a brief, explicit confirmation after a write succeeds, then
+  // it clears itself so it never lingers as stale UI.
+  useEffect(() => {
+    if (!savedFlash) return;
+    const t = setTimeout(() => setSavedFlash(null), 2500);
+    return () => clearTimeout(t);
+  }, [savedFlash]);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,6 +176,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Failed to save note");
       setNoteBody("");
+      setSavedFlash("Note added");
       load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to save note.");
@@ -186,6 +197,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Failed to save task");
       setTaskTitle("");
+      setSavedFlash("Task added");
       load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to save task.");
@@ -221,6 +233,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Failed to record disposition");
       setDispositionNote("");
+      setSavedFlash(`Marked ${DISPOSITION_LABELS[outcome]}`);
       load();
       onChanged?.();
     } catch (err) {
@@ -269,7 +282,16 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
     }
   };
 
-  if (loading) return <div className="glass-card flex-1 p-6 text-sm text-tertiary">Loading…</div>;
+  if (loading)
+    return (
+      <div className="glass-card flex-1 space-y-4 p-5" aria-busy="true" aria-label="Loading contact">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
   if (error || !contact) return <div className="glass-card flex-1 p-6 text-sm text-danger">{error ?? "Not found."}</div>;
 
   const canCall = callState === "idle";
@@ -303,6 +325,7 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
               onClick={() => makeCall(contact.numberE164)}
               disabled={!canCall}
               title={canCall ? "Call this contact" : `Cannot call — ${callState}`}
+              aria-label={`Call ${contact.displayName || contact.numberE164}`}
               className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
             >
               Call
@@ -327,6 +350,14 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       </div>
       {dialError && <p className="mt-2 text-xs text-danger">{dialError}</p>}
       {actionError && <p className="mt-2 text-xs text-danger">{actionError}</p>}
+      {savedFlash && (
+        <p
+          role="status"
+          className="mt-2 rounded-lg border border-success/30 bg-success-subtle px-2 py-1 text-xs text-success"
+        >
+          {savedFlash}
+        </p>
+      )}
       {readOnly && (
         <p className="mt-2 rounded-lg border border-blue/30 bg-blue/5 p-2 text-xs text-blue">
           This contact is owned by {contact.owner?.name}. The form is read-only — request a transfer to edit it.
