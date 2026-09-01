@@ -69,7 +69,7 @@ export async function GET(_request: Request, { params }: { params: { id: string 
       ],
     },
     include: {
-      contact: { select: { numberE164: true, displayName: true } },
+      contact: { select: { id: true, numberE164: true, displayName: true } },
       messages: { orderBy: { createdAt: "desc" }, take: 3, include: { accessRequests: { where: { requestedById: guard.session.user.id } } } },
     },
     orderBy: { lastMessageAt: "desc" },

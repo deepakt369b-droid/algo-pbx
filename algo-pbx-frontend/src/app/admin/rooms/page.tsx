@@ -3,6 +3,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/client/api";
 import { ChatThread } from "@/components/chat/chat-thread";
+import { ChatAvatar } from "@/components/chat/chat-avatar";
+
+/** Human-readable one-line preview for a room conversation row. */
+function previewText(m: {
+  body: string | null;
+  mediaKind?: string | null;
+  sensitive: boolean;
+} | undefined): string {
+  if (!m) return "No messages yet";
+  if (m.sensitive) return "🔒 Sensitive message";
+  if (m.mediaKind) {
+    const t: Record<string, string> = {
+      voice: "🎤 Voice message",
+      audio: "🎵 Audio",
+      image: "📷 Photo",
+      video: "🎬 Video",
+      document: "📄 Document",
+      sticker: "Sticker",
+    };
+    return m.body?.trim() || t[m.mediaKind] || "Attachment";
+  }
+  return m.body ?? "";
+}
 
 interface Room {
   id: string;
@@ -30,10 +53,17 @@ interface ConversationPreview {
   id: string;
   channel: string;
   assignedAgentId: string | null;
-  contact: { numberE164: string; displayName: string | null };
+  contact: { id: string; numberE164: string; displayName: string | null };
   lastMessageAt: string | null;
   unreadCount: number;
-  recentMessages: { id: string; direction: string; body: string | null; sensitive: boolean; createdAt: string }[];
+  recentMessages: {
+    id: string;
+    direction: string;
+    body: string | null;
+    mediaKind?: string | null;
+    sensitive: boolean;
+    createdAt: string;
+  }[];
 }
 
 // Rooms (Workstream E) — a named, persisted set of agents an admin wants
@@ -158,21 +188,23 @@ export default function RoomsPage() {
   const membersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
   return (
-    <div className="flex w-full flex-col items-center gap-6">
-      <h1 className="text-xl font-semibold text-primary">Rooms</h1>
-      <p className="max-w-2xl text-center text-xs text-tertiary">
-        A saved group of agents to supervise together — live calls and WhatsApp/SMS conversations,
-        side by side. No data isolation: this only changes what you see, not what agents can access.
-      </p>
+    <div className="flex w-full flex-col gap-4">
+      <div>
+        <h1 className="text-xl font-semibold text-primary">Rooms</h1>
+        <p className="mt-1 max-w-2xl text-xs text-tertiary">
+          A saved group of agents to supervise together — live calls and WhatsApp/SMS conversations,
+          side by side. No data isolation: this only changes what you see, not what agents can access.
+        </p>
+      </div>
 
       {loadError && (
-        <div className="w-full max-w-4xl rounded-lg border border-danger/40 bg-danger-subtle px-4 py-2 text-center text-xs text-danger">
+        <div className="rounded-[var(--radius)] border border-danger/40 bg-danger-subtle px-4 py-2 text-xs text-danger">
           {loadError}
         </div>
       )}
 
-      <div className="flex w-full max-w-4xl gap-6">
-        <div className="glass-card flex w-64 flex-shrink-0 flex-col gap-3 p-4">
+      <div className="flex w-full gap-5">
+        <div className="flex w-72 flex-shrink-0 flex-col gap-3 rounded-[var(--radius-lg)] border bg-surface p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Rooms</h2>
           <ul className="flex flex-col gap-1">
             {rooms.map((r) => (
@@ -182,7 +214,7 @@ export default function RoomsPage() {
                     setSelectedRoomId(r.id);
                     setRenaming(false);
                   }}
-                  className={`flex-1 rounded px-2 py-1 text-left text-sm ${selectedRoomId === r.id ? "bg-surface text-cyan" : "text-secondary hover:text-primary"}`}
+                  className={`flex-1 rounded px-2 py-1 text-left text-sm ${selectedRoomId === r.id ? "bg-surface text-accent" : "text-secondary hover:text-primary"}`}
                 >
                   {r.name} <span className="text-xs text-tertiary">({r.memberUserIds.length})</span>
                 </button>
@@ -207,7 +239,7 @@ export default function RoomsPage() {
           {users.length <= 1 ? (
             <p className="border-t border-border pt-3 text-xs text-tertiary">
               Only one staff account exists. Rooms group multiple agents — create agents first in{" "}
-              <a href="/admin/users" className="text-cyan hover:underline">
+              <a href="/admin/users" className="text-accent hover:underline">
                 Users
               </a>
               .
@@ -218,7 +250,7 @@ export default function RoomsPage() {
                 value={newRoomName}
                 onChange={(e) => setNewRoomName(e.target.value)}
                 placeholder="New room name"
-                className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs outline-none focus:border-cyan"
+                className="rounded-lg border border-border bg-canvas px-2 py-1.5 text-xs outline-none focus:border-accent"
               />
               <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
                 {users.map((u) => (
@@ -228,7 +260,7 @@ export default function RoomsPage() {
                   </label>
                 ))}
               </div>
-              <button onClick={createRoom} className="rounded-lg bg-cyan px-3 py-1.5 text-xs font-medium text-accent-fg">
+              <button onClick={createRoom} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg">
                 Create room
               </button>
               {createMessage && (
@@ -249,9 +281,9 @@ export default function RoomsPage() {
                     <input
                       value={renameValue}
                       onChange={(e) => setRenameValue(e.target.value)}
-                      className="rounded-lg border border-border bg-background px-2 py-1 text-sm outline-none focus:border-cyan"
+                      className="rounded-lg border border-border bg-canvas px-2 py-1 text-sm outline-none focus:border-accent"
                     />
-                    <button onClick={rename} className="text-xs text-cyan hover:underline">
+                    <button onClick={rename} className="text-xs text-accent hover:underline">
                       Save
                     </button>
                     <button onClick={() => setRenaming(false)} className="text-xs text-tertiary">
@@ -280,20 +312,22 @@ export default function RoomsPage() {
 
               {activity && (
                 <>
-                  <div className="glass-card p-4">
-                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-secondary">Members</h3>
+                  <div className="overflow-hidden rounded-[var(--radius-lg)] border bg-surface">
+                    <h3 className="border-b px-4 py-3 text-sm font-semibold uppercase tracking-wide text-secondary">
+                      Members
+                    </h3>
                     {activity.members.length === 0 ? (
-                      <p className="text-xs text-tertiary">No members in this room yet.</p>
+                      <p className="px-4 py-4 text-xs text-tertiary">No members in this room yet.</p>
                     ) : (
-                      <ul className="flex flex-col gap-2">
+                      <ul className="divide-y [&>li]:border-hairline">
                         {activity.members.map((m) => (
-                          <li key={m.id} className="flex items-center justify-between border-t border-border pt-2 text-sm first:border-0 first:pt-0">
+                          <li key={m.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
                             <div>
                               <p className="text-primary">{m.name}</p>
                               <p className="text-xs text-tertiary">
                                 {m.extension ? `ext. ${m.extension.number} · ${m.extension.status}` : "no extension"}
                                 {m.extension?.liveChannel && (
-                                  <span className="ml-2 text-cyan">
+                                  <span className="ml-2 text-accent">
                                     on call {m.extension.liveChannel.state ? `(${m.extension.liveChannel.state})` : ""}
                                   </span>
                                 )}
@@ -310,47 +344,71 @@ export default function RoomsPage() {
                     )}
                   </div>
 
-                  <div className="glass-card p-4">
-                    <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-secondary">
+                  <div className="overflow-hidden rounded-[var(--radius-lg)] border bg-surface">
+                    <h3 className="border-b px-4 py-3 text-sm font-semibold uppercase tracking-wide text-secondary">
                       WhatsApp / SMS activity
                     </h3>
                     {activity.conversations.length === 0 ? (
-                      <p className="text-xs text-tertiary">No conversations assigned to this room&apos;s members yet.</p>
+                      <p className="px-4 py-4 text-xs text-tertiary">
+                        No conversations assigned to this room&apos;s members yet.
+                      </p>
                     ) : (
-                      <ul className="flex flex-col gap-3 text-sm text-primary">
-                        {activity.conversations.map((c) => (
-                          <li key={c.id} className="border-t border-border pt-2 first:border-0 first:pt-0">
-                            <button
-                              type="button"
-                              onClick={() => setOpenThreadId(c.id)}
-                              className="block w-full text-left"
-                              title="Open chat thread"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span>
-                                  <span className="mr-2 rounded bg-surface px-1.5 py-0.5 text-xs text-cyan">{c.channel}</span>
-                                  {c.contact.displayName ?? c.contact.numberE164}
-                                  {c.unreadCount > 0 && (
-                                    <span className="ml-2 rounded-full bg-cyan px-1.5 py-0.5 text-[10px] font-semibold text-accent-fg">
-                                      {c.unreadCount} unread
+                      <ul className="divide-y [&>li]:border-hairline">
+                        {activity.conversations.map((c) => {
+                          const label = c.contact.displayName ?? c.contact.numberE164;
+                          const last = c.recentMessages[0];
+                          return (
+                            <li key={c.id}>
+                              <button
+                                type="button"
+                                onClick={() => setOpenThreadId(c.id)}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-hover"
+                                title="Open chat thread"
+                              >
+                                <ChatAvatar
+                                  name={label}
+                                  src={
+                                    c.channel === "WHATSAPP"
+                                      ? `/api/messaging/avatar/${c.contact.id}`
+                                      : null
+                                  }
+                                  size={40}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-primary">
+                                      {label}
                                     </span>
-                                  )}
-                                  {c.assignedAgentId && membersById.get(c.assignedAgentId) && (
-                                    <span className="ml-2 text-xs text-tertiary">— {membersById.get(c.assignedAgentId)!.name}</span>
-                                  )}
-                                </span>
-                                <span className="text-xs text-tertiary">
-                                  {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : ""}
-                                </span>
-                              </div>
-                              {c.recentMessages.length > 0 && (
-                                <p className="mt-1 truncate text-xs text-tertiary">
-                                  {c.recentMessages[0].body ?? (c.recentMessages[0].sensitive ? "(sensitive — hidden)" : "(no text)")}
-                                </p>
-                              )}
-                            </button>
-                          </li>
-                        ))}
+                                    {c.lastMessageAt && (
+                                      <span className="flex-shrink-0 text-[10px] text-tertiary">
+                                        {new Date(c.lastMessageAt).toLocaleDateString(undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                        })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-0.5 flex items-center gap-1.5">
+                                    <span className="min-w-0 flex-1 truncate text-xs text-tertiary">
+                                      {last?.direction === "OUTBOUND" ? "You: " : ""}
+                                      {previewText(last)}
+                                    </span>
+                                    {c.assignedAgentId && membersById.get(c.assignedAgentId) && (
+                                      <span className="flex-shrink-0 text-[10px] text-tertiary">
+                                        · {membersById.get(c.assignedAgentId)!.name}
+                                      </span>
+                                    )}
+                                    {c.unreadCount > 0 && (
+                                      <span className="flex h-5 min-w-[1.25rem] flex-shrink-0 items-center justify-center rounded-full bg-accent px-1.5 text-[10px] font-semibold text-accent-fg">
+                                        {c.unreadCount}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -362,14 +420,20 @@ export default function RoomsPage() {
       </div>
 
       {openThreadId && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={() => setOpenThreadId(null)}>
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-[2px]"
+          onClick={() => setOpenThreadId(null)}
+        >
           <div
-            className="flex h-full w-full max-w-xl flex-col gap-2 border-l border-border bg-background p-4 shadow-2xl"
+            className="flex h-full w-full max-w-xl flex-col gap-2 border-l bg-canvas p-3 shadow-2xl [border-color:rgb(var(--hairline))]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex flex-shrink-0 items-center justify-between px-1">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-secondary">Conversation</h3>
-              <button onClick={() => setOpenThreadId(null)} className="text-xs text-tertiary hover:text-primary">
+              <button
+                onClick={() => setOpenThreadId(null)}
+                className="rounded-[var(--radius)] px-2 py-1 text-xs text-tertiary hover:bg-surface-hover hover:text-primary"
+              >
                 Close
               </button>
             </div>
