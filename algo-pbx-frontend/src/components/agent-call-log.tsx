@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSIP } from "@/contexts/sip-context";
 
 interface CallRow {
@@ -13,6 +14,7 @@ interface CallRow {
   billsecSec: number;
   recordingUrl: string | null;
   callerDisplayName: string | null;
+  callerContactId: string | null;
 }
 
 function formatDuration(seconds: number): string {
@@ -95,6 +97,14 @@ export function AgentCallLog() {
                 </p>
                 <p className="text-xs text-slate-500">
                   {new Date(c.startedAt).toLocaleString()} · {c.disposition} · {formatDuration(c.billsecSec)}
+                  {c.callerContactId && (
+                    <>
+                      {" · "}
+                      <Link href={`/agent?contact=${c.callerContactId}`} className="text-cyan hover:underline">
+                        View in CRM
+                      </Link>
+                    </>
+                  )}
                 </p>
               </div>
               <div className="flex items-center gap-2">

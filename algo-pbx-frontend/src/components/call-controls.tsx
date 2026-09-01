@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Mic, MicOff, Pause, Play, PhoneOff, PhoneForwarded, PhoneIncoming, Users, VolumeX } from "lucide-react";
 import { useSIP } from "@/contexts/sip-context";
 import { EscalationPicker } from "@/components/escalation-picker";
+import { ManagerMergePicker } from "@/components/manager-merge-picker";
+import { ActiveCallContact } from "@/components/active-call-contact";
 
 export function CallControls() {
   const {
@@ -63,6 +65,7 @@ export function CallControls() {
       <div className="glass-card flex w-full max-w-xs flex-col items-center gap-4 p-6">
         <PhoneIncoming className="h-8 w-8 text-cyan" />
         <p className="text-slate-200">Incoming call from {incomingCallerId ?? "Unknown"}</p>
+        <ActiveCallContact identity={incomingCallerId} />
         <div className="flex gap-3">
           <button onClick={answerCall} aria-label="Answer call" className="rounded-lg bg-cyan px-4 py-2 font-medium text-background">
             Answer
@@ -123,6 +126,7 @@ export function CallControls() {
       <p className="text-center text-sm uppercase tracking-wide text-slate-400">
         {callState === "held" ? "On hold" : "In call"}
       </p>
+      <ActiveCallContact identity={incomingCallerId} />
       {callError && (
         <div className="flex items-start justify-between gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
           <p>{callError}</p>
@@ -276,7 +280,12 @@ export function CallControls() {
         </div>
       )}
 
-      {consultState === "idle" && !showTransfer && <EscalationPicker />}
+      {consultState === "idle" && !showTransfer && (
+        <>
+          <EscalationPicker />
+          <ManagerMergePicker />
+        </>
+      )}
     </div>
   );
 }

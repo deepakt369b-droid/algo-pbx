@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSIP } from "@/contexts/sip-context";
 import { useMissedCallsRefresh } from "@/components/agent-shell/agent-shell";
 
@@ -11,6 +12,8 @@ interface MissedCall {
    * same fallback rule as the admin CDR page's callerDisplayName. Null
    * when the number matches no Contact row. */
   callerDisplayName: string | null;
+  /** CRM deep-link target (LLM.md §31) — null when no Contact matches. */
+  callerContactId: string | null;
   startedAt: string;
   disposition: string;
 }
@@ -94,6 +97,14 @@ export function AgentMissedCalls() {
               <p>{c.callerDisplayName ?? c.callerNumber}</p>
               <p className="text-xs text-slate-500">
                 {new Date(c.startedAt).toLocaleString()} · {c.disposition}
+                {c.callerContactId && (
+                  <>
+                    {" · "}
+                    <Link href={`/agent?contact=${c.callerContactId}`} className="text-cyan hover:underline">
+                      View in CRM
+                    </Link>
+                  </>
+                )}
               </p>
             </div>
             <button

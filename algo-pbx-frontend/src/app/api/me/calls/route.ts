@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
+import { normalizeToE164 } from "@/lib/phone-normalize";
 
 export const dynamic = "force-dynamic";
 
@@ -48,14 +49,23 @@ export async function GET() {
     // Same best-effort name resolution GET /api/cdr and GET
     // /api/me/missed-calls already do — CallDetailRecord.callerNumber has
     // no FK to Contact, it's a raw string off an Asterisk CDR event.
-    db.contact.findMany({ select: { numberE164: true, displayName: true } }),
+    db.contact.findMany({ select: { id: true, numberE164: true, displayName: true } }),
   ]);
   const contactsByE164 = buildContactDisplayMap(contacts);
+  // CRM deep-link (LLM.md §31) — a local id map, not added to the shared
+  // contact-display.ts helper (its resolveContactDisplayName() return
+  // contract is a display string, read by 3+ routes; changing its shape
+  // for one new caller here isn't worth the churn).
+  const contactIdByE164 = new Map(contacts.map((c) => [c.numberE164, c.id]));
 
   return NextResponse.json({
-    calls: calls.map((call) => ({
-      ...call,
-      callerDisplayName: resolveContactDisplayName(call.callerNumber, contactsByE164),
-    })),
+    calls: calls.map((call) => {
+      const normalized = normalizeToE164(call.callerNumber);
+      return {
+        ...call,
+        callerDisplayName: resolveContactDisplayName(call.callerNumber, contactsByE164),
+        callerContactId: normalized ? (contactIdByE164.get(normalized) ?? null) : null,
+      };
+    }),
   });
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
+import { normalizeToE164 } from "@/lib/phone-normalize";
 
 export const dynamic = "force-dynamic";
 
@@ -51,15 +52,22 @@ export async function GET() {
     // previously showed only the raw number here while the admin CDR page
     // already resolved names for the exact same data; agents deserve the
     // same readability the admin view has.
-    db.contact.findMany({ select: { numberE164: true, displayName: true } }),
+    db.contact.findMany({ select: { id: true, numberE164: true, displayName: true } }),
   ]);
   const contactsByE164 = buildContactDisplayMap(contacts);
+  // CRM deep-link (LLM.md §31) — see /api/me/calls's identical comment on
+  // why this is a local map rather than a contact-display.ts change.
+  const contactIdByE164 = new Map(contacts.map((c) => [c.numberE164, c.id]));
 
   return NextResponse.json({
-    calls: calls.map((call) => ({
-      ...call,
-      callerDisplayName: resolveContactDisplayName(call.callerNumber, contactsByE164),
-    })),
+    calls: calls.map((call) => {
+      const normalized = normalizeToE164(call.callerNumber);
+      return {
+        ...call,
+        callerDisplayName: resolveContactDisplayName(call.callerNumber, contactsByE164),
+        callerContactId: normalized ? (contactIdByE164.get(normalized) ?? null) : null,
+      };
+    }),
     lastSeenAt: user?.missedCallsSeenAt ?? null,
   });
 }

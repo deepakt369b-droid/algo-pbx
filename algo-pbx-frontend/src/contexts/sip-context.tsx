@@ -877,7 +877,14 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
     setCallState("active");
-    setIncomingCallerId(null);
+    // NOT cleared here (was: setIncomingCallerId(null)) — LLM.md §31: this
+    // is the only identity the active/held call view has for an inbound
+    // call, and the CRM-context lookup in call-controls.tsx needs it to
+    // persist past answer. Verified every other read of this value is
+    // display-only and already gated on callState === "ringing" (the
+    // incoming-call banner and this same file's ringing-state card), so
+    // nothing branches on it going null here. Still cleared on hangup
+    // below and on decline/reject elsewhere in this file.
   }, [callState]);
 
   const hangupCall = useCallback(async () => {

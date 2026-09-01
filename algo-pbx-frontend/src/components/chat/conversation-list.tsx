@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 interface ConversationSummary {
@@ -181,10 +182,18 @@ export function ConversationList({
           const unread = clearedIds.has(c.id) ? 0 : c.unreadCount;
           return (
             <li key={c.id}>
-              <button
+              {/* `role="button"` on a div, not a real <button> — a nested
+                  <a>/Link (the "View in CRM" deep link below, LLM.md §31)
+                  is invalid inside a <button> and breaks hydration. The
+                  link's own onClick stops propagation so clicking it opens
+                  the contact instead of also selecting this conversation. */}
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => handleSelect(c.id)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleSelect(c.id)}
                 className={cn(
-                  "flex w-full flex-col gap-1 rounded-lg border border-transparent px-2 py-2 text-left text-sm",
+                  "flex w-full cursor-pointer flex-col gap-1 rounded-lg border border-transparent px-2 py-2 text-left text-sm",
                   selectedId === c.id ? "border-cyan bg-surface" : "hover:bg-surface"
                 )}
               >
@@ -203,13 +212,21 @@ export function ConversationList({
                     {c.channel}
                   </span>
                   {!c.assignedAgentId && <span className="text-[10px] text-slate-500">unassigned</span>}
+                  <Link
+                    href={`/agent?contact=${c.contact.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-[10px] text-cyan hover:underline"
+                    title="Open this contact in the CRM"
+                  >
+                    CRM
+                  </Link>
                   {c.lastMessageAt && (
                     <span className="ml-auto text-[10px] text-slate-600">
                       {new Date(c.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                     </span>
                   )}
                 </div>
-              </button>
+              </div>
             </li>
           );
         })}
