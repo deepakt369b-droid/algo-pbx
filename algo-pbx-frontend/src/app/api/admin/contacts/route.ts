@@ -50,12 +50,18 @@ export async function GET(request: NextRequest) {
 
   const contacts = await db.contact.findMany({
     where: clauses.length ? where : undefined,
-    include: { owner: { select: { id: true, name: true, extension: { select: { number: true } } } } },
+    include: {
+      owner: { select: { id: true, name: true, extension: { select: { number: true } } } },
+      companyRel: { select: { id: true, name: true } },
+      _count: { select: { deals: true } },
+    },
     orderBy: { updatedAt: "desc" },
     take: limit,
   });
 
-  return NextResponse.json({ contacts });
+  return NextResponse.json({
+    contacts: contacts.map((c) => ({ ...c, dealCount: c._count.deals })),
+  });
 }
 
 // tags arrives as a plain string[] from the UI's comma-chip input, already
@@ -66,6 +72,7 @@ const CreateContactSchema = z.object({
   displayName: z.string().trim().min(1).max(200),
   email: z.string().trim().email().max(200).optional().or(z.literal("")),
   company: z.string().trim().max(200).optional(),
+  companyId: z.string().nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(50)).max(50).optional(),
   ownerId: z.string().optional(),
   initialNote: z.string().trim().max(5000).optional(),
@@ -114,6 +121,7 @@ export async function POST(request: NextRequest) {
           displayName: parsed.data.displayName,
           email: parsed.data.email || undefined,
           company: parsed.data.company || undefined,
+          companyId: parsed.data.companyId || undefined,
           tags: parsed.data.tags ?? [],
           ownerId: parsed.data.ownerId || undefined,
         },

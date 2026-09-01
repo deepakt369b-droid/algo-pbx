@@ -26,22 +26,48 @@ interface Disposition {
   createdAt: string;
   agent: { id: string; name: string };
 }
+interface Deal {
+  id: string;
+  name: string;
+  value: number;
+  currency: string;
+  isPrimary: boolean;
+  stage: { id: string; name: string; isWon: boolean; isLost: boolean };
+  owner: { id: string; name: string } | null;
+}
 interface ContactFull {
   id: string;
   numberE164: string;
   displayName: string | null;
   email: string | null;
   company: string | null;
+  companyRel: { id: string; name: string; domain: string | null } | null;
   tags: string[];
   dncBlocked: boolean;
   owner: { id: string; name: string } | null;
   notes: Note[];
   tasks: Task[];
   dispositions: Disposition[];
+  deals: Deal[];
 }
-type TimelineEntry =
-  | { type: "call"; timestamp: string; uniqueId: string; direction: string; disposition: string; durationSec: number; agentExtension: string | null }
-  | { type: "message"; timestamp: string; channel?: string; direction: string; body: string | null; sensitive: boolean };
+// S2b — the timeline is now unified Activity rows (occurredAt desc, 100),
+// not an on-the-fly CDR+ChatMessage merge. Every entry has the same shape.
+type TimelineEntry = {
+  type: "CALL" | "WHATSAPP" | "SMS" | "NOTE" | "DEAL_STAGE_CHANGE" | "TASK";
+  timestamp: string;
+  summary: string;
+  actor: string | null;
+  refId: string | null;
+};
+
+const TIMELINE_LABELS: Record<TimelineEntry["type"], string> = {
+  CALL: "Call",
+  WHATSAPP: "WhatsApp",
+  SMS: "SMS",
+  NOTE: "Note",
+  DEAL_STAGE_CHANGE: "Deal",
+  TASK: "Task",
+};
 
 const DISPOSITION_LABELS: Record<Disposition["outcome"], string> = {
   INTERESTED: "Interested",
@@ -255,7 +281,11 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
           <h2 className="text-lg font-semibold text-primary">{contact.displayName || contact.numberE164}</h2>
           <p className="text-sm text-secondary">{contact.numberE164}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-tertiary">
-            {contact.company && <span>{contact.company}</span>}
+            {contact.companyRel ? (
+              <span className="rounded-full bg-surface-hover px-2 py-0.5 text-secondary">{contact.companyRel.name}</span>
+            ) : (
+              contact.company && <span>{contact.company}</span>
+            )}
             {contact.email && <span>{contact.email}</span>}
             {contact.owner && (
               <span
@@ -419,24 +449,49 @@ export function ContactDetail({ contactId, onChanged }: { contactId: string; onC
       </div>
 
       {/* Timeline */}
+      {/* Deals — S2b */}
+      <section className="mt-5">
+        <h3 className="mb-2 text-sm font-semibold text-primary">Deals</h3>
+        {contact.deals.length === 0 ? (
+          <p className="text-xs text-tertiary">No deals linked.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {contact.deals.map((d) => (
+              <li key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-border p-2 text-xs">
+                <span className="text-primary">
+                  {d.name}
+                  {d.isPrimary && <span className="ml-1 text-tertiary">(primary)</span>}
+                </span>
+                <span className="flex items-center gap-2 text-tertiary">
+                  <span
+                    className={
+                      d.stage.isWon ? "text-success" : d.stage.isLost ? "text-danger" : "text-cyan"
+                    }
+                  >
+                    {d.stage.name}
+                  </span>
+                  {d.currency} {d.value.toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="mt-5">
         <h3 className="mb-2 text-sm font-semibold text-primary">Timeline</h3>
         <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto">
-          {timeline.length === 0 && <li className="text-xs text-tertiary">No calls or messages yet.</li>}
-          {timeline.map((entry, i) =>
-            entry.type === "call" ? (
-              <li key={`call-${entry.uniqueId}-${i}`} className="rounded-lg border border-border p-2 text-xs">
-                <span className="text-cyan">Call</span> · {entry.direction} · {entry.disposition} · {entry.durationSec}s
-                <p className="text-tertiary">{new Date(entry.timestamp).toLocaleString()}</p>
-              </li>
-            ) : (
-              <li key={`msg-${i}`} className="rounded-lg border border-border p-2 text-xs">
-                <span className="text-cyan">{entry.channel ?? "Message"}</span> · {entry.direction}
-                <p className="text-primary">{entry.sensitive ? "(sensitive — request access in Chat)" : entry.body}</p>
-                <p className="text-tertiary">{new Date(entry.timestamp).toLocaleString()}</p>
-              </li>
-            )
-          )}
+          {timeline.length === 0 && <li className="text-xs text-tertiary">No activity yet.</li>}
+          {timeline.map((entry, i) => (
+            <li key={`${entry.type}-${entry.refId ?? i}-${i}`} className="rounded-lg border border-border p-2 text-xs">
+              <span className="text-cyan">{TIMELINE_LABELS[entry.type] ?? entry.type}</span>
+              <p className="text-primary">{entry.summary}</p>
+              <p className="text-tertiary">
+                {entry.actor ? `${entry.actor} · ` : ""}
+                {new Date(entry.timestamp).toLocaleString()}
+              </p>
+            </li>
+          ))}
         </ul>
       </section>
 

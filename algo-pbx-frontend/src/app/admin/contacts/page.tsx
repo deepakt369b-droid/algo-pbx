@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Combobox } from "@/components/ui";
 
 interface Contact {
   id: string;
@@ -8,6 +9,9 @@ interface Contact {
   displayName: string | null;
   email: string | null;
   company: string | null;
+  companyId: string | null;
+  companyRel: { id: string; name: string } | null;
+  dealCount: number;
   tags: string[];
   ownerId: string | null;
   owner: { id: string; name: string; extension: { number: string } | null } | null;
@@ -58,6 +62,7 @@ interface FormState {
   displayName: string;
   email: string;
   company: string;
+  companyId: string;
   tagsInput: string;
   ownerId: string;
   initialNote: string;
@@ -69,6 +74,7 @@ const EMPTY_FORM: FormState = {
   displayName: "",
   email: "",
   company: "",
+  companyId: "",
   tagsInput: "",
   ownerId: "",
   initialNote: "",
@@ -84,6 +90,7 @@ function parseTags(input: string): string[] {
 export default function ContactsAdminPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [companies, setCompanies] = useState<{ id: string; name: string; domain: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -161,6 +168,10 @@ export default function ContactsAdminPage() {
       .then((r) => (r.ok ? r.json() : { users: [] }))
       .then((data) => setAgents(data.users ?? []))
       .catch(() => setAgents([]));
+    fetch("/api/admin/crm/companies", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { companies: [] }))
+      .then((data) => setCompanies(data.companies ?? []))
+      .catch(() => setCompanies([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -193,6 +204,7 @@ export default function ContactsAdminPage() {
       displayName: c.displayName ?? "",
       email: c.email ?? "",
       company: c.company ?? "",
+      companyId: c.companyId ?? "",
       tagsInput: c.tags.join(", "),
       ownerId: c.ownerId ?? "",
       initialNote: "",
@@ -219,6 +231,7 @@ export default function ContactsAdminPage() {
         displayName: form.displayName.trim(),
         email: form.email.trim(),
         company: form.company.trim() || null,
+        companyId: form.companyId || null,
         tags: parseTags(form.tagsInput),
         ownerId: form.ownerId || null,
       };
@@ -482,7 +495,7 @@ export default function ContactsAdminPage() {
             </label>
 
             <label className="flex flex-col gap-1 text-xs text-secondary">
-              Company
+              Company (free text)
               <input
                 value={form.company}
                 onChange={(e) => setForm({ ...form, company: e.target.value })}
@@ -490,6 +503,30 @@ export default function ContactsAdminPage() {
                 className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
               />
             </label>
+
+            <div className="flex flex-col gap-1 text-xs text-secondary">
+              Link to company record
+              <Combobox
+                aria-label="Link to company"
+                value={form.companyId || null}
+                onChange={(v) => setForm({ ...form, companyId: v ?? "" })}
+                options={companies.map((co) => ({
+                  value: co.id,
+                  label: co.name,
+                  hint: co.domain ?? undefined,
+                }))}
+                placeholder="Search companies…"
+              />
+              {form.companyId && (
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, companyId: "" })}
+                  className="w-fit text-[11px] text-tertiary hover:text-primary"
+                >
+                  Clear link
+                </button>
+              )}
+            </div>
 
             <label className="flex flex-col gap-1 text-xs text-secondary">
               Tags (comma-separated)
@@ -861,6 +898,7 @@ export default function ContactsAdminPage() {
                   <th className="pb-2 pr-3">Name</th>
                   <th className="pb-2 pr-3">Number</th>
                   <th className="pb-2 pr-3">Company</th>
+                  <th className="pb-2 pr-3">Deals</th>
                   <th className="pb-2 pr-3">Owner</th>
                   <th className="pb-2 pr-3">Tags</th>
                   <th className="pb-2 pr-3">Last activity</th>
@@ -872,7 +910,12 @@ export default function ContactsAdminPage() {
                   <tr key={c.id} className="border-b border-border/50">
                     <td className="py-2 pr-3 text-primary">{c.displayName ?? <span className="text-tertiary">—</span>}</td>
                     <td className="py-2 pr-3 font-mono text-secondary">{c.numberE164}</td>
-                    <td className="py-2 pr-3">{c.company ?? <span className="text-tertiary">—</span>}</td>
+                    <td className="py-2 pr-3">
+                      {c.companyRel?.name ?? c.company ?? <span className="text-tertiary">—</span>}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {c.dealCount > 0 ? c.dealCount : <span className="text-tertiary">—</span>}
+                    </td>
                     <td className="py-2 pr-3">
                       {c.owner ? (
                         <span>
