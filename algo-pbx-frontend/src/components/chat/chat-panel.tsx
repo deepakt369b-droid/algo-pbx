@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import { ConversationList } from "./conversation-list";
 import { ChatThread } from "./chat-thread";
 import { WhatsAppConnectionBadge } from "./whatsapp-connection-badge";
@@ -10,23 +11,31 @@ import {
   type WhatsAppDeepLinkResult,
 } from "@/lib/messaging/whatsapp-deep-link";
 
-type Phase = { kind: "idle" } | { kind: "resolving" } | { kind: "creating" } | WhatsAppDeepLinkResult;
+type Phase =
+  | { kind: "idle" }
+  | { kind: "resolving" }
+  | { kind: "creating" }
+  | WhatsAppDeepLinkResult;
 
-// Top-level chat panel wired into agent/chat/page.tsx. WhatsApp pairing/
-// logout are entirely out of scope here and live exclusively in
-// src/app/admin/whatsapp — this panel only ever reads and sends messages
-// on conversations already assigned or claimable by the signed-in agent.
-// The connection badge below is read-only, no control.
+// Top-level chat surface wired into agent/chat/page.tsx: WhatsApp-Web
+// geometry — a conversation-list rail on the left, the thread on the right.
+// Below 768px it collapses to a single pane: the list, or the thread with a
+// back arrow, never both.
 //
-// The CRM "WhatsApp" deep-link entry point (P3/P1) is rendering only —
-// every branch of what happens when a contact's WhatsApp button is
-// clicked (existing conversation vs. create vs. no-instance-agent vs.
-// no-instance-admin-picker) lives in src/lib/messaging/whatsapp-deep-link.ts,
-// unit-tested there (this repo's vitest is `environment: "node"`, no
-// jsdom — see that file's header).
+// WhatsApp pairing/logout are out of scope here (they live in
+// src/app/admin/whatsapp); this panel only reads and sends on conversations
+// already assigned or claimable by the signed-in agent. The connection
+// badge is read-only.
+//
+// The CRM "WhatsApp" deep-link entry (?number=<E164>) is rendering only —
+// every branch of resolve/create/no-instance lives in
+// src/lib/messaging/whatsapp-deep-link.ts.
 export function ChatPanel({ initialNumber }: { initialNumber?: string } = {}) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [phase, setPhase] = useState<Phase>(initialNumber ? { kind: "resolving" } : { kind: "idle" });
+  const [contactLabel, setContactLabel] = useState<string | undefined>();
+  const [phase, setPhase] = useState<Phase>(
+    initialNumber ? { kind: "resolving" } : { kind: "idle" }
+  );
 
   useEffect(() => {
     if (!initialNumber) {
@@ -54,48 +63,99 @@ export function ChatPanel({ initialNumber }: { initialNumber?: string } = {}) {
     setPhase(result);
   };
 
-  return (
-    <div className="flex h-[36rem] w-full flex-col gap-2">
-      <WhatsAppConnectionBadge />
-      <div className="flex flex-1 gap-3">
-        <ConversationList selectedId={selectedId} onSelect={setSelectedId} />
-        {phase.kind === "resolving" || phase.kind === "creating" ? (
-          <div className="glass-card flex flex-1 items-center justify-center text-sm text-tertiary">
-            {phase.kind === "creating" ? "Starting conversation…" : "Opening conversation…"}
-          </div>
-        ) : phase.kind === "error" ? (
-          <div className="glass-card flex flex-1 items-center justify-center text-sm text-danger">{phase.message}</div>
-        ) : phase.kind === "no-instance-agent" ? (
-          <div className="glass-card flex flex-1 items-center justify-center p-6 text-center text-sm text-warning">
-            No WhatsApp line assigned to your account — ask your admin.
-          </div>
-        ) : phase.kind === "no-instance-admin" ? (
-          <div className="glass-card flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <p className="text-sm text-secondary">Choose a SIM line to send from:</p>
-            {phase.instances.length === 0 ? (
-              <p className="text-xs text-tertiary">No WhatsApp-capable SIM ports are configured yet.</p>
-            ) : (
-              <div className="flex flex-wrap justify-center gap-2">
-                {phase.instances.map((inst) => (
-                  <button
-                    key={inst.id}
-                    onClick={() => createWithInstance(inst.id)}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-primary hover:border-cyan hover:text-cyan"
-                  >
-                    {inst.label || `SIM ${inst.simPort}`}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : selectedId ? (
-          <ChatThread conversationId={selectedId} />
+  const handleSelect = (id: string, label?: string) => {
+    setSelectedId(id);
+    setContactLabel(label);
+  };
+
+  const backToList = () => {
+    setSelectedId(null);
+    if (phase.kind !== "idle") setPhase({ kind: "idle" });
+  };
+
+  // A "panel" phase renders in the thread column instead of a thread.
+  const phasePanel =
+    phase.kind === "resolving" || phase.kind === "creating" ? (
+      <PanelShell tone="muted">
+        {phase.kind === "creating" ? "Starting conversation…" : "Opening conversation…"}
+      </PanelShell>
+    ) : phase.kind === "error" ? (
+      <PanelShell tone="danger">{phase.message}</PanelShell>
+    ) : phase.kind === "no-instance-agent" ? (
+      <PanelShell tone="warning">
+        No WhatsApp line assigned to your account — ask your admin.
+      </PanelShell>
+    ) : phase.kind === "no-instance-admin" ? (
+      <PanelShell tone="muted">
+        <p className="mb-3 text-sm text-secondary">Choose a SIM line to send from:</p>
+        {phase.instances.length === 0 ? (
+          <p className="text-xs text-tertiary">No WhatsApp-capable SIM ports are configured yet.</p>
         ) : (
-          <div className="glass-card flex flex-1 items-center justify-center text-sm text-tertiary">
-            Select a conversation
+          <div className="flex flex-wrap justify-center gap-2">
+            {phase.instances.map((inst) => (
+              <button
+                key={inst.id}
+                onClick={() => createWithInstance(inst.id)}
+                className="rounded-[var(--radius)] border px-3 py-1.5 text-xs text-primary hover:border-accent hover:text-accent"
+              >
+                {inst.label || `SIM ${inst.simPort}`}
+              </button>
+            ))}
           </div>
         )}
+      </PanelShell>
+    ) : null;
+
+  const threadArea = phasePanel ?? (
+    selectedId ? (
+      <ChatThread conversationId={selectedId} contactLabel={contactLabel} onBack={backToList} />
+    ) : (
+      <PanelShell tone="muted">Select a conversation</PanelShell>
+    )
+  );
+
+  // On mobile, "thread view" is active whenever a thread or a phase panel is showing.
+  const threadOpen = !!selectedId || phasePanel !== null;
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col gap-2">
+      <WhatsAppConnectionBadge />
+      <div className="flex min-h-0 flex-1 gap-3">
+        <div
+          className={cn(
+            "min-h-0 w-full md:w-80 md:flex-shrink-0",
+            threadOpen ? "hidden md:block" : "block"
+          )}
+        >
+          <ConversationList selectedId={selectedId} onSelect={handleSelect} />
+        </div>
+        <div
+          className={cn("min-h-0 min-w-0 flex-1", threadOpen ? "flex" : "hidden md:flex")}
+        >
+          {threadArea}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function PanelShell({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: "muted" | "danger" | "warning";
+}) {
+  return (
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-1 flex-col items-center justify-center rounded-[var(--radius-lg)] border bg-surface p-6 text-center text-sm",
+        tone === "danger" && "text-danger",
+        tone === "warning" && "text-warning",
+        tone === "muted" && "text-tertiary"
+      )}
+    >
+      {children}
     </div>
   );
 }
