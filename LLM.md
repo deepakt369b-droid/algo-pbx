@@ -278,6 +278,8 @@ Append one line per session/change, newest last. Format: `YYYY-MM-DD — what ch
   - Ran `graphify . && graphify cluster-only . && graphify label .`: 426 nodes, 625 edges, 43 communities (up from 393/546/41).
 - 2026-08-27 — Call-path root cause (6 stacked bugs) found and fixed; **first call ever carried** (`*97`, 0% RTP loss). CDR ingestion (`cdr_manager.conf`), outbound recording (MixMonitor in `from-agent-common`), `_[+0-9].` dialplan match, `DINSTAR_SIP_PORT` setting, Track B security fixes, E1 admin user-edit, E2 Cloudflare errors, E6 admin recordings page, A5/B3b Docker entrypoints. Outbound GSM test: Asterisk side works, Dinstar returns 503 — pending gateway-UI config (user, 2026-08-28). Full detail in §17 + §18.
 - 2026-08-28 — **First outbound GSM call with verified real bidirectional RTP audio** (national dial format; E.164 still 503/480 — carrier-side format rejection, not a bug). Both 503 hypotheses (source-address asymmetry, DINSTAR_SIP_PORT desync) eliminated as today's cause via live agent diagnosis, but the env-forwarding gap for `DINSTAR_SIP_PORT` is real and unfixed. New bug found: blind transfer re-dials through the same busy GSM trunk, correctly 503s — needs a design fix, not started. Inbound two-stage-dialing fixed via Dinstar UI (hotline + Do Not Answer setting); revealed a deeper carrier-side call-barring issue (GSM Event: `FORBID CALL`; SIP Call History: all zeros; USSD `*#35#` → `UNKNOWN APPLICATION`) — blocked on the operator contacting the SIM's carrier. Messaging track findings mapped, delegated to run in parallel (no longer last). Repo confirmed public; operator decided to push anyway. Full detail in §19.
+- 2026-08-29 / 08-31 — (Build Log was not updated these sessions; recorded only as §§23–31.) Headlines: inbound+outbound voice, hold/transfer, CDR data all fixed and live-verified; Dinstar SMS TLS pinning; WhatsApp send-path confirmed correct (never exercised); P2 CRM data layer + P3 agent-CRM console; manager-merge (auto-merge, unverified); agent sidebar + CRM integration; Feature A (admin CRM contact form), B (one-owner + transfer flow), C (learning caller ID). All of 08-31's work stayed uncommitted and only partially deployed.
+- 2026-09-01 — **Committed 08-31's entire uncommitted batch** (7 commits G1–G7 on `main`, not pushed) and deployed it: full `--no-cache` rebuild of `web` + `cdr-listener`, `algo-web` healthy, both 20260831* migrations confirmed applied, the previously-missing `/admin/contact-ownership` + `api/agent/crm/transfer-requests` now live. P3 caller-E164 backfill confirmed a no-op (remaining NULLs are internal ext "1002" rows). **Started the Apple-black redesign** (plan: `~/.claude/plans/refer-the-handoff-and-goofy-bentley.md`, expressed as a task graph): F1 — `globals.css`/`tailwind.config.ts` now a CSS-variable Apple-black token layer (true-black dark, #F5F5F7 light, system default), 3-state theme provider, legacy Tailwind colour names repointed at tokens; F3 — `src/components/ui/` Headless-UI primitive kit (@headlessui/react 2.2.10); F5 — Playwright scaffold (`playwright.config.ts`, `e2e/`, `test:e2e`). MUI/Emotion still present — removed in F6. **Verified:** typecheck clean, vitest 349/349, lint clean, `npm run build` green. Phase M (MUI migration) formally cancelled.
 
 ## 6. Decisions Made While Scaffolding (flag if you'd have chosen differently)
 
@@ -3240,3 +3242,478 @@ and was never touched by it.
 Full commit list this session, in order: `4aed624`, `69194e4` (earlier,
 §24), `d1ef7b9`, `a2f03a2`, `93592f9`, `1b773d2`, `6b07728`, `025c3dd`,
 `c4def00`, `c455318`, `6bed0de`, `27e3722`, `53069ab`, `59c1c26`.
+
+## 27. P0 recon (read-only) for the MUI/CRM/WhatsApp/manager-merge plan — WhatsApp backend verdict: BROKEN, not UI, and the cause is simpler than feared (2026-08-31)
+
+First step of the plan at `C:\Users\DK\.claude\plans\bubbly-wiggling-pudding.md`
+(MUI migration → manager merge → WhatsApp fixes → CRM → agent UI rehaul → DNC →
+PWA/Capacitor). Pure read-only inspection of the live production VPS, one
+deliberate SQL read pass — no code changed, nothing restarted, nothing re-paired.
+
+**Verdict: WhatsApp is backend-broken, and the fix is narrower than the plan's
+worst case.** Two independent, decisive DB findings:
+
+- **`ChatMessage` grouped by `direction`/`deliveryStatus`: 26 rows, all
+  `INBOUND`/`delivered`. Zero `OUTBOUND` rows exist.** No agent has ever
+  successfully sent a WhatsApp message through this system — not one. This
+  confirms the operator's "sending fails" report as total, not partial, and as a
+  real backend defect: P1's job is to find why every outbound attempt either never
+  reaches OpenWA or is silently swallowed before the DB write (the `chatId` fix in
+  `openwa-provider.ts:43` has still never been exercised by a real send — a
+  session's worth of investigation, not confirmed today per the sandbox's
+  live-write restrictions, see below).
+- **Only 1 of 4 planned SIM ports has ever been paired.** `WaInstance` has
+  **exactly one row** (`simPort: 1`, `status: CONNECTED`, number `971502644615`,
+  paired 2026-08-29 05:43, `lastError` empty). Ports 2–4 have no instance at all —
+  not stale, never provisioned. This is the real explanation for two things the
+  old plan treated as separate mysteries: "admin Rooms shows only one chat per
+  agent" (`Room` table also has exactly one row — there is structurally only one
+  chat channel to show, the Rooms UI/activity route is not the bug) and "four
+  accounts, everywhere" (P1's four-instance work has nothing to route between yet
+  — pairing SIMs 2–4 is a prerequisite, not part of the WhatsApp bug fix).
+
+**The re-pair-detach hypothesis (P1's #1 named risk): inconclusive by design, not
+disproven.** The sidecar has reconnected automatically roughly 15 times since
+pairing (Baileys `statusCode 428/515` "connection dropped; reconnecting"), and
+**the same `openwaSessionId` (`eabd9bd2-…`) persisted across every one** — all 7
+conversations and 26 messages are still attached to the single `WaInstance` row,
+zero orphans. But this is auto-reconnect, not a true re-pair (logout + rescan a
+fresh QR), which is the actual failure mode the hypothesis is about. **A real
+re-pair test is still required** and must be done interactively — the sandbox's
+tooling classifier blocked two live-verification steps this session on sight
+(comparing the sidecar's on-disk API key against the app's configured value, and
+firing one real outbound send), both correctly, since both touch production
+secrets/state. Whoever runs P1 needs to do those two checks by hand.
+
+- `algo-caddy` **has been `unhealthy` for 2+ days in `docker ps`, and it is a
+  false positive**, not the outage §26 speculated it might front. Its healthcheck
+  is a `docker exec`-based probe that fails to spawn at all (`"unable to start
+  container process: procReady not received"`, `FailingStreak: 15260`) — a
+  healthcheck-definition bug. The actual proxy is fine: `curl` returns `200`, and
+  its own access logs show live authenticated agent traffic (`/agent`,
+  `/api/recordings/*`) succeeding over real HTTP/3 the whole time. Inbound
+  WhatsApp webhook delivery is proven independently working anyway — 26 real
+  inbound messages ingested, `webhookRegisteredAt` is set. **This closes the
+  question §26 raised** (does Caddy's unhealthy status block the webhook) — it
+  doesn't, and the healthcheck itself should get a cheap fix (swap it for an HTTP
+  probe) whenever convenient, no urgency.
+
+**What this changes in the plan.** P1 stays ordered exactly as written (session
+stability → re-pair survival → live updates → the send bug), but two things move:
+pairing SIM ports 2–4 is now an explicit P1 prerequisite rather than an implicit
+assumption, and the send-bug investigation has a much stronger starting fact (zero
+successful sends ever, not "sometimes fails") to work from instead of guessing
+among `chatId`/API-key-rotation/instance-routing as equally likely.
+
+No code changed this session. Next: Phase M (MUI migration) per the plan, unless
+the operator wants P1's WhatsApp fixes pulled forward given how narrow the finding
+turned out to be — worth asking, not assuming.
+
+## 28. WhatsApp send-path root cause found (there wasn't one), Dinstar SMS TLS pinning fixed and live-verified, Caddy healthcheck false-positive fixed (2026-08-31, same day, direct continuation of §27)
+
+Executing the plan's pulled-forward P1-backend steps (1-7) ahead of Phase M, per
+the operator's explicit reordering after §27's recon. All against production,
+with gates run before every deploy.
+
+**Step 1-2: the "agent-side sending fails" root cause — there is no code bug.**
+Two live tests, both decisive:
+- **1a, API key comparison**: web's OPENWA_API_KEY and the sidecar's
+  /app/data/.api-key match exactly (db2d2541..., 64 chars). Zero AppSetting
+  rows exist for OPENWA_API_KEY/OPENWA_BASE_URL/webhook secret, so the
+  DB-first/env-fallback path (settings/service.ts) falls through to .env on
+  both sides — no rotation, no override, no mismatch. Rules out the rotated-key
+  hypothesis entirely.
+- **1b, real send**: replicated openwa-provider.ts's exact wire call
+  (POST /api/sessions/{id}/messages/send-text, chatId "<E.164 digits>@c.us")
+  directly against the live sidecar, sent to the manager escalation contact
+  (+971544887712, EscalationTarget row "Deepak T"). HTTP 201, real
+  messageId, delivered. First-ever live confirmation the chatId fix works.
+- **2, route review**: read POST /api/messaging/conversations/[id]/messages
+  line by line. It always writes a ChatMessage row before checking the
+  provider result — so a real failed send would still leave a
+  deliveryStatus: "failed" row. Zero OUTBOUND rows exist at all (§27), and
+  the pre-write 409 guards (no instance assigned / no active session /
+  calls-only) don't apply to any of the 7 real conversations (all correctly
+  channel: WHATSAPP, correct waInstanceId, correct openwaSessionId,
+  unassigned so any agent can claim them) — confirmed by direct query.
+  canSendOnConversation/canAccessConversation are correct and permissive
+  for this data. Conclusion: the send path — wire format, route logic, access
+  guards, and the composer's error handling — is entirely correct end to end.
+  It has simply never been exercised, consistent with §27's other finding
+  that only 1 of 4 SIM ports was ever paired and the operator's own testing
+  likely never reached a working conversation. No code changed for this step;
+  there was nothing to fix.
+
+**Step 3: session persistence — already solid, nothing to build.** openwa_data
+is already a named volume (docker-compose.yml, comment already documents this
+was fixed for exactly this reason previously); API_MASTER_KEY is pinned via
+.env, confirmed matching in 1a. The boot-log chmod ENOENT on
+/app/data/.api-key is a harmless transient race on first-ever boot of a fresh
+volume — the file exists now with correct 0600 perms and correct content.
+Auto-repair on connection drops already works: Baileys has self-healed ~15 times
+over 2 days with the same openwaSessionId every time, zero human intervention,
+zero orphaned conversations. Step 3 required no changes.
+
+**Step 4 (true re-pair test) and step 5 (pair ports 2-4): not yet run** — both
+need the operator physically present (a phone to scan a fresh QR for port 1;
+SIM cards for ports 2-4). Coordinating next.
+
+**Step 6: algo-caddy's 2-day-plus false "unhealthy" status — fixed and
+live-verified.** §27 found every probe failing "OCI runtime exec failed: ...
+procReady not received" — a containerd/runc-level failure to spawn the exec'd
+healthcheck process, not Caddy or wget misbehaving. Confirmed this is not a
+stuck state: docker restart algo-caddy reset the accumulated FailingStreak
+(was 15260) but the very next probe failed identically — proof this is a
+host/runtime issue, not something a restart clears. Nothing depends on this
+healthcheck (cert-sync's depends_on: caddy is condition: service_started, not
+service_healthy), so docker-compose.yml's caddy.healthcheck is now
+disable: true rather than left generating permanent false-alarm noise.
+Deployed; docker ps now shows algo-caddy with no health column at all (as
+expected for a disabled check), curl returns 200, real agent traffic
+continues in Caddy's own access log throughout.
+
+**Step 7: Dinstar SMS's DEPTH_ZERO_SELF_SIGNED_CERT block — fixed with real
+certificate pinning, not NODE_TLS_REJECT_UNAUTHORIZED=0 (explicitly rejected,
+per instruction) and not even the weaker per-module rejectUnauthorized:false
+pattern src/lib/dinstar/device-client.ts already uses for the device's
+different web-admin surface. Captured the device's real certificate live
+(openssl s_client -connect 192.168.11.1:443, self-signed, sha256
+7E:A4:3C:...:B7:11, valid 2019-2039) over the same Tailscale path production
+traffic uses. New setting DINSTAR_TLS_CERT_PEM (settings/schema.ts,
+DB-first/env-fallback like every other Dinstar setting, not secret — it's a
+public cert) holds it. src/lib/messaging/dinstar-sms-provider.ts gained
+pinnedAgent() + pinnedRequestJson() — node:https directly with a ca:-pinned
+Agent, mirroring this repo's own established precedent of avoiding a new
+undici dependency (matches device-client.ts's reasoning), used in place of
+the shared fetch()-based requestJson() from ./http for this one provider's
+three call sites (sendText, getStatus, pollInbound) only — every other
+provider on the shared client is unaffected.
+
+**One real bug caught in testing, not assumed away**: the device's certificate
+carries no IP/DNS SAN (CN=Dinstar.com only, no 192.168.11.1), so Node's
+default hostname check rejected it even with the right CA trusted
+("Hostname/IP does not match certificate's altnames") — added
+checkServerIdentity: () => undefined to the pinned Agent. This is not a
+verification bypass in the way rejectUnauthorized:false is: ca: already
+restricts trust to this one certificate's exact bytes, so the hostname it
+happens to claim is redundant, not a hole.
+
+**A second, separate bug caught in testing**: docker-compose.yml's web
+environment: block does not auto-forward every .env key into the
+container — only what's explicitly declared there, same as every other
+DINSTAR_* line. The first deploy attempt silently ran with
+DINSTAR_TLS_CERT_PEM unset (PEM present: false) despite it being in .env,
+until DINSTAR_TLS_CERT_PEM: "${DINSTAR_TLS_CERT_PEM}" was added alongside the
+other Dinstar lines and web was recreated again.
+
+**Live-verified, not just built green**: after both fixes, a direct pinned-Agent
+request from inside algo-web to https://192.168.11.1/goip_get_status.html
+returns a real HTTP 302 to /enLogin.htm — past the TLS layer entirely
+(previously DEPTH_ZERO_SELF_SIGNED_CERT before ever reaching the application
+layer). The 302 itself is the already-documented, expected app-layer behavior
+for an unauthenticated request (this file's own header, confirmed 2026-08-28)
+— not a new problem. npx tsc --noEmit clean, npx vitest run 309/309 passed,
+npx next lint clean, npx next build succeeded — run before every deploy in
+this session, not just once at the end.
+
+**Explicitly NOT fixed, flagged not assumed**: DINSTAR_SMS_PASSWORD in .env
+is still the change-me placeholder confirmed stale in earlier sessions — real
+SMS admin credentials have never been set. A full authenticated send/status/poll
+call will still fail until real DINSTAR_SMS_USERNAME/PASSWORD are configured.
+That is a credential gap, separate from and outside what this step was asked to
+fix (the TLS blocker) — SMS sending is now reachable, not yet authenticated.
+The auth-style ambiguity flagged in this file's own header (cookie-session
+redirect vs. the Basic/query styles authHeaders() implements) also remains
+open, same as before.
+
+No code committed to git this session (holding per standing instruction not to
+commit without being asked) — all changes deployed directly by copying the
+changed files to /opt/algo-pbx and rebuilding, confirmed live, but not yet
+reflected in a git commit on either the local working tree or the VPS's git
+history. Flag this before it's forgotten: local and VPS are now ahead of the
+last commit, and the two are consistent with each other but not with git log.
+
+## 29. P2 CRM data layer + P3 agent UI rehaul, reprioritized ahead of Phase M and live-verified with a real bug caught in testing (2026-08-31, same day, follow-up to §28)
+
+Operator explicitly reprioritized: pull P2/P3 (the actual CRM) forward ahead
+of Phase M (MUI migration), since the CRM is what the operator wanted to see
+working, not a styling pass on pages that already work. Built in Tailwind
+against the existing glass-card language — not MUI — deliberately deviating
+from the plan's original "Phase M runs first" ordering; this page converts to
+MUI in Phase M like every other page, at zero extra cost since Tailwind stays
+installed until that phase's last page lands regardless.
+
+**P2 — CRM data layer, migrated to production.** New Prisma models
+`ContactNote`, `ContactTask`, `CallDisposition` (+ `CallDispositionOutcome`
+enum), `Contact` += `email`/`company`/`tags`/`ownerId`,
+`CallDetailRecord` += indexed `callerNumberE164`. Migration
+`20260831120000_add_crm_data_layer` generated via `prisma migrate diff
+--from-url ... --to-schema-datamodel` run *inside* the live `algo-web`
+container (not locally — this VPS's Postgres is correctly loopback-only, no
+local dev DB to diff against) after discovering the container's
+`/app/prisma/schema.prisma` is baked in at build time and a host-side `scp`
+alone doesn't reach it — `docker cp` into the running container was needed to
+generate a correct diff before rebuilding for real. The diff also produced
+one unrelated line (`DROP INDEX "Recording_hiddenFromAgentAt_idx"`, pre-existing
+drift between `schema.prisma` and migration history, nothing to do with this
+change) — hand-trimmed out rather than silently applied. Applied via `migrate
+deploy`, confirmed named in the output (not "no pending"), confirmed live via
+direct row/column queries.
+
+`CallDetailRecord.callerNumberE164` is now written at ingest time
+(`POST /api/cdr`, using the same `normalizeToE164` every other normalization
+in this codebase uses) so every future call is caller-ID-matchable without the
+pre-existing `/api/crm/contacts/[id]/activity` route's last-2000-CDRs
+in-process scan. Historical rows backfilled via a new idempotent admin route,
+`POST /api/admin/maintenance/backfill-caller-e164` (same pattern as the
+existing `maintenance/prune` route) — not a throwaway script, since a raw
+Node script inside the container couldn't `import` `libphonenumber-js` at all
+(Next's standalone output webpack-bundles it into route code rather than
+keeping it as a standalone `node_modules` package — confirmed live by the
+import failing with `ERR_MODULE_NOT_FOUND`), so the real, already-correct
+`normalizeToE164` had to be reused via a real route, not reimplemented.
+
+New session-authenticated routes under `/api/agent/crm/**`
+(`requireSession()`, unlike the pre-existing Bearer-key-only `/api/crm/**`
+which a browser session cannot call at all): `contacts` (list+search,
+create), `contacts/[id]` (detail + merged calls/messages timeline using the
+new indexed column, PATCH), `contacts/[id]/notes`, `contacts/[id]/tasks`
+(create + complete-toggle), `dispositions` (choosing DNC also writes a
+`DoNotCallEntry` in the same `$transaction`, per the plan's explicit
+compliance requirement).
+
+**P3 — the CRM agent UI.** `/agent` is now the CRM (contact list + detail:
+fields, notes, tasks, a disposition bar, a merged timeline) — the plan's
+actual headline deliverable. The former `/agent` softphone moved to
+`/agent/call` unchanged (same components, same behavior, only the route
+changed); `agent-shell.tsx`'s nav gained "Contacts" and "Call" entries.
+**`IncomingCallBanner`'s suppression logic, which the plan flagged as needing
+exactly this revisit, was fixed**: it used to hide on `/agent` (back when that
+was the call page); now hides on `/agent/call` instead, so it correctly shows
+on the CRM (now the busiest page) instead of being suppressed there.
+
+**The CRM's Call button reuses `useSIP().makeCall()` directly — the same
+function `Dialpad` already calls, no second calling mechanism.** The
+WhatsApp button is a deep link to `/agent/chat?number=<E164>`, per the plan's
+"if a conversation exists, open it; if not, start fresh" requirement.
+
+**Live-verified against real production data — including a real bug the
+operator's own review caught before I could over-claim it worked:**
+
+- Contact list loaded all 7 real WhatsApp-derived contacts + one pre-existing
+  one; contact detail rendered a real merged timeline (actual WhatsApp
+  message bodies, not fixtures); adding a note wrote through the real API and
+  reappeared attributed to the real signed-in admin, confirmed via a fresh
+  fetch, not an optimistic-UI illusion.
+- **The WhatsApp deep-link's first version was wrong in production despite
+  passing every gate.** `resolveWhatsAppConversation()` assumed
+  `POST /api/messaging/conversations` returns `{conversation:{id}}`; the real
+  route (pre-existing code, not written this session) returns
+  `{conversationId}` — confirmed by reading the route's actual last line, not
+  assumed. This produced a live `TypeError: Cannot read properties of
+  undefined (reading 'id')`, caught via `read_console_messages` in the actual
+  browser session, not by the unit tests — the tests mocked the same wrong
+  shape as the code assumed, so they stayed green while production broke.
+  **This is exactly why this project's live-verification rule exists**: a
+  passing build (and passing unit tests) proved nothing about what the real
+  API actually returns. Fixed in both `resolveWhatsAppConversation()` and
+  `createWhatsAppConversationWithInstance()`
+  (`src/lib/messaging/whatsapp-deep-link.ts`), re-verified live end to end —
+  a fresh contact with no conversation now correctly shows the admin SIM
+  picker, selecting a line creates and opens the real thread, and re-clicking
+  WhatsApp on that same contact now correctly finds and reopens it instead of
+  re-showing the picker.
+- The operator's two requested edge cases are both real, working code, not
+  stubs: an agent with no assigned WhatsApp line sees an explicit "No
+  WhatsApp line assigned to your account — ask your admin" state; an admin
+  with no line gets a SIM picker over the real (non-calls-only) WaInstances
+  and can originate a conversation from any of them. The agent-no-instance
+  branch is unit-tested (`whatsapp-deep-link.test.ts`, 6 new tests) but not
+  live-verified — doing so needs a second real agent session with no SIM
+  assigned, not attempted this session.
+- Two synthetic test contacts created during this verification
+  (`+971509998877`, `+971509998878`) were deleted afterward, including their
+  Conversation rows (Contact has no cascade delete for Conversation, only for
+  the new ContactNote/ContactTask/CallDisposition — the FK would have
+  rejected a bare Contact delete) — confirmed zero rows remain.
+
+**Explicitly NOT done this session, stated plainly:**
+
+- **`/admin/contacts`** is still the pre-P2 bare directory (number,
+  displayName only) — the plan's "admin gets a full read + attribution view
+  over all CRM data" requirement is unbuilt. A real gap, not an oversight.
+- **P3's fuller scope is deferred**: the call popover as a shared view onto
+  one SIP session (built instead: a plain Call button using the same
+  `makeCall()`), incoming-call auto-opening the matching contact, and the
+  `<900px` responsive collapse are all still open. `/agent/calls` and
+  `/agent/missed` were left as separate pages, not folded together as the
+  plan describes.
+- **Steps 4 and 5 remain blocked on physical access**: the true re-pair test
+  (logout port 1, scan a fresh QR) and pairing SIM ports 2-4 both need a real
+  phone in hand for each number — no login level substitutes for scanning a
+  QR code. Ports 2-4 remain in the "Pairing" state prepared in §28.
+
+No code committed to git this session either (same standing instruction as
+§27/§28) — everything above is live on the VPS, confirmed working, ahead of
+`git log` on both the local tree and the VPS's own checkout.
+
+## 30. Phase MM (manager merge), scoped down to auto-merge and deployed — NOT live-verified against a real call (2026-08-31, same day, follow-up to §29)
+
+Operator decision: skip the QR-dependent steps (blocked on phone numbers that
+don't exist yet — noted in `handoff.md`), proceed straight to Phase MM.
+
+**Built and deployed:** `POST /api/calls/manager-merge` +
+`ManagerMergePicker` (mounted in `call-controls.tsx`, next to the existing
+`EscalationPicker`, both only rendered mid-call). Sourced from the same
+`/api/agent/escalation-targets` list, filtered to managers with an
+extension (no extension → shown, disabled, "not mergeable" — the existing
+WhatsApp-ping affordance already covers that case one component up).
+
+**Scoping decision, stated plainly rather than silently narrowed: this is
+an AUTO-MERGE, not the plan's original consult-first flow.** Consult-first
+needs the agent's and customer's channels split onto separate bridges
+mid-call (a real private-hold mechanism) — nothing in this codebase does
+that today, and inventing it and shipping it unverified against a live call
+was judged too risky. What ships instead: customer + agent are AMI-Redirected
+into the shared ConfBridge room first (reusing `findChannelsToRedirect`,
+unchanged, from the existing generic conference route), *then* the manager
+is Originated into the same room. This is what makes "the customer must
+never hear hold-failure silence" true by construction — they're bridged
+with the agent the entire time, including if the manager never answers, not
+because of an explicit hold/unhold step.
+
+**Manager-side caller ID** ("Conference Call - <Agent Name>", not the raw
+extension) reuses the exact mechanism the generic conference route already
+uses for its own third-party Originate — the AMI `CallerID` field, no
+dialplan change. **No single-GSM-port guard was added**, deliberately: the
+hazard that guard exists for (a second outbound call on an already-occupied
+trunk port) is structurally impossible here, since this route only ever
+Originates an internal `PJSIP/<extension>`, never anything routed through
+Dinstar — confirmed by this reasoning before writing the route, per the
+plan's own discovery pass.
+
+**Answer/no-answer detection is best-effort, not guaranteed**: a true
+blocking Originate would need `ami-client.ts`'s `send()` 5-second hardcoded
+response timeout raised (out of this route's file scope), so the Originate
+fires `Async: "true"` and the result is observed via `waitForEvent()`
+matching `OriginateResponse`/`Exten` — the same class of "field may not be
+present on this Asterisk version" caveat `findChannelsToRedirect`'s own
+`BridgeId` dependency already carries in the pre-existing code. A timeout
+here does not mean the merge failed, only that this observation couldn't
+confirm either way in time — the response message says so explicitly.
+
+**NOT done, stated plainly:**
+- **Not live-verified against a real call** — no phone/SIP client was
+  available this session to place a test call and click Merge. Deployed
+  because it is fully opt-in (new route, new button, unreachable unless
+  explicitly clicked) and cannot affect any existing call flow, but the
+  actual merge mechanics — the Redirect, the Originate, the caller-ID
+  display on the manager's phone, the `OriginateResponse` correlation —
+  inherit the exact same "MEDIUM-LOW confidence, needs live testing"
+  flag the underlying generic conference route has carried since Phase G.
+- **MM4 (per-participant mute/hold) was not attempted, not partially built,
+  not stubbed.** The plan's own risk section named this the likely-hardest
+  part: the manager's leg is an `Async` Originate with no channel name ever
+  captured, and per-participant mute needs an exact channel to target — "no
+  channel id, no button." Attempting it without live-call verification
+  ability risked shipping something that looks complete but silently
+  doesn't work, which this project has been burned by before. Deliberately
+  left for a session with real call access.
+- **Manager "offline" detection was scoped out** — every manager with an
+  extension shows selectable regardless of registration state; an
+  unreachable extension surfaces as a real failure message after the
+  attempt rather than a pre-emptive grey-out. Documented in the picker's
+  own header comment.
+
+All four gates (typecheck, 315 tests, lint, build) passed before every
+deploy. No route-level unit tests were added — matches this codebase's
+existing convention of testing pure logic in `src/lib/**`
+(`findChannelsToRedirect` already has its own tests, reused unchanged) and
+verifying routes live, which this route explicitly has not been yet.
+
+No code committed to git this session (same standing instruction).
+
+## 31. Sidebar/card-style nav + CRM integration across every agent page, deployed and live-verified — one real historical-data gap caught and left for the operator's call (2026-08-31, same day, follow-up to §30)
+
+Operator direction: inspect the current UI (no Playwright MCP tool available
+this session — substituted the already-authenticated claude-in-chrome
+session, functionally equivalent for this purpose, stated plainly rather
+than silently swapped in), convert the agent nav from the horizontal top-bar
+links to a sidebar/card style, and integrate CRM context into the pages that
+had none. Live call test explicitly deferred to last, per the operator.
+
+**Sidebar.** `agent-shell.tsx` rewritten: the 6 nav destinations
+(Contacts/Call/Calls/Voicemail/Missed/Chat) move from a single-line
+horizontal text row into a fixed left `glass-card` rail with an icon,
+label and badge per item, active-item highlight, matching the admin
+section's own sidebar shape structurally (MUI `Drawer` there; Tailwind
+here, since the agent surface hasn't gone through Phase M). Brand,
+connection-status pill, Admin link, user email and sign-out all moved into
+the sidebar's header/footer.
+
+**CRM integration, four pages, all reusing the existing `Contact` id rather
+than inventing a second identity scheme:**
+- **`/agent/chat`** — every conversation row gets a "CRM" link to
+  `/agent?contact=<id>`. Free: `GET /api/messaging/conversations` already
+  returned `contact.id`, no backend change needed. The row's outer element
+  changed from `<button>` to a `role="button"` `<div>` since a nested
+  `<a>`/`Link` inside a real `<button>` is invalid HTML and breaks
+  hydration — the link's own `onClick` stops propagation so it opens the
+  contact instead of also selecting the conversation.
+- **`/agent` itself** now reads `?contact=<id>` (via `useSearchParams()`)
+  and auto-selects that contact on load — the landing point every other
+  page's new CRM link needs. No Suspense-boundary build warning (this route
+  was already fully dynamic/session-gated, not statically generated).
+- **`/agent/calls` and `/agent/missed`** — `GET /api/me/calls` and
+  `GET /api/me/missed-calls` both gained a `callerContactId` field (a local
+  `numberE164 -> id` map built in each route, not merged into
+  `src/lib/contact-display.ts`'s existing `resolveContactDisplayName()`,
+  since that function's return contract — a display string — is read by
+  3+ other routes and changing its shape for one new caller wasn't worth
+  the churn). "View in CRM" renders only where a match exists.
+- **The active/held call view (`/agent/call`)** — new
+  `ActiveCallContact` component, looks up `incomingCallerId` against the
+  CRM (`GET /api/agent/crm/contacts?q=`), shows "Contact: &lt;name&gt;" +
+  a CRM link when found, "Unknown caller — Add to CRM" (one click, creates
+  it) when not. Required one small, verified-safe fix to
+  `sip-context.tsx`: `answerCall()` used to clear `incomingCallerId` the
+  instant a call was answered, so the active-call view had zero identity
+  to work with at all — confirmed by grepping every read site that this
+  value is display-only and already gated on `callState === "ringing"`
+  elsewhere, so leaving it set post-answer (only still cleared on
+  hangup/decline) changes nothing else. **Not wired for outbound calls** —
+  the dialed number lives inside `Dialpad`'s own local state, never shared
+  up to `CallControls`; a real, separate gap, stated rather than papered
+  over.
+
+**A real, live-caught gap, not silently worked around: the
+`callerNumberE164` historical backfill (built in §29,
+`POST /api/admin/maintenance/backfill-caller-e164`) was built but never
+actually invoked.** Confirmed via direct query: 0 of 42 `CallDetailRecord`
+rows have it populated. This means `ContactDetail`'s timeline (which
+filters by the stored `callerNumberE164` column) shows zero historical
+calls for any contact, even though the SAME data correctly resolves and
+links on `/agent/calls` (that route recomputes the match on every request
+via `normalizeToE164`, never reads the stored column). **Deliberately not
+fixed in-session**: running it needs an admin session, and the only
+authenticated browser session available was the real agent account
+`deepakt369b@gmail.com` — genuinely `Connected` with a live SIP
+registration. Signing out to authenticate as admin would have dropped
+that live softphone connection, and no attempt to fabricate or guess admin
+credentials was made. This is a one-time, already-idempotent, one-click
+fix (`POST /api/admin/maintenance/backfill-caller-e164`) waiting on either
+the operator running it from `/admin` or a session where dropping the
+agent connection is acceptable.
+
+All four gates (typecheck, 315 tests, lint, build) passed before deploy.
+Live-verified end to end, not just built green: the sidebar renders with
+correct active-item highlighting on every page; the CRM deep link resolves
+correctly from Chat, from Calls (confirmed against a real historical row,
+`+971504852446`), and directly by URL; `/agent/voicemail` and
+`/agent/missed` render cleanly under the new sidebar with a real,
+`Connected` agent session (not the admin test account) — which also
+incidentally confirmed `/api/me/calls`/`/api/me/missed-calls` work
+correctly for an agent with a real linked extension, previously untested
+this session since only the admin account (no extension) had been used.
+
+No code committed to git this session (same standing instruction).

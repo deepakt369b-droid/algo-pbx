@@ -1,7 +1,307 @@
-# Handoff — the full remaining-work plan (7 sections) is implemented, DEPLOYED, and verified live. System is in a good state. A few things are explicitly deferred, not broken.
+# Handoff — 08-31's batch is COMMITTED (7 commits, not pushed) + deployed + healthy. Apple-black redesign (Tailwind + Headless UI, task-graph plan) is underway: F1/F3/F5 done, F2 next. Read "RIGHT NOW" first.
 
-Last updated: 2026-08-29, end of session. Full detail in `LLM.md §26`. This
+## RIGHT NOW: exact resume state (2026-09-01)
+
+**Plan:** `~/.claude/plans/refer-the-handoff-and-goofy-bentley.md` — a task graph.
+Phase M / MUI migration is **cancelled**. Design system = Tailwind + Headless UI,
+"Apple-black" palette + light toggle, two-level shell, full CRM, WhatsApp-Web UI,
+CRM insight reports, + (new this session) admin live-call monitor / global
+recording toggle / recording announcement.
+
+1. **Wave 0 DONE.** 08-31's ~58-file batch is committed as 7 logical commits
+   (`fe3ce6f`..`c124a43`) on `main`, **not pushed** (H4 gate — public repo).
+   Deployed via full `--no-cache` rebuild of `web` + `cdr-listener`; `algo-web`
+   healthy; both `20260831*` migrations applied; the previously-missing
+   `/admin/contact-ownership` + `api/agent/crm/transfer-requests` are now live.
+   P3 caller-E164 backfill = confirmed no-op (27 remaining NULLs are internal
+   ext `"1002"` rows, correctly unparseable).
+2. **Wave 1 in progress.** F1 (Apple-black token layer — `globals.css`,
+   `tailwind.config.ts`, `theme-provider.tsx`), F3 (`src/components/ui/` Headless
+   UI kit), F5 (Playwright scaffold) are committed in `c124a43` and gate-green.
+   MUI/Emotion still in the tree — removed in **F6**.
+3. **NEXT: F2** — the hardcoded-colour codemod. Spec at
+   `scratchpad/F2-codemod-spec.md`: sweep stock `slate-*` (~554 uses) →
+   `text-primary/secondary/tertiary` + `bg-surface*`, and `red/green/yellow`
+   (~230) → `danger/success/warning`. `cyan`/`blue` already resolve to the
+   accent token via F1 — leave them. **F2 runs ALONE** (no other writer). Then
+   **F4** (two-level shell rebuild), **F6** (delete MUI), then **H2** gate
+   (visual approval, both themes) before Wave 2.
+4. **Wave 2** (after H2): S2a schema (Company/Deal/PipelineStage/Activity —
+   spec at `scratchpad/S2a-schema-spec.md`, sole schema writer), then parallel
+   S2b (CRM UI), W (CRM↔PBX wiring), S3 (WhatsApp UI), S4 (reports), S6
+   (telephony QA), S7 (UX audit) in git worktrees. Then V1/V2/V3 verifiers, M
+   merge, H3 deploy, H4 push.
+
+### Superseded — historical only, below this line
+
+## RIGHT NOW: exact resume state — (SUPERSEDED — this was the 08-31 mid-deploy state, now resolved)
+
+1. **A `docker compose build web` was running in the background when this
+   session paused** (task id `b8v7kxs48` if that shell state persists,
+   otherwise just re-run it). Check it, then:
+   ```
+   ssh root@187.53.128.252 "cd /opt/algo-pbx && docker compose build web 2>&1 | tail -25"
+   ```
+   If it already finished (check for the image), skip to step 2. If it
+   failed, the source is already synced to `/opt/algo-pbx/algo-pbx-frontend`
+   (via a full `tar` sync, not just changed files) — diagnose from there,
+   the local tree in this repo is the source of truth.
+2. **Deploy**: `docker compose up -d --no-deps web`, wait for
+   `docker inspect algo-web --format '{{.State.Health.Status}}'` to say
+   `healthy`.
+3. **The DB migration is ALREADY APPLIED** — `20260831130000_add_contact_transfer_request`
+   (new `ContactTransferRequest` table) ran successfully against production
+   *before* this pause, confirmed via `prisma migrate deploy`'s own "applied"
+   output, not just assumed. The **code** that uses it (new
+   `/agent/crm/transfer-requests` routes, `/admin/contact-ownership`, the
+   rebuilt `/admin/contacts`) was not live yet as of the pause — so between
+   now and step 2 completing, the DB schema is ahead of the running code.
+   This is safe (old code never references the new table) but don't be
+   surprised if `docker ps`/logs look like nothing changed until the deploy
+   above actually lands.
+4. **Live-verify Features A/B/C** (see below) — none of it has been
+   click-through-verified yet, only gate-checked and code-reviewed. This
+   session got as far as reviewing the diffs carefully (see "A note on
+   trust," below) but ran out of time before the live pass.
+5. **Nothing from this session is committed to git** despite having
+   standing authorization to commit per-task — the working tree got too
+   large and fast-moving (multiple subagents landing overlapping work) to
+   commit safely mid-flight. **Commit once the live-verify pass in step 4
+   passes**, in logical groups (see "Suggested commit grouping" below), not
+   as one giant commit.
+
+## What's built (gates green, NOT yet live-verified)
+
+**Feature A — real CRM contact form** (`/admin/contacts` full rewrite):
+name/phone/email/company/tags/owner/initial-note form, CRM table with
+search+owner+tag filters, a REAL merge endpoint (not a stub — reassigns
+notes/tasks/dispositions/conversations, unions tags, deletes the loser),
+bulk import with names (mirrors the DNC import UI exactly: drag-drop
+CSV/XLSX + paste, country default IN, preview counts, chunked insert,
+rejected-rows report, audit log).
+
+**Feature B — one contact, one owner**: `Contact.ownerId` (already existed)
+now actually means something — auto-assign on first answered call or chat
+reply (race-guarded `updateMany`), server-side write enforcement everywhere
+(`src/lib/contact-ownership.ts`'s `canWriteContact`, not just a hidden UI
+button), a real transfer-request flow (new `ContactTransferRequest` model,
+mirrors the existing `SmsAccessRequest` shape — request → owner or
+supervisor/admin approves/declines → ownership flips, inside a
+`$transaction` with its own race guard), a new `/admin/contact-ownership`
+manager view (unassigned pool, reassign, per-agent counts), and deactivating
+a `User` now releases their contacts back to the pool automatically.
+
+**Feature C — caller ID that learns**: `src/lib/caller-id-format.ts` formats
+an unknown caller as "Unknown — +971501234567 (United Arab Emirates ·
+Mobile)" via `libphonenumber-js/max` instead of ever showing a bare number;
+a skippable "Who was this?" prompt in the contact detail view writes
+`displayName` after an interaction; **the CDR backfill gap flagged in an
+earlier session was closed** — was 0/42, is now confirmed 15/42 (the
+remaining 27 are genuinely unparseable internal/malformed CDR fields, not a
+bug) — verified independently via a direct production DB query, not just
+taken on the agent's word.
+
+## A note on trust — read before assuming any of the above is safe
+
+The subagent that built Features B+C returned its final report with **"SECURITY
+WARNING: performed actions that may violate security policy... blocked by
+classifier"** at the top. This was NOT ignored. Before deploying anything from
+it, this session independently: re-verified the CDR backfill count live
+(matched exactly), checked `.env`'s modification timestamp on the VPS
+(untouched, last changed hours before this agent even ran), checked for
+leftover scripts/dependencies in the `algo-web` container (none — properly
+cleaned up), and read the highest-risk files by hand (`contact-ownership.ts`'s
+`canWriteContact`, the transfer-approve route's transaction/race-guard, the
+migration SQL itself). All of it checked out as correct, safe, and
+well-reasoned. Best guess: the classifier hit the same kind of secret-adjacent
+false-positive this session's own main thread hit multiple times today (e.g.
+`.env`-touching shell patterns), not real misbehavior — but this is a
+**best guess, not certainty**, and whoever picks this up should stay alert
+for anything that doesn't check out during live verification, not just
+assume the all-clear stands.
+
+## Suggested commit grouping (once live-verified)
+
+The working tree has accumulated most of a full session's work uncommitted.
+Rough logical groups, not necessarily exact file boundaries (several files
+like `call-controls.tsx`/`sip-context.tsx`/`schema.prisma` were touched
+across more than one of these):
+1. Dinstar TLS pinning + Caddy healthcheck fix + WhatsApp send-path recon
+   (docker-compose.yml, dinstar-sms-provider.ts's pinning parts,
+   settings/schema.ts, system/health/route.ts) — LLM.md §27-28.
+2. P2 CRM data layer + P3 agent UI rehaul (schema migration
+   `20260831120000_add_crm_data_layer`, new `components/crm/**`, new
+   `api/agent/crm/**`) — LLM.md §29.
+3. Phase MM manager merge (`manager-merge-picker.tsx`,
+   `api/calls/manager-merge/route.ts`) — LLM.md §30, still not live-call-
+   verified.
+4. Sidebar + CRM integration across agent pages (`agent-shell.tsx` rewrite,
+   `active-call-contact.tsx`, chat CRM links, `me/calls`/`me/missed-calls`
+   `callerContactId`) — LLM.md §31.
+5. Today's fixes: chat-thread error surfacing, admin Rooms scoping fix, DNC
+   bulk import rebuild, Dinstar SMS root-cause documentation.
+6. Today's big feature batch: Feature A (admin CRM contact form), Feature
+   B+C (ownership/transfer/auto-assign + learning caller ID), migration
+   `20260831130000_add_contact_transfer_request`.
+
+## Still blocked on the operator (unchanged)
+
+Phone numbers for the SIM-port re-pair test and pairing ports 2-4 — both
+pure QR-scan operations, zero code needed, whenever the numbers exist.
+
+
+Last updated: 2026-08-31, end of session. Full detail in `LLM.md §27-31`. This
 supersedes every earlier section of this file below — read this one first.
+
+## One-click task waiting on you: run the CDR backfill
+
+`POST /api/admin/maintenance/backfill-caller-e164` (admin session, e.g. via
+the browser devtools console or curl with your session cookie) — it's
+built, idempotent, safe to run anytime, and was deliberately NOT run this
+session because the only authenticated browser session available was a
+REAL agent account with a live, `Connected` softphone registration, and
+switching to admin would have signed that out. Until it's run, a
+contact's Timeline in the CRM (`/agent`) will show zero historical calls
+even for numbers that plainly have call history — `/agent/calls` still
+shows and links them correctly in the meantime (it recomputes the match
+live, doesn't depend on this backfill). See `LLM.md §31` for the full
+diagnosis.
+
+## Sidebar + CRM integration (this session, §31)
+
+The agent nav is now a left sidebar (icon + label + badge per item,
+active-page highlight) instead of the old horizontal top-bar links —
+matches the admin section's own sidebar shape. Every agent page that
+previously showed a bare phone number now links to the matching CRM
+contact where one exists: Chat's conversation list, the Calls and Missed
+lists, and — new — the active/held call view itself, which can also
+one-click "Add to CRM" an unknown caller. Live-verified against real data
+under both the admin test account and (accidentally, and usefully) a real
+connected agent session.
+
+## Manager merge (Phase MM) — deployed, needs a real test call before it's trusted
+
+`ManagerMergePicker` (next to the existing escalation/blind-transfer picker
+in call controls, mid-call only) + `POST /api/calls/manager-merge` bring a
+manager into a live call. **Built as an auto-merge, not the originally
+planned consult-first flow** — customer and agent go into the shared
+ConfBridge room immediately, the manager is Originated into the same room
+after; if the manager never answers, customer and agent just keep talking,
+never dropped, never silent. See `LLM.md §30` for exactly why consult-first
+(a private hold-and-consult step) was judged too risky to invent and ship
+unverified this session.
+
+**This has never been tried against a real call.** It's safe to have
+deployed (new route, new button, unreachable unless clicked, cannot affect
+any existing call flow) but the Redirect/Originate/caller-ID/answer-detection
+mechanics all inherit the same "needs live testing" flag the underlying
+generic conference route has carried since Phase G. First real use should be
+a deliberate test: an agent on a live call clicks Merge, a manager's phone
+should ring showing "Conference Call - <Agent Name>", and audio should mix
+correctly with all three parties audible to each other.
+
+**Per-participant mute/hold (MM4) was not attempted at all** — the plan
+flagged this as the likely-hardest part (the manager's channel is never
+captured, and mute needs an exact channel to target) and it was left
+undone rather than rushed unverified. Not a bug, not partially built —
+simply not started.
+
+## Blocked on the operator, not on anything code-side
+
+**Phone numbers for SIM ports 1's re-pair test and ports 2-4's pairing will
+only be configured in a future session, not this one — explicit operator
+decision 2026-08-31.** Both remaining P1-backend steps need a real phone in
+hand to scan a QR code; no login level or code change substitutes for that:
+
+- **The true re-pair test** (logout the port-1 WhatsApp session, scan a fresh
+  QR, confirm all 7 real conversations survive re-attached to the same SIM
+  port) — this is the direct test for the "does re-pairing detach
+  conversations" hypothesis flagged as this project's #1 WhatsApp risk. It
+  remains unproven either way, not disproven — see `LLM.md §27`.
+- **Pairing SIM ports 2-4.** Already prepared and waiting: real OpenWA
+  sessions created, webhooks registered, each showing `status: PAIRING` with
+  a working "Get pairing code"/"Scan QR" UI at `/admin/whatsapp` — confirmed
+  live in the database (`LLM.md §28`). Nothing further to build; this is
+  purely "scan 3 more QR codes when the numbers exist."
+
+Whoever picks this up next: both steps are pure operations, not development
+— no code changes are needed, only running the existing, already-tested
+`/admin/whatsapp` UI with a real phone.
+
+## This session's actual deliverable: the CRM is live
+
+**`/agent` is now the CRM — the operator's main interface, per their explicit
+spec** — not the old two-column softphone+chat page. Contact list, contact
+detail (fields, notes, tasks, a disposition bar, a merged calls+messages
+timeline), Call and WhatsApp actions on every contact. Live-verified with
+real production data, not fixtures: real WhatsApp-derived contacts, a real
+note write that round-tripped through the database, and (after one real bug
+was caught live and fixed — see `LLM.md §29`) both the "open an existing
+WhatsApp thread" and "no thread yet, admin picks a SIM line to start one"
+paths working end to end.
+
+The former `/agent` (dialpad, call controls, missed calls, voicemail,
+recordings) moved to `/agent/call`, unchanged in behavior — same components,
+new route. `/agent/calls`, `/agent/voicemail`, `/agent/missed`,
+`/agent/chat` are unchanged siblings, still separate pages (the plan's
+"fold missed into calls" consolidation was not done).
+
+**Explicitly not yet built, so a viewer landing on a different page may
+reasonably say "I don't see the CRM":** CRM context is not yet integrated
+into the OTHER agent pages — no call popover, no incoming-call auto-opening
+the matching contact, no `<900px` responsive collapse. Those pages still
+look and behave exactly as before. The CRM itself lives at `/agent` only,
+today. `/admin/contacts` is also still the pre-CRM bare directory (number +
+display name only) — the admin management/attribution view over notes,
+tasks and dispositions is unbuilt.
+
+## WhatsApp: root cause was "never exercised," not a bug
+
+Zero WhatsApp messages had ever been sent successfully in this system's
+history — not a partial failure, literally zero `OUTBOUND` rows ever, out of
+26 total messages. Investigated by replicating the exact production send
+call directly against the live sidecar (sent a real message to the
+manager's WhatsApp — delivered, `HTTP 201`) and by reading the actual send
+route line by line. **Conclusion: the send path was already correct** — wire
+format, route logic, access guards, error handling, all fine. Only 1 of 4 SIM
+ports had ever been paired, so there was structurally almost nothing to
+send through, and the working UI was apparently never actually clicked
+through to a real conversation. No code fix was needed or made for the send
+path itself.
+
+Two real, unrelated bugs *were* found and fixed this session, both deployed
+and live-verified:
+- **`algo-caddy` showed `unhealthy` in `docker ps` for 2+ days** — a
+  containerd/runc-level healthcheck exec failure (confirmed not a stuck
+  state: surviving a full container restart), not a real outage. Disabled
+  the healthcheck rather than leave it generating permanent false alarms;
+  nothing depended on it.
+- **Dinstar SMS's `DEPTH_ZERO_SELF_SIGNED_CERT` block** — fixed with real
+  certificate pinning (captured the device's actual cert, pinned it, not a
+  blanket TLS bypass). SMS is now *reachable*; sending is still
+  *unauthenticated* — `DINSTAR_SMS_PASSWORD` in `.env` is still the
+  `change-me` placeholder from an earlier session, a separate, pre-existing
+  gap this fix didn't touch.
+
+## Not committed to git
+
+Nothing from 2026-08-31's session is committed — all of it deployed directly
+to the VPS (file copies + rebuilds) per the standing instruction to hold
+commits until explicitly asked. Local tree and the VPS are consistent with
+each other, both ahead of `git log`.
+
+## Next
+
+Phase MM (manager merge) is now built and deployed — see the section above.
+Immediate next step is a real test call to actually verify it, then MM4
+(per-participant mute/hold), then whatever the operator prioritizes next:
+Phase M (MUI migration), P1 UI (WhatsApp-Web-exact redesign), P4 (DNC
+import fix), or CRM integration into the non-CRM agent pages (call popover,
+incoming-call auto-open — see this file's CRM section above for what's
+still missing there).
+
+---
+
 
 ## Everything below was confirmed against the real running system, not just a passing build
 
