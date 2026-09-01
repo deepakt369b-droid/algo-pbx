@@ -1,5 +1,6 @@
 import { auth, signOut } from "@/auth";
 import { AgentShell } from "@/components/agent-shell/agent-shell";
+import { CrmCallLayer } from "@/components/crm/crm-call-layer";
 
 // Mirrors admin/layout.tsx's pattern exactly: server component fetches
 // the session and hands a server action down to the client shell, which
@@ -28,7 +29,7 @@ export default async function AgentLayout({ children }: { children: React.ReactN
       role={session?.user.role}
       signOutAction={signOutAction}
     >
-      {children}
+      <CrmCallLayer>{children}</CrmCallLayer>
     </AgentShell>
   );
 }

@@ -3,11 +3,16 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useSIP } from "@/contexts/sip-context";
+import { useCrmCallContext } from "@/components/crm/crm-call-context";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 
 export function Dialpad() {
   const { makeCall, sendDtmf, callState, dialError, hangupCall } = useSIP();
+  // Node W (W2): lift the dialled number into CrmCallContext so an OUTBOUND
+  // call carries CRM identity for the call popover and post-call
+  // disposition prompt. Surgical — the only change this node makes here.
+  const { setCallIdentity } = useCrmCallContext();
   const [digits, setDigits] = useState("");
 
   // Keypress behavior is mode-dependent:
@@ -28,6 +33,7 @@ export function Dialpad() {
 
   const onCall = () => {
     if (!digits) return;
+    setCallIdentity({ number: digits });
     makeCall(digits);
   };
 
