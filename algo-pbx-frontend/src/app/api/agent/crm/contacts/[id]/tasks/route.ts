@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
+import { recordActivity } from "@/lib/crm/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       dueAt: parsed.data.dueAt,
     },
     include: { assignee: { select: { id: true, name: true } } },
+  });
+
+  await recordActivity({
+    type: "TASK",
+    summary: `Task: ${parsed.data.title.slice(0, 140)}`,
+    refId: task.id,
+    contactId: contact.id,
+    actorId: guard.session.user.id,
   });
 
   return NextResponse.json({ task }, { status: 201 });

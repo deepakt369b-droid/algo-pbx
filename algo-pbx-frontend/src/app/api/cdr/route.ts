@@ -6,6 +6,7 @@ import { requireStaffSession } from "@/lib/auth-guard";
 import { emitEvent } from "@/lib/emit-event";
 import { withApiErrorHandler } from "@/lib/api-handler";
 import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
+import { recordActivity } from "@/lib/crm/activity";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
 export const dynamic = "force-dynamic";
@@ -165,6 +166,38 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   // (outbound) — whichever side is the actual customer varies by
   // direction, and this is best-effort matching either way, same as
   // resolveContactDisplayName's normalize-then-lookup approach.
+  {
+    const candidateE164 = callerNumberE164 ?? normalizeToE164(parsed.data.destination);
+    if (candidateE164) {
+      const contact = await db.contact.findUnique({ where: { numberE164: candidateE164 } });
+      // Unified CRM timeline (S2) — one CALL activity per CDR, idempotent on
+      // uniqueId. Written for every call with a matching contact, not just
+      // answered ones (a missed call is timeline-worthy too).
+      if (contact) {
+        const ext = parsed.data.agentExtension
+          ? await db.extension.findUnique({
+              where: { number: parsed.data.agentExtension },
+              select: { userId: true },
+            })
+          : null;
+        const verb =
+          parsed.data.disposition === "ANSWERED"
+            ? parsed.data.direction === "inbound"
+              ? "Inbound call"
+              : "Outbound call"
+            : `Call ${parsed.data.disposition.toLowerCase()}`;
+        await recordActivity({
+          type: "CALL",
+          summary: `${verb}${row.durationSec ? ` · ${row.durationSec}s` : ""}`,
+          refId: row.uniqueId,
+          occurredAt: row.startedAt,
+          contactId: contact.id,
+          actorId: ext?.userId ?? null,
+        });
+      }
+    }
+  }
+
   if (parsed.data.disposition === "ANSWERED" && parsed.data.agentExtension) {
     const candidateE164 = callerNumberE164 ?? normalizeToE164(parsed.data.destination);
     if (candidateE164) {

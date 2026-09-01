@@ -45,15 +45,15 @@ enum Role {
 }
 
 model User {
-  id                String            @id @default(cuid())
-  email             String            @unique
+  id                             String                   @id @default(cuid())
+  email                          String                   @unique
   // Nullable now: an admin-created user starts with NO password at all
   // (Workstream D) — Invite.tokenHash is the only way to set one, once,
   // via the Resend-delivered link. A row with passwordHash null AND no
   // pending unconsumed Invite is an account that was created but never
   // completed onboarding; the login path (src/auth.ts) must treat null
   // the same as "credentials can never match", not as an open door.
-  passwordHash      String?
+  passwordHash                   String?
   // Owner override (2026-08-29): the operator wants agent passwords
   // readable from the admin panel to recover locked-out agents without a
   // reset round-trip. Kept in sync with passwordHash at every write site
@@ -61,7 +61,7 @@ model User {
   // reset). Returned by GET /api/admin/users for ADMIN sessions only.
   // This deliberately breaks the original "an admin never learns the
   // agent's password" property — see memory owner-overrides-security-model.
-  passwordPlain     String?
+  passwordPlain                  String?
   // Loop C3 — set on every successful password change (self-service
   // reset via WhatsApp OTP, or an admin-triggered reset-link consumption
   // — NOT on initial invite consumption, since there's no prior session
@@ -69,80 +69,80 @@ model User {
   // against the JWT's own issued-at time, same live-recompute pattern
   // already used for `disabled` — so a reset kills every other
   // outstanding session on its very next request, not just future logins.
-  passwordChangedAt DateTime?
-  name              String
-  role              Role              @default(AGENT)
+  passwordChangedAt              DateTime?
+  name                           String
+  role                           Role                     @default(AGENT)
   // Revocation for a terminated/compromised account. auth.config.ts's jwt
   // callback checks this on every request (not just at sign-in) so a
   // revoked account's existing JWT stops working immediately rather than
   // staying valid for up to the session's 30-day default lifetime — see
   // that file's comment for why a DB check inside the JWT callback is an
   // accepted latency/security tradeoff here.
-  disabled          Boolean           @default(false)
-  disabledAt        DateTime?
+  disabled                       Boolean                  @default(false)
+  disabledAt                     DateTime?
   // --- Agent registration (post-invite profile completion) ---
   // Normalized via src/lib/phone-normalize.ts's normalizeToE164() before
   // storage, same convention as Contact.numberE164 and
   // DoNotCallEntry.numberE164. Nullable-unique is correct Postgres
   // behavior here: many NULLs are allowed (most rows, before an agent
   // registers) while no two real numbers may collide.
-  phoneE164             String?   @unique
-  phoneVerifiedAt        DateTime?
+  phoneE164                      String?                  @unique
+  phoneVerifiedAt                DateTime?
   // NULL = the agent verified it themselves via OTP (Firebase or the
   // WhatsApp fallback). Set = an admin overrode verification (their user
   // id). Kept distinguishable deliberately — an override is a weaker
   // claim than a real OTP round-trip, and an auditor should be able to
   // tell the two apart at a glance rather than inferring it from
   // AuditLog metadata.
-  phoneVerifiedByAdminId String?
-  phoneVerifiedByAdmin   User?     @relation("PhoneVerifiedByAdmin", fields: [phoneVerifiedByAdminId], references: [id])
-  phoneVerifiedOverrides User[]    @relation("PhoneVerifiedByAdmin")
-  address                String?
-  photoPath              String?
+  phoneVerifiedByAdminId         String?
+  phoneVerifiedByAdmin           User?                    @relation("PhoneVerifiedByAdmin", fields: [phoneVerifiedByAdminId], references: [id])
+  phoneVerifiedOverrides         User[]                   @relation("PhoneVerifiedByAdmin")
+  address                        String?
+  photoPath                      String?
   // Set only once the registration form (name/address/phone/photo) AND
   // phone verification both succeed — see src/middleware.ts and
   // GET /api/me/sip-credentials, the two places that actually gate an
   // agent's access on this being non-null.
-  profileCompletedAt     DateTime?
+  profileCompletedAt             DateTime?
   // Per-admin "last viewed the sign-in feed" marker — powers the unread
   // badge on /admin/sign-ins without a separate read-state table.
-  signInFeedSeenAt       DateTime?
+  signInFeedSeenAt               DateTime?
   // Same read-state-marker pattern as signInFeedSeenAt above, but for an
   // agent's own missed-call list (GET /api/me/missed-calls) — no new
   // table needed since CallDetailRecord.agentExtension/disposition
   // already carry everything the list needs; this is just "have they
   // looked" for badge purposes.
-  missedCallsSeenAt      DateTime?
+  missedCallsSeenAt              DateTime?
   // Same read-state-marker pattern as missedCallsSeenAt above, but for an
   // agent's own voicemail inbox (GET /api/voicemail) — voicemail itself
   // stays filesystem-only (see src/lib/voicemail-spool.ts), this is just
   // "have they looked" for badge purposes, keyed off each message's
   // origtime rather than a per-message read table.
-  voicemailSeenAt        DateTime?
-  extension         Extension?
-  doNotCallEntries  DoNotCallEntry[]
-  hiddenRecordings  Recording[]
-  escalationAttempts EscalationAttempt[]
-  auditLogs         AuditLog[]
-  invitesCreated    Invite[]          @relation("InviteCreatedBy")
-  invite            Invite?
-  waInstancesPaired WaInstance[]
+  voicemailSeenAt                DateTime?
+  extension                      Extension?
+  doNotCallEntries               DoNotCallEntry[]
+  hiddenRecordings               Recording[]
+  escalationAttempts             EscalationAttempt[]
+  auditLogs                      AuditLog[]
+  invitesCreated                 Invite[]                 @relation("InviteCreatedBy")
+  invite                         Invite?
+  waInstancesPaired              WaInstance[]
   // The single SIM port / WhatsApp identity this agent owns (one agent per
   // port, see WaInstance.assignedUserId). Nullable — an agent may exist
   // with no port assigned when all four are already taken.
-  waInstance        WaInstance? @relation("WaInstanceAssignedUser")
-  assignedConversations Conversation[]
-  smsAccessRequestsMade     SmsAccessRequest[] @relation("SmsAccessRequestedBy")
-  smsAccessRequestsDecided  SmsAccessRequest[] @relation("SmsAccessDecidedBy")
-  loginAttempts     LoginAttempt[]
-  otpChallenges     OtpChallenge[]
-  trustedDevices    TrustedDevice[]
+  waInstance                     WaInstance?              @relation("WaInstanceAssignedUser")
+  assignedConversations          Conversation[]
+  smsAccessRequestsMade          SmsAccessRequest[]       @relation("SmsAccessRequestedBy")
+  smsAccessRequestsDecided       SmsAccessRequest[]       @relation("SmsAccessDecidedBy")
+  loginAttempts                  LoginAttempt[]
+  otpChallenges                  OtpChallenge[]
+  trustedDevices                 TrustedDevice[]
   // P2 CRM data layer (2026-08-31) — see Contact/ContactNote/ContactTask/
   // CallDisposition for the forward side of each of these.
-  ownedContacts     Contact[]         @relation("ContactOwner")
-  contactNotes      ContactNote[]     @relation("ContactNoteAuthor")
-  contactTasks      ContactTask[]     @relation("ContactTaskAssignee")
-  callDispositions  CallDisposition[] @relation("CallDispositionAgent")
+  ownedContacts                  Contact[]                @relation("ContactOwner")
+  contactNotes                   ContactNote[]            @relation("ContactNoteAuthor")
+  contactTasks                   ContactTask[]            @relation("ContactTaskAssignee")
+  callDispositions               CallDisposition[]        @relation("CallDispositionAgent")
   // Feature B3 (2026-08-31) — one-contact-one-owner conflict resolution.
   // Three distinct roles a User can play against the same request row, so
   // three separately-named relations (Prisma requires each ambiguous
@@ -151,8 +151,17 @@ model User {
   contactTransferRequestsMade    ContactTransferRequest[] @relation("ContactTransferRequestedBy")
   contactTransferRequestsOwned   ContactTransferRequest[] @relation("ContactTransferCurrentOwner")
   contactTransferRequestsDecided ContactTransferRequest[] @relation("ContactTransferDecidedBy")
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  // Full CRM — pipeline + companies + unified timeline (S2, 2026-09-01).
+  ownedCompanies                 Company[]                @relation("CompanyOwner")
+  ownedDeals                     Deal[]                   @relation("DealOwner")
+  dealNotes                      DealNote[]               @relation("DealNoteAuthor")
+  activities                     Activity[]               @relation("ActivityActor")
+  // "light" | "dark" | "system"; NULL = system. Persisted per user so the
+  // theme survives a device change; the client still writes localStorage
+  // first for the no-flash script.
+  themePreference                String?
+  createdAt                      DateTime                 @default(now())
+  updatedAt                      DateTime                 @updatedAt
 
   @@index([disabled])
   @@index([profileCompletedAt])
@@ -274,13 +283,13 @@ model Invite {
 }
 
 model Extension {
-  id          String   @id @default(cuid())
-  number      String   @unique // e.g. "1001" — matches the PJSIP endpoint id generated into pjsip_dynamic.conf
-  kind        String   @default("webrtc") // "webrtc" | "hardware"
-  user        User?    @relation(fields: [userId], references: [id])
-  userId      String?  @unique
-  status      AgentStatus @default(OFFLINE)
-  lastSeenAt  DateTime?
+  id             String         @id @default(cuid())
+  number         String         @unique // e.g. "1001" — matches the PJSIP endpoint id generated into pjsip_dynamic.conf
+  kind           String         @default("webrtc") // "webrtc" | "hardware"
+  user           User?          @relation(fields: [userId], references: [id])
+  userId         String?        @unique
+  status         AgentStatus    @default(OFFLINE)
+  lastSeenAt     DateTime?
   // The PJSIP digest-auth secret for this endpoint — deliberately NOT the
   // same value as User.passwordHash. passwordHash is a one-way bcrypt hash
   // (correct for a web login, useless for Asterisk's SIP digest auth, which
@@ -290,44 +299,44 @@ model Extension {
   // /api/me/sip-credentials) or staff provisioning it. Not encrypted at
   // rest yet — flagged as a gap in LLM.md, same tier of risk as any other
   // plaintext service-account secret in this schema today.
-  sipSecret   String?
+  sipSecret      String?
   // Numeric PIN for VoicemailMain() access (Phase E) — a separate secret
   // from both sipSecret (SIP digest auth) and User.passwordHash (web
   // login). Generated server-side alongside sipSecret, same one-time-
   // disclosure treatment via GET /api/me/sip-credentials.
-  voicemailPin String?
+  voicemailPin   String?
   // Loop C2 — which of the three chained outbound dialplan contexts
   // (from-agent-local/-national/-international in extensions.conf) this
   // endpoint's generated PJSIP stanza points `context=` at. See
   // DialPermission's own comment for why this exists. Defaults to the
   // most restrictive tier.
   dialPermission DialPermission @default(LOCAL)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 }
 
 model Queue {
-  id          String   @id @default(cuid())
-  name        String   @unique // e.g. "support_queue" — matches extensions.conf
-  strategy    String   @default("ringall") // "ringall" | "leastrecent" | "roundrobin"
-  members     QueueMember[]
-  createdAt   DateTime @default(now())
+  id        String        @id @default(cuid())
+  name      String        @unique // e.g. "support_queue" — matches extensions.conf
+  strategy  String        @default("ringall") // "ringall" | "leastrecent" | "roundrobin"
+  members   QueueMember[]
+  createdAt DateTime      @default(now())
 }
 
 model QueueMember {
-  id        String   @id @default(cuid())
-  queue     Queue    @relation(fields: [queueId], references: [id])
+  id        String @id @default(cuid())
+  queue     Queue  @relation(fields: [queueId], references: [id])
   queueId   String
   extension String
-  penalty   Int      @default(0)
+  penalty   Int    @default(0)
 
   @@unique([queueId, extension])
 }
 
 model CallDetailRecord {
-  id           String   @id @default(cuid())
-  uniqueId     String   @unique // Asterisk's linkedid/uniqueid for the call
-  callerNumber String
+  id               String      @id @default(cuid())
+  uniqueId         String      @unique // Asterisk's linkedid/uniqueid for the call
+  callerNumber     String
   // Normalized E.164 form of callerNumber (P2, 2026-08-31), backfilled and
   // indexed — what makes caller-ID -> contact matching correct and O(1)
   // instead of api/crm/contacts/[id]/activity's pre-existing approach of
@@ -337,19 +346,19 @@ model CallDetailRecord {
   // Nullable because normalizeToE164() can genuinely fail on a malformed
   // legacy row — never silently coerced to "".
   callerNumberE164 String?
-  destination  String
-  direction    String   // "inbound" | "outbound" | "internal"
-  disposition  String   // "ANSWERED" | "NO ANSWER" | "BUSY" | "FAILED"
-  startedAt    DateTime
-  answeredAt   DateTime?
-  endedAt      DateTime?
-  durationSec  Int      @default(0)
-  billsecSec   Int      @default(0)
-  recordingUrl String? // kept for backward compat; Recording is the source of truth going forward (Phase D)
-  queueName    String?
-  agentExtension String?
-  createdAt    DateTime @default(now())
-  recordings   Recording[]
+  destination      String
+  direction        String // "inbound" | "outbound" | "internal"
+  disposition      String // "ANSWERED" | "NO ANSWER" | "BUSY" | "FAILED"
+  startedAt        DateTime
+  answeredAt       DateTime?
+  endedAt          DateTime?
+  durationSec      Int         @default(0)
+  billsecSec       Int         @default(0)
+  recordingUrl     String? // kept for backward compat; Recording is the source of truth going forward (Phase D)
+  queueName        String?
+  agentExtension   String?
+  createdAt        DateTime    @default(now())
+  recordings       Recording[]
 
   @@index([startedAt])
   @@index([agentExtension])
@@ -398,10 +407,10 @@ model DoNotCallEntry {
 // hidden recording must be unreachable by direct URL, not merely absent
 // from a list.
 model Recording {
-  id                String    @id @default(cuid())
+  id                String           @id @default(cuid())
   cdrId             String
   cdr               CallDetailRecord @relation(fields: [cdrId], references: [id])
-  filePath          String    // relative to RECORDINGS_DIR, e.g. "<uniqueId>.wav"
+  filePath          String // relative to RECORDINGS_DIR, e.g. "<uniqueId>.wav"
   fileSizeBytes     Int?
   // Agent-side "hide" only — never a delete. Staff/admin still see and can
   // stream the recording regardless of this field; only an agent's own
@@ -409,8 +418,8 @@ model Recording {
   // is an AGENT) respects it.
   hiddenFromAgentAt DateTime?
   hiddenByUserId    String?
-  hiddenByUser      User?     @relation(fields: [hiddenByUserId], references: [id])
-  createdAt         DateTime  @default(now())
+  hiddenByUser      User?            @relation(fields: [hiddenByUserId], references: [id])
+  createdAt         DateTime         @default(now())
 
   @@index([cdrId])
 }
@@ -425,7 +434,7 @@ model Recording {
 // need a migration.
 model AuditLog {
   id        String   @id @default(cuid())
-  action    String   // e.g. "recording.hide" | "recording.hard_delete" | "intervention.barge" | "sms_access.approve"
+  action    String // e.g. "recording.hide" | "recording.hard_delete" | "intervention.barge" | "sms_access.approve"
   actorId   String
   actor     User     @relation(fields: [actorId], references: [id])
   targetId  String?
@@ -448,15 +457,15 @@ model AuditLog {
 // sample stream for a call that never got a CDR (e.g. a failed AMI ingest)
 // should still be retained for diagnosis rather than being rejected.
 model CallQualitySample {
-  id                String   @id @default(cuid())
-  callId            String   // SIP Call-ID / uniqueId correlation key, not an FK — see comment above
-  extension         String?  // the agent extension this sample was captured on, for MCP/troubleshooting queries
-  jitterMs          Float?
-  packetsLost       Int?
-  packetsReceived   Int?
-  roundTripTimeMs   Float?
+  id                  String   @id @default(cuid())
+  callId              String // SIP Call-ID / uniqueId correlation key, not an FK — see comment above
+  extension           String? // the agent extension this sample was captured on, for MCP/troubleshooting queries
+  jitterMs            Float?
+  packetsLost         Int?
+  packetsReceived     Int?
+  roundTripTimeMs     Float?
   jitterBufferDelayMs Float?
-  mosEstimate       Float?
+  mosEstimate         Float?
   // Added 2026-08-29: extractCallQuality() previously read ONLY
   // inbound-rtp/candidate-pair, so there was no record of the agent's OWN
   // outgoing audio — "is the mic actually producing sound" could only be
@@ -465,10 +474,10 @@ model CallQualitySample {
   // sender's `media-source` stats (the local mic, before encoding) so they
   // reflect what the mic itself is producing independent of whether the
   // network ever delivers it.
-  packetsSent       Int?
-  audioLevel        Float?
-  totalAudioEnergy  Float?
-  createdAt         DateTime @default(now())
+  packetsSent         Int?
+  audioLevel          Float?
+  totalAudioEnergy    Float?
+  createdAt           DateTime @default(now())
 
   @@index([callId])
   @@index([createdAt])
@@ -491,7 +500,7 @@ enum EscalationOutcome {
 }
 
 model EscalationTarget {
-  id          String   @id @default(cuid())
+  id          String              @id @default(cuid())
   name        String
   // At least one of extension/phoneE164 is required (enforced in the API
   // route, not the schema — Prisma has no CHECK-constraint DSL) since a
@@ -499,9 +508,9 @@ model EscalationTarget {
   // only via the Dinstar trunk, or both.
   extension   String?
   phoneE164   String?
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  active      Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
   createdById String?
   attempts    EscalationAttempt[]
 }
@@ -515,9 +524,9 @@ model EscalationAttempt {
   // history — the attempt still happened even if the target is later
   // removed. denormalized `targetName` below preserves who it was for
   // display once the relation itself is gone.
-  targetId    String?
-  target      EscalationTarget? @relation(fields: [targetId], references: [id], onDelete: SetNull)
-  targetName  String
+  targetId   String?
+  target     EscalationTarget? @relation(fields: [targetId], references: [id], onDelete: SetNull)
+  targetName String
   outcome    EscalationOutcome @default(UNKNOWN)
   // Whether the WhatsApp busy/no-answer ping to the manager was actually
   // sent — distinct from `outcome`, since the transfer itself succeeding
@@ -577,12 +586,12 @@ enum WaInstanceStatus {
 // rendered and no route that would accept one if forged, per the
 // requirement that only an admin can log an agent's WhatsApp session out.
 model WaInstance {
-  id            String            @id @default(cuid())
-  label         String            @unique // e.g. "SIM 1 — +971 5X XXX XXXX"
-  simPort       Int               @unique // 1-4, the Dinstar UC2000 port this identity was paired via OTP on
-  phoneE164     String?           // populated once pairing completes
-  provider      MessageProviderKind @default(OPENWA)
-  status        WaInstanceStatus  @default(DISCONNECTED)
+  id        String              @id @default(cuid())
+  label     String              @unique // e.g. "SIM 1 — +971 5X XXX XXXX"
+  simPort   Int                 @unique // 1-4, the Dinstar UC2000 port this identity was paired via OTP on
+  phoneE164 String? // populated once pairing completes
+  provider  MessageProviderKind @default(OPENWA)
+  status    WaInstanceStatus    @default(DISCONNECTED)
 
   // --- OpenWA session binding ---------------------------------------------
   /// The OpenWA session `name` we created (alphanumeric + hyphens, 3-50),
@@ -592,36 +601,36 @@ model WaInstance {
   sessionName         String?   @unique
   /// The id OpenWA itself assigned to the session. Every /api/sessions/{id}/*
   /// call uses THIS, not WaInstance.id.
-  openwaSessionId      String?   @unique
+  openwaSessionId     String?   @unique
   /// Raw upstream OpenWaSessionStatus, kept alongside the coarser `status`
   /// above for admin debugging (see openwa-types.ts's toWaInstanceStatus()).
-  providerStatusRaw    String?
-  pushName             String?
-  lastError            String?
-  lastStatusAt         DateTime?
+  providerStatusRaw   String?
+  pushName            String?
+  lastError           String?
+  lastStatusAt        DateTime?
   /// data:image/png;base64 QR, cached so a page reload mid-pairing doesn't
   /// lose it. Cleared on ready/logout. Never selected by any agent-reachable
   /// route.
-  lastQrCode           String?   @db.Text
-  lastQrAt             DateTime?
-  pairingCode          String?
-  pairingCodeAt        DateTime?
-  webhookRegisteredAt  DateTime?
+  lastQrCode          String?   @db.Text
+  lastQrAt            DateTime?
+  pairingCode         String?
+  pairingCodeAt       DateTime?
+  webhookRegisteredAt DateTime?
   // -------------------------------------------------------------------------
 
   pairedByAdminId String?
-  pairedByAdmin User?             @relation(fields: [pairedByAdminId], references: [id])
+  pairedByAdmin   User?          @relation(fields: [pairedByAdminId], references: [id])
   // One agent per SIM port (the Dinstar hardware ceiling is 4, so this is
   // also the ceiling on how many agents can hold a WhatsApp-enabled seat).
   // Provisioning happens at user-creation time (src/app/api/admin/users) —
   // this is ownership, distinct from pairedByAdminId above, which is only
   // an audit stamp of who ran the pairing flow.
-  assignedUserId String? @unique
-  assignedUser   User?   @relation("WaInstanceAssignedUser", fields: [assignedUserId], references: [id])
+  assignedUserId  String?        @unique
+  assignedUser    User?          @relation("WaInstanceAssignedUser", fields: [assignedUserId], references: [id])
   lastConnectedAt DateTime?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  conversations Conversation[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  conversations   Conversation[]
 }
 
 // Idempotency ledger for OpenWA's inbound webhook deliveries
@@ -644,27 +653,37 @@ model InboundWebhookDelivery {
 // E.164 *without* the leading '+' — the inbound webhook handler must
 // prefix it before calling normalizeToE164().
 model Contact {
-  id            String         @id @default(cuid())
-  numberE164    String         @unique
-  displayName   String?
+  id               String                   @id @default(cuid())
+  numberE164       String                   @unique
+  displayName      String?
   // CRM fields (P2, 2026-08-31) — additive to the pre-existing bare
   // {id, numberE164, displayName} shape. `dncBlocked` is deliberately NOT
   // a column here: it is derived at read time from DoNotCallEntry so
   // there is exactly one source of truth for "is this number blocked",
   // matching the DNC check's existing design rather than risking the two
   // drifting apart.
-  email         String?
-  company       String?
-  tags          String[]       @default([])
-  ownerId       String?
-  owner         User?          @relation("ContactOwner", fields: [ownerId], references: [id])
-  notes         ContactNote[]
-  tasks         ContactTask[]
-  dispositions  CallDisposition[]
-  conversations Conversation[]
+  email            String?
+  // Free-text company name kept for import back-compat (bulk-import writes
+  // it directly). `companyRel` (S2, 2026-09-01) is the structured link; a
+  // one-time backfill matches obvious names, the rest stay string-only.
+  company          String?
+  companyId        String?
+  companyRel       Company?                 @relation("CompanyContacts", fields: [companyId], references: [id])
+  tags             String[]                 @default([])
+  ownerId          String?
+  owner            User?                    @relation("ContactOwner", fields: [ownerId], references: [id])
+  notes            ContactNote[]
+  tasks            ContactTask[]
+  dispositions     CallDisposition[]
+  conversations    Conversation[]
   transferRequests ContactTransferRequest[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  deals            DealContact[]
+  activities       Activity[]
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([companyId])
+  @@index([ownerId])
 }
 
 enum ContactTransferRequestStatus {
@@ -683,18 +702,18 @@ enum ContactTransferRequestStatus {
 // after this row is created, and the request's own history should still
 // read correctly once that's happened.
 model ContactTransferRequest {
-  id              String                        @id @default(cuid())
-  contactId       String
-  contact         Contact                       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  requestedById   String
-  requestedBy     User                          @relation("ContactTransferRequestedBy", fields: [requestedById], references: [id])
-  currentOwnerId  String
-  currentOwner    User                          @relation("ContactTransferCurrentOwner", fields: [currentOwnerId], references: [id])
-  status          ContactTransferRequestStatus  @default(PENDING)
-  decidedById     String?
-  decidedBy       User?                         @relation("ContactTransferDecidedBy", fields: [decidedById], references: [id])
-  decidedAt       DateTime?
-  createdAt       DateTime                      @default(now())
+  id             String                       @id @default(cuid())
+  contactId      String
+  contact        Contact                      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  requestedById  String
+  requestedBy    User                         @relation("ContactTransferRequestedBy", fields: [requestedById], references: [id])
+  currentOwnerId String
+  currentOwner   User                         @relation("ContactTransferCurrentOwner", fields: [currentOwnerId], references: [id])
+  status         ContactTransferRequestStatus @default(PENDING)
+  decidedById    String?
+  decidedBy      User?                        @relation("ContactTransferDecidedBy", fields: [decidedById], references: [id])
+  decidedAt      DateTime?
+  createdAt      DateTime                     @default(now())
 
   @@index([status])
   @@index([contactId])
@@ -723,6 +742,10 @@ model ContactTask {
   contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   assigneeId  String
   assignee    User      @relation("ContactTaskAssignee", fields: [assigneeId], references: [id])
+  // Optional deal scope (S2, 2026-09-01) — a task can belong to a pipeline
+  // deal as well as its contact. Nullable keeps every existing row valid.
+  dealId      String?
+  deal        Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
   title       String
   dueAt       DateTime?
   completedAt DateTime?
@@ -730,6 +753,7 @@ model ContactTask {
 
   @@index([contactId])
   @@index([assigneeId])
+  @@index([dealId])
 }
 
 enum CallDispositionOutcome {
@@ -744,17 +768,139 @@ enum CallDispositionOutcome {
 // compliance side effect, so it cannot be allowed to record a DNC
 // disposition without the blocklist entry actually landing.
 model CallDisposition {
-  id          String                  @id @default(cuid())
+  id          String                 @id @default(cuid())
   contactId   String
-  contact     Contact                 @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact     Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
   cdrUniqueId String?
   outcome     CallDispositionOutcome
   note        String?
   agentId     String
-  agent       User                    @relation("CallDispositionAgent", fields: [agentId], references: [id])
-  createdAt   DateTime                @default(now())
+  agent       User                   @relation("CallDispositionAgent", fields: [agentId], references: [id])
+  createdAt   DateTime               @default(now())
 
   @@index([contactId])
+}
+
+// ===========================================================================
+// Full CRM — companies, pipeline, unified activity timeline (S2, 2026-09-01).
+// Feature-forked from marmelab/atomic-crm onto our Prisma/Postgres stack
+// (NOT Supabase). Additive to the P2 CRM data layer above.
+// ===========================================================================
+
+model Company {
+  id        String    @id @default(cuid())
+  name      String
+  domain    String?
+  phone     String?
+  address   String?
+  ownerId   String?
+  owner     User?     @relation("CompanyOwner", fields: [ownerId], references: [id])
+  contacts  Contact[] @relation("CompanyContacts")
+  deals     Deal[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([ownerId])
+  @@index([name])
+}
+
+// DB-driven so the operator can re-order / rename stages without a deploy.
+// Seeded in the migration: Lead, Qualified, Proposal, Negotiation, Won, Lost.
+model PipelineStage {
+  id        String  @id @default(cuid())
+  name      String
+  sortOrder Int
+  isWon     Boolean @default(false)
+  isLost    Boolean @default(false)
+  color     String? // a token name, e.g. "accent" | "success" | "danger"
+  deals     Deal[]
+
+  @@index([sortOrder])
+}
+
+model Deal {
+  id              String        @id @default(cuid())
+  name            String
+  companyId       String?
+  company         Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  stageId         String
+  stage           PipelineStage @relation(fields: [stageId], references: [id])
+  value           Decimal       @default(0) @db.Decimal(14, 2)
+  currency        String        @default("AED")
+  ownerId         String
+  owner           User          @relation("DealOwner", fields: [ownerId], references: [id])
+  expectedCloseAt DateTime?
+  closedAt        DateTime?
+  contacts        DealContact[]
+  notes           DealNote[]
+  tasks           ContactTask[]
+  activities      Activity[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([stageId])
+  @@index([ownerId])
+  @@index([companyId])
+}
+
+// Deal <-> Contact is many-to-many (atomic-crm's shape) — one deal can
+// involve several people at a company.
+model DealContact {
+  dealId    String
+  deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  isPrimary Boolean @default(false)
+
+  @@id([dealId, contactId])
+  @@index([contactId])
+}
+
+model DealNote {
+  id        String   @id @default(cuid())
+  dealId    String
+  deal      Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("DealNoteAuthor", fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([dealId])
+}
+
+enum ActivityType {
+  CALL
+  WHATSAPP
+  SMS
+  NOTE
+  DEAL_STAGE_CHANGE
+  TASK
+}
+
+// The unified timeline. One row per real-world event, written at the same
+// hooks that already exist (CDR ingest, message send/ingest, note/task/
+// disposition create, deal stage move) plus a one-time idempotent backfill
+// from historical CallDetailRecord + ChatMessage. `refId` is the source
+// row's natural id (cdr uniqueId / chatMessage id / note id / …) — NOT a
+// FK, so this table stays decoupled from the sources it summarizes and the
+// backfill + live writes are both idempotent via @@unique([type, refId]).
+model Activity {
+  id         String       @id @default(cuid())
+  type       ActivityType
+  contactId  String?
+  contact    Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId     String?
+  deal       Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  summary    String
+  occurredAt DateTime     @default(now())
+  actorId    String?
+  actor      User?        @relation("ActivityActor", fields: [actorId], references: [id])
+  refId      String?
+  createdAt  DateTime     @default(now())
+
+  @@unique([type, refId])
+  @@index([contactId, occurredAt])
+  @@index([dealId, occurredAt])
 }
 
 // A conversation is scoped to (contact, channel) — a contact can have both
@@ -790,23 +936,23 @@ model Conversation {
 // protocol framing (30+ call sites); a distinct name avoids that
 // collision rather than fighting it with import aliases everywhere.
 model ChatMessage {
-  id                String            @id @default(cuid())
-  conversation      Conversation      @relation(fields: [conversationId], references: [id])
+  id                String             @id @default(cuid())
+  conversation      Conversation       @relation(fields: [conversationId], references: [id])
   conversationId    String
   direction         MessageDirection
   body              String?
   mediaUrl          String?
   mediaMimeType     String?
-  providerMessageId String?           // id from OpenWA/Meta/Dinstar, for status-webhook correlation
-  deliveryStatus    String            @default("pending") // "pending" | "sent" | "delivered" | "read" | "failed"
+  providerMessageId String? // id from OpenWA/Meta/Dinstar, for status-webhook correlation
+  deliveryStatus    String             @default("pending") // "pending" | "sent" | "delivered" | "read" | "failed"
   // OTP/verification-code heuristic classification (Workstream E,
   // SIM-SMS-only in practice today — WhatsApp OTPs aren't routed through
   // us). A `sensitive` message is never returned by any agent-facing API
   // response; see src/lib/messaging/sensitive-detect.ts and
   // api/messaging/conversations/[id]/messages/route.ts's filter.
-  sensitive         Boolean           @default(false)
+  sensitive         Boolean            @default(false)
   accessRequests    SmsAccessRequest[]
-  createdAt         DateTime          @default(now())
+  createdAt         DateTime           @default(now())
 
   @@index([conversationId, createdAt])
   @@index([providerMessageId])
@@ -822,7 +968,7 @@ model ChatMessage {
 model Room {
   id            String   @id @default(cuid())
   name          String   @unique
-  memberUserIds Json     // string[] of User.id
+  memberUserIds Json // string[] of User.id
   createdById   String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -841,17 +987,17 @@ enum SmsAccessRequestStatus {
 // mirrored into AuditLog so there is a durable record of who saw what OTP
 // and when, independent of this table's own current-state row.
 model SmsAccessRequest {
-  id            String                  @id @default(cuid())
-  message       ChatMessage             @relation(fields: [messageId], references: [id])
+  id            String                 @id @default(cuid())
+  message       ChatMessage            @relation(fields: [messageId], references: [id])
   messageId     String
-  requestedBy   User                    @relation("SmsAccessRequestedBy", fields: [requestedById], references: [id])
+  requestedBy   User                   @relation("SmsAccessRequestedBy", fields: [requestedById], references: [id])
   requestedById String
-  status        SmsAccessRequestStatus  @default(PENDING)
-  decidedBy     User?                   @relation("SmsAccessDecidedBy", fields: [decidedById], references: [id])
+  status        SmsAccessRequestStatus @default(PENDING)
+  decidedBy     User?                  @relation("SmsAccessDecidedBy", fields: [decidedById], references: [id])
   decidedById   String?
   decidedAt     DateTime?
   expiresAt     DateTime?
-  createdAt     DateTime                @default(now())
+  createdAt     DateTime               @default(now())
 
   @@index([status])
   @@index([requestedById])

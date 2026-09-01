@@ -10,6 +10,7 @@ import {
 } from "@/lib/messaging/conversation-access";
 import { getProvider } from "@/lib/messaging/registry";
 import { emitEvent } from "@/lib/emit-event";
+import { recordActivity, truncateBody } from "@/lib/crm/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -136,6 +137,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       deliveryStatus: result.status,
       sensitive: false,
     },
+  });
+
+  // Unified CRM timeline (S2) — one activity per outbound message, keyed on
+  // the ChatMessage id so it is idempotent.
+  await recordActivity({
+    type: conversation.channel === "SMS" ? "SMS" : "WHATSAPP",
+    summary: `Sent: ${truncateBody(parsed.data.text, "(message)")}`,
+    refId: message.id,
+    occurredAt: message.createdAt,
+    contactId: conversation.contactId,
+    actorId: userId,
   });
 
   // Claim an unassigned conversation on first send — see file header.

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
+import { recordActivity, truncateBody } from "@/lib/crm/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const note = await db.contactNote.create({
     data: { contactId: contact.id, authorId: guard.session.user.id, body: parsed.data.body },
     include: { author: { select: { id: true, name: true } } },
+  });
+
+  await recordActivity({
+    type: "NOTE",
+    summary: `Note: ${truncateBody(parsed.data.body)}`,
+    refId: note.id,
+    contactId: contact.id,
+    actorId: guard.session.user.id,
   });
 
   return NextResponse.json({ note }, { status: 201 });

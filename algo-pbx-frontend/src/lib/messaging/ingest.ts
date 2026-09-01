@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { emitEvent } from "@/lib/emit-event";
 import { isSensitiveSms } from "./sensitive-detect";
+import { recordActivity, truncateBody } from "@/lib/crm/activity";
 import type { Channel, NormalizedInboundEvent } from "./types";
 import type { Conversation, Prisma } from "@prisma/client";
 
@@ -84,6 +85,16 @@ export async function ingestInboundEvent(
       deliveryStatus: "delivered",
       sensitive,
     },
+  });
+
+  // Unified CRM timeline (S2). A sensitive body is redacted here too — the
+  // summary must never leak an OTP.
+  await recordActivity({
+    type: channel === "SMS" ? "SMS" : "WHATSAPP",
+    summary: `Received: ${sensitive ? "(sensitive message)" : truncateBody(event.body, "(message)")}`,
+    refId: message.id,
+    occurredAt: message.createdAt,
+    contactId: contact.id,
   });
 
   // Not awaited — a slow/down CRM webhook endpoint must never add latency

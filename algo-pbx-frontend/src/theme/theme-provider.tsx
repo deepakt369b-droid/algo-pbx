@@ -78,6 +78,26 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (isPreference(stored)) setPreferenceState(stored);
     setSystemResolved(systemTheme());
 
+    // Cross-device sync: if the server has a preference and this browser
+    // doesn't, adopt the server's. Best-effort — a signed-out visitor or a
+    // failed fetch just keeps the local value.
+    if (!isPreference(stored)) {
+      fetch("/api/me/preferences", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { themePreference?: string | null } | null) => {
+          if (d && isPreference(d.themePreference ?? null)) {
+            setPreferenceState(d!.themePreference as ThemePreference);
+            applyPreference(d!.themePreference as ThemePreference);
+            try {
+              localStorage.setItem(STORAGE_KEY, d!.themePreference as string);
+            } catch {
+              /* ignore */
+            }
+          }
+        })
+        .catch(() => undefined);
+    }
+
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => setSystemResolved(mq.matches ? "dark" : "light");
     mq.addEventListener("change", onChange);
@@ -92,6 +112,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       /* private mode — in-memory only */
     }
     applyPreference(p);
+    // Fire-and-forget server sync.
+    fetch("/api/me/preferences", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ themePreference: p }),
+    }).catch(() => undefined);
   }, []);
 
   const resolved: ResolvedTheme =
