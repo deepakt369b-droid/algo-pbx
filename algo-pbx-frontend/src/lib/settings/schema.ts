@@ -160,6 +160,15 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
     secret: false,
     validator: z.enum(["basic", "query"]),
   },
+  {
+    key: "DINSTAR_TLS_CERT_PEM",
+    section: "sms_dinstar",
+    label: "Dinstar TLS Certificate (pinned)",
+    help: "The gateway's own self-signed HTTPS certificate, PEM-encoded — pinned so the SMS provider (src/lib/messaging/dinstar-sms-provider.ts) can verify the connection instead of disabling TLS verification. Not a secret (it's a public certificate), but device-specific: re-capture and replace it if the gateway is ever factory-reset or its certificate reissued. Capture with: openssl s_client -connect <DINSTAR_LAN_IP>:443 -servername <DINSTAR_LAN_IP> </dev/null | openssl x509",
+    secret: false,
+    envFallback: "DINSTAR_TLS_CERT_PEM",
+    validator: z.string().includes("BEGIN CERTIFICATE"),
+  },
   // Deliberately SEPARATE from DINSTAR_SMS_USERNAME/PASSWORD above, despite
   // that pair's own label saying "Dinstar Admin Username/Password" — those
   // two authenticate against the DIFFERENT goip_get_status.html SMS/status

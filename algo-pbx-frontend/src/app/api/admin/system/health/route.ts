@@ -1,3 +1,4 @@
+import https from "node:https";
 import { statfs } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -7,6 +8,7 @@ import { encryptSetting, decryptSetting, SettingsEncryptionError } from "@/lib/s
 import { getAmiClient } from "@/lib/ami-client";
 import { statsOverview } from "@/lib/messaging/openwa-client";
 import { basicAuthHeader } from "@/lib/messaging/http";
+import { pinnedAgent } from "@/lib/messaging/dinstar-sms-provider";
 import { classifyFetchError } from "@/lib/dinstar-discovery";
 import { type HealthCheck, overallStatus } from "@/lib/health-check";
 
@@ -17,6 +19,43 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)),
   ]);
+}
+
+/** Both Dinstar checks below used to go through plain fetch() straight to
+ * `http://<ip>/...` — which this device 302-redirects to its own
+ * self-signed https://, so fetch() threw DEPTH_ZERO_SELF_SIGNED_CERT
+ * before either check ever got a real answer (confirmed live 2026-08-31,
+ * LLM.md §28 — this page showed "Failing" on both while the actual
+ * gateway was reachable the whole time). Goes straight to https with the
+ * same pinned certificate src/lib/messaging/dinstar-sms-provider.ts uses,
+ * instead of relying on a redirect hop fetch() can't get past. Returns a
+ * `{cause:{code}}`-shaped Error on connection failure so the existing
+ * classifyFetchError() (written for fetch()'s error shape) still works
+ * unchanged on a node:https error, which reports `.code` flat, not
+ * nested under `.cause`. */
+function pinnedHttpsGet(
+  ip: string,
+  path: string,
+  headers: Record<string, string>,
+  timeoutMs: number
+): Promise<{ status: number; text: string }> {
+  return pinnedAgent().then(
+    (agent) =>
+      new Promise((resolve, reject) => {
+        const host = (/^https?:\/\//.test(ip) ? new URL(ip).hostname : ip).replace(/:\d+$/, "");
+        const req = https.request(
+          { hostname: host, port: 443, path, method: "GET", headers, agent, timeout: timeoutMs },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c: Buffer) => chunks.push(c));
+            res.on("end", () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") }));
+          }
+        );
+        req.on("timeout", () => req.destroy(Object.assign(new Error("TimeoutError"), { name: "TimeoutError" })));
+        req.on("error", (err: NodeJS.ErrnoException) => reject(Object.assign(err, { cause: { code: err.code } })));
+        req.end();
+      })
+  );
 }
 
 // GET /api/admin/system/health — the authenticated, detailed counterpart
@@ -158,16 +197,18 @@ export async function GET() {
           };
         }
         const [username, password] = await Promise.all([getSetting("DINSTAR_SMS_USERNAME"), getSetting("DINSTAR_SMS_PASSWORD")]);
-        const origin = /^https?:\/\//.test(ip) ? ip : `http://${ip}`;
         const res = await withTimeout(
-          fetch(`${new URL(origin).origin}/goip_get_status.html`, {
-            headers: { Authorization: basicAuthHeader(username || "", password || "") },
-            signal: AbortSignal.timeout(8000),
-          }),
+          pinnedHttpsGet(ip, "/goip_get_status.html", { Authorization: basicAuthHeader(username || "", password || "") }, 8000),
           9000
         );
-        if (!res.ok) throw new Error(`Gateway responded ${res.status}`);
-        const body = (await res.json().catch(() => null)) as { status?: Array<{ port?: number; type?: string }> } | null;
+        if (res.status < 200 || res.status >= 300) throw new Error(`Gateway responded ${res.status}`);
+        const body = (() => {
+          try {
+            return JSON.parse(res.text) as { status?: Array<{ port?: number; type?: string }> };
+          } catch {
+            return null;
+          }
+        })();
         const ports = body?.status ?? [];
         const registered = ports.filter((p) => (p.type ?? "").toLowerCase().includes("regist")).length;
         return { id: "dinstar", label: "Dinstar Gateway", status: "ok", detail: `Reachable — ${registered}/${ports.length} SIM ports registered.`, checkedAt: now() };
@@ -207,9 +248,8 @@ export async function GET() {
           checkedAt: now(),
         };
       }
-      const origin = /^https?:\/\//.test(ip) ? new URL(ip).origin : `http://${ip}`;
       try {
-        await withTimeout(fetch(`${origin}/goip_get_status.html`, { signal: AbortSignal.timeout(5000) }), 5500);
+        await withTimeout(pinnedHttpsGet(ip, "/goip_get_status.html", {}, 5000), 5500);
         return { id: "dinstar_route", label: "Dinstar Network Route", status: "ok", detail: `Host at ${ip} responded.`, checkedAt: now() };
       } catch (err) {
         const reason = classifyFetchError(err);

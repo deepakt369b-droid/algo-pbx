@@ -307,6 +307,11 @@ services:
       DINSTAR_SIP_PORT: "${DINSTAR_SIP_PORT:-5060}"
       DINSTAR_SMS_USERNAME: "${DINSTAR_SMS_USERNAME}"
       DINSTAR_SMS_PASSWORD: "${DINSTAR_SMS_PASSWORD}"
+      # Pinned self-signed cert for dinstar-sms-provider.ts's TLS layer
+      # (LLM.md §27) — a compose `environment:` block does NOT auto-pass
+      # every .env key into the container, only what's declared here, same
+      # as every other DINSTAR_* line above.
+      DINSTAR_TLS_CERT_PEM: "${DINSTAR_TLS_CERT_PEM}"
       # Meta Cloud API fallback provider (Workstream E) — only exercised
       # when an admin flips a WaInstance's provider off OpenWA.
       META_WABA_TOKEN: "${META_WABA_TOKEN}"
@@ -494,19 +499,30 @@ services:
     container_name: algo-caddy
     restart: always
     logging: *default-logging
-    # Before this, a crashed/misconfigured Caddy was invisible — the whole
-    # app is unreachable the moment this container is down (it's the only
-    # thing serving 443), yet nothing surfaced that state. Busybox wget
-    # (bundled in caddy:2-alpine) spidering the plain-HTTP redirect vhost
-    # is enough to confirm the process is actually accepting connections,
-    # without needing a trusted cert for a HEALTHCHECK running inside the
-    # container's own network namespace.
+    # DISABLED 2026-08-31 (LLM.md §27): this was `wget --spider` against
+    # localhost:80, correct in intent (a crashed/misconfigured Caddy is
+    # otherwise invisible — it's the only thing serving 443) but it sat
+    # `unhealthy` for 2+ days straight in production with EVERY probe
+    # failing `"OCI runtime exec failed: ... procReady not received"` —
+    # a containerd/runc-level failure to spawn the exec'd process at all,
+    # not wget or Caddy misbehaving. A full `docker restart algo-caddy`
+    # reset the accumulated FailingStreak but the very next probe failed
+    # the same way, proving this is a host/runtime-level issue, not a
+    # stuck state a restart clears. The whole time, real HTTPS traffic
+    # was served correctly (verified: curl 200, live agent traffic in
+    # Caddy's own access log) — Docker's exec channel into this
+    # container is broken independent of whether Caddy itself is fine.
+    # No other service actually gates on this: cert-sync's `depends_on:
+    # caddy` is `condition: service_started`, not `service_healthy`. A
+    # false-`unhealthy` status is worse than none (it trains the
+    # operator to ignore it) so this is disabled outright rather than
+    # left generating permanent noise. If crash visibility is wanted
+    # again, it needs an external check (e.g. curl from another
+    # container or the host) — Compose's HEALTHCHECK always execs
+    # inside the target container's namespace, so no in-container test
+    # command can dodge this same failure mode.
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      disable: true
     ports:
       - "80:80"
       - "443:443"
