@@ -2,7 +2,7 @@ import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
 const base =
-  "w-full rounded-[var(--radius)] border bg-surface px-3 text-sm text-primary placeholder:text-tertiary transition-colors focus-visible:outline-none focus-visible:ring-1 disabled:opacity-40 [border-color:rgb(var(--hairline))]";
+  "w-full rounded-[var(--radius)] border bg-surface px-3 text-sm text-primary placeholder:text-tertiary transition-colors focus-visible:outline-none focus-visible:border-accent focus-visible:ring-2 [--tw-ring-color:rgb(var(--ring))] disabled:opacity-40 [border-color:rgb(var(--hairline))]";
 
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (

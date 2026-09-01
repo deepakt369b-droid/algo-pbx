@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 // Apple-restraint button. One accent, flat, 44px comfortable target.
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius)] text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40 select-none",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 [--tw-ring-color:rgb(var(--ring))] [--tw-ring-offset-color:rgb(var(--canvas))] disabled:pointer-events-none disabled:opacity-40 select-none",
   {
     variants: {
       variant: {

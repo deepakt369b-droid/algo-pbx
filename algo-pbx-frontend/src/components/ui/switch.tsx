@@ -22,7 +22,7 @@ export function Switch({
       onChange={onChange}
       disabled={disabled}
       className={cn(
-        "group relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors focus-visible:outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40",
+        "group relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 [--tw-ring-color:rgb(var(--ring))] [--tw-ring-offset-color:rgb(var(--canvas))] data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40",
         checked ? "bg-accent" : "bg-surface-hover",
         className,
       )}

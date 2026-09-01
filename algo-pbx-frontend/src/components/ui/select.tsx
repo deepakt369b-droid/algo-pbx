@@ -34,7 +34,7 @@ export function Select<T extends string>({
       <div className={cn("relative", className)}>
         <ListboxButton
           aria-label={ariaLabel}
-          className="flex h-10 w-full items-center justify-between gap-2 rounded-[var(--radius)] border bg-surface px-3 text-sm text-primary transition-colors hover:bg-surface-hover focus-visible:outline-none disabled:opacity-40 [border-color:rgb(var(--hairline))]"
+          className="flex h-10 w-full items-center justify-between gap-2 rounded-[var(--radius)] border bg-surface px-3 text-sm text-primary transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 [--tw-ring-color:rgb(var(--ring))] [--tw-ring-offset-color:rgb(var(--canvas))] disabled:opacity-40 [border-color:rgb(var(--hairline))]"
         >
           <span className={cn("truncate", !current && "text-tertiary")}>
             {current?.label ?? placeholder}

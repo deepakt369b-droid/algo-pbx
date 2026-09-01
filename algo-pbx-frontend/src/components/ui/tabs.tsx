@@ -18,7 +18,7 @@ export function Tabs({
           <Tab
             key={t.label}
             className={cn(
-              "-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-secondary transition-colors focus-visible:outline-none",
+              "-mb-px rounded-t-[var(--radius-sm)] border-b-2 border-transparent px-3 py-2 text-sm font-medium text-secondary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset [--tw-ring-color:rgb(var(--ring))]",
               "hover:text-primary data-[selected]:border-accent data-[selected]:text-primary",
             )}
           >
