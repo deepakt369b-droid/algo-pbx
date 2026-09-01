@@ -50,8 +50,24 @@ export async function GET(_request: Request, { params }: { params: { id: string 
     // AMI unreachable — members render without live-call data.
   }
 
+  // A member's WhatsApp queue isn't just conversations formally claimed via
+  // assignedAgentId — the agent's own inbox (GET /api/messaging/conversations)
+  // also shows every unassigned conversation on their WaInstance ("up for
+  // grabs", one agent per SIM port — see WaInstance.assignedUserId). Filtering
+  // this room view on assignedAgentId alone hid that whole queue: a member
+  // with 10 conversations on their line but only 1 formally claimed showed
+  // as "1 conversation" here, understating their actual WhatsApp activity.
+  const memberWaInstanceIds = members.map((m) => m.waInstance?.id).filter((id): id is string => !!id);
+
   const conversations = await db.conversation.findMany({
-    where: { assignedAgentId: { in: memberIds } },
+    where: {
+      OR: [
+        { assignedAgentId: { in: memberIds } },
+        ...(memberWaInstanceIds.length > 0
+          ? [{ waInstanceId: { in: memberWaInstanceIds }, assignedAgentId: null }]
+          : []),
+      ],
+    },
     include: {
       contact: { select: { numberE164: true, displayName: true } },
       messages: { orderBy: { createdAt: "desc" }, take: 3, include: { accessRequests: { where: { requestedById: guard.session.user.id } } } },

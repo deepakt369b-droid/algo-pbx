@@ -130,6 +130,12 @@ export function ChatThread({
 }) {
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [channel, setChannel] = useState<"WHATSAPP" | "SMS">("WHATSAPP");
+  // A 404 here means "not yours to see" (conversation-access.ts's
+  // reassign-hides-it rule) as much as it means transient poll failure —
+  // `if (!res.ok) return` used to swallow both, leaving an agent staring at
+  // a thread that silently never loads with no way to tell why. Matches
+  // MessageComposer's error-state convention in this same directory.
+  const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Clear the previous conversation's messages immediately on switch —
@@ -137,17 +143,23 @@ export function ChatThread({
   // conversation's messages under the other's composer.
   useEffect(() => {
     setMessages([]);
+    setError(null);
   }, [conversationId]);
 
   const load = async () => {
     try {
       const res = await fetch(`/api/messaging/conversations/${conversationId}/messages`, { cache: "no-store" });
-      if (!res.ok) return; // transient poll error: keep last good data on screen
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(data?.error ?? `Couldn't load this conversation (${res.status}).`);
+        return;
+      }
       const data = await res.json();
+      setError(null);
       setMessages(data.messages ?? []);
       if (data.channel) setChannel(data.channel);
     } catch {
-      // keep last good data on transient network errors
+      setError("Network error — retrying…");
     }
   };
 
@@ -201,10 +213,16 @@ export function ChatThread({
       </div>
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+        {/* Loading/empty-vs-error split adapted from chatscope/chat-ui-kit-
+            react's MessageList (a real-vs-withheld distinction this app
+            already needed elsewhere) — an error is not "no messages yet",
+            an agent needs to know the thread failed to load rather than
+            conclude the customer never wrote back. */}
+        {error && <p className="text-xs text-red-400">{error}</p>}
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} onRequestAccess={requestAccess} />
         ))}
-        {messages.length === 0 && <p className="text-xs text-slate-500">No messages yet.</p>}
+        {!error && messages.length === 0 && <p className="text-xs text-slate-500">No messages yet.</p>}
       </div>
       <MessageComposer conversationId={conversationId} channel={channel} onSent={load} />
     </div>

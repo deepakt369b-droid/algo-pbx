@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface DncEntry {
   id: string;
@@ -11,14 +11,150 @@ interface DncEntry {
   addedBy: { name: string } | null;
 }
 
+// Countries worth surfacing by default in the picker — every agent seat is
+// India-based and the GSM trunk is UAE, so those two cover the common case;
+// "Other" reveals a free-text ISO-2 input for anything else
+// libphonenumber-js supports rather than hardcoding all ~245 of them into
+// a dropdown (see src/lib/phone-normalize.ts's DEFAULT_COUNTRY comment).
+const COMMON_COUNTRIES: { code: string; label: string }[] = [
+  { code: "IN", label: "India (IN)" },
+  { code: "AE", label: "UAE (AE)" },
+];
+
+interface PreviewResult {
+  hasHeader: boolean;
+  phoneColumnIndex: number;
+  columns: string[];
+  sampleRows: string[][];
+  total: number;
+  validCount: number;
+  invalidCount: number;
+  duplicatesInFile: number;
+  invalidSample: string[];
+}
+
+interface CommitResult {
+  imported: number;
+  submittedValid: number;
+  alreadyOnList: number;
+  invalidCount: number;
+  duplicatesInFile: number;
+  rejectedCsv: string | null;
+}
+
 export default function DncPage() {
   const [entries, setEntries] = useState<DncEntry[]>([]);
   const [number, setNumber] = useState("");
   const [reason, setReason] = useState("");
-  const [bulkText, setBulkText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+
+  // Bulk import state — a paste-text fallback and a drag-drop file both
+  // feed the same preview-then-commit flow (structural inspiration: the
+  // preview-before-commit shape in marmelab/atomic-crm's contact-import,
+  // adapted here to plain Tailwind/fetch, no MUI, no library copied).
+  const [bulkText, setBulkText] = useState("");
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [bulkCountry, setBulkCountry] = useState("IN");
+  const [customCountry, setCustomCountry] = useState("");
+  const [bulkReason, setBulkReason] = useState("");
+  const [hasHeaderOverride, setHasHeaderOverride] = useState<boolean | null>(null);
+  const [phoneColumnOverride, setPhoneColumnOverride] = useState<number | null>(null);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [commitResult, setCommitResult] = useState<CommitResult | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const effectiveCountry = bulkCountry === "OTHER" ? customCountry.toUpperCase() : bulkCountry;
+
+  const buildBulkForm = (mode: "preview" | "commit") => {
+    const form = new FormData();
+    form.set("mode", mode);
+    form.set("defaultCountry", effectiveCountry);
+    if (bulkReason) form.set("reason", bulkReason);
+    if (hasHeaderOverride !== null) form.set("hasHeader", String(hasHeaderOverride));
+    if (phoneColumnOverride !== null) form.set("phoneColumnIndex", String(phoneColumnOverride));
+    if (bulkFile) form.set("file", bulkFile);
+    else form.set("text", bulkText);
+    return form;
+  };
+
+  const runPreview = async () => {
+    setBulkError(null);
+    setCommitResult(null);
+    if (!bulkFile && !bulkText.trim()) {
+      setBulkError("Upload a CSV/XLSX file or paste some numbers first.");
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/dnc/bulk-import", { method: "POST", body: buildBulkForm("preview") });
+      const data = await res.json();
+      if (!res.ok) {
+        setBulkError(typeof data.error === "string" ? data.error : "Could not parse the import.");
+        return;
+      }
+      setPreview(data);
+      setHasHeaderOverride(data.hasHeader);
+      setPhoneColumnOverride(data.phoneColumnIndex);
+    } catch {
+      setBulkError("Could not reach the server.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const runCommit = async () => {
+    if (!preview) return;
+    setBulkError(null);
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/dnc/bulk-import", { method: "POST", body: buildBulkForm("commit") });
+      const data = await res.json();
+      if (!res.ok) {
+        setBulkError(typeof data.error === "string" ? data.error : "Import failed.");
+        return;
+      }
+      setCommitResult(data);
+      setPreview(null);
+      setBulkText("");
+      setBulkFile(null);
+      setHasHeaderOverride(null);
+      setPhoneColumnOverride(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      load();
+    } catch {
+      setBulkError("Could not reach the server.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const downloadRejected = () => {
+    if (!commitResult?.rejectedCsv) return;
+    const blob = new Blob([commitResult.rejectedCsv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "dnc-import-rejected.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+    const dropped = e.dataTransfer.files?.[0];
+    if (dropped) {
+      setBulkFile(dropped);
+      setBulkText("");
+      setPreview(null);
+      setCommitResult(null);
+    }
+  };
 
   const load = () => {
     fetch("/api/dnc")
@@ -67,25 +203,6 @@ export default function DncPage() {
     }
   };
 
-  const bulkImport = async () => {
-    setMessage(null);
-    const res = await fetch("/api/dnc/bulk-import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: bulkText }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setMessage(
-        `Imported ${data.imported}.${data.skipped.length ? ` Skipped ${data.skipped.length} unparseable: ${data.skipped.join(", ")}` : ""}`
-      );
-      setBulkText("");
-      load();
-    } else {
-      setMessage(`Failed: ${JSON.stringify(data.error ?? data)}`);
-    }
-  };
-
   return (
     <div className="flex w-full flex-col items-center gap-6">
       <h1 className="text-xl font-semibold text-slate-100">Do Not Call List</h1>
@@ -120,18 +237,205 @@ export default function DncPage() {
         </button>
       </div>
 
-      <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
+      <div className="glass-card flex w-full max-w-lg flex-col gap-3 p-6">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Bulk import</h2>
+
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={onDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center text-xs transition-colors ${
+            dragActive ? "border-cyan bg-cyan/5" : "border-border text-slate-500"
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                setBulkFile(f);
+                setBulkText("");
+                setPreview(null);
+                setCommitResult(null);
+              }
+            }}
+          />
+          {bulkFile ? (
+            <span className="text-slate-200">
+              {bulkFile.name}{" "}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setBulkFile(null);
+                  setPreview(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+                className="text-red-400 hover:text-red-300"
+              >
+                remove
+              </button>
+            </span>
+          ) : (
+            <span>Drag a CSV or XLSX file here, or click to browse</span>
+          )}
+        </div>
+
+        <p className="text-center text-xs text-slate-500">— or paste numbers below —</p>
+
         <textarea
           value={bulkText}
-          onChange={(e) => setBulkText(e.target.value)}
-          placeholder={"One number per line, e.g.:\n+971501234567\n0501234568"}
-          rows={5}
+          onChange={(e) => {
+            setBulkText(e.target.value);
+            setBulkFile(null);
+            setPreview(null);
+            setCommitResult(null);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          }}
+          placeholder={"One number per line, e.g.:\n+971501234567\n9876543210"}
+          rows={4}
+          disabled={!!bulkFile}
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan disabled:opacity-40"
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex flex-col gap-1 text-xs text-slate-400">
+            Country for bare (non-+) numbers
+            <select
+              value={bulkCountry}
+              onChange={(e) => setBulkCountry(e.target.value)}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
+            >
+              {COMMON_COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+              <option value="OTHER">Other (ISO code)…</option>
+            </select>
+          </label>
+          {bulkCountry === "OTHER" && (
+            <input
+              value={customCountry}
+              onChange={(e) => setCustomCountry(e.target.value.slice(0, 2))}
+              placeholder="e.g. US"
+              maxLength={2}
+              className="mt-5 w-16 rounded-lg border border-border bg-background px-2 py-2 text-sm uppercase outline-none focus:border-cyan"
+            />
+          )}
+        </div>
+
+        <input
+          value={bulkReason}
+          onChange={(e) => setBulkReason(e.target.value)}
+          placeholder="Reason applied to the whole batch (optional)"
           className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
         />
-        <button onClick={bulkImport} className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-white">
-          Import
-        </button>
+
+        {bulkError && <p className="text-xs text-red-300">{bulkError}</p>}
+
+        {!preview && !commitResult && (
+          <button
+            onClick={runPreview}
+            disabled={bulkBusy || (bulkCountry === "OTHER" && customCountry.length !== 2)}
+            className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {bulkBusy ? "Parsing…" : "Preview import"}
+          </button>
+        )}
+
+        {preview && (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-3 text-xs text-slate-300">
+            <p className="font-semibold text-slate-200">Preview — nothing has been imported yet</p>
+
+            {preview.columns.length > 1 && (
+              <label className="flex flex-col gap-1">
+                Phone column
+                <select
+                  value={phoneColumnOverride ?? preview.phoneColumnIndex}
+                  onChange={(e) => setPhoneColumnOverride(Number(e.target.value))}
+                  className="rounded-lg border border-border bg-background px-2 py-1 outline-none focus:border-cyan"
+                >
+                  {preview.columns.map((col, i) => (
+                    <option key={i} value={i}>
+                      {preview.hasHeader && col ? col : `Column ${i + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={hasHeaderOverride ?? preview.hasHeader}
+                onChange={(e) => setHasHeaderOverride(e.target.checked)}
+              />
+              First row is a header (skip it)
+            </label>
+
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <li>Total rows: {preview.total}</li>
+              <li className="text-cyan">Valid: {preview.validCount}</li>
+              <li className="text-red-400">Invalid: {preview.invalidCount}</li>
+              <li>Duplicates in file: {preview.duplicatesInFile}</li>
+            </ul>
+
+            {preview.invalidSample.length > 0 && (
+              <details>
+                <summary className="cursor-pointer text-slate-400">
+                  Sample of unparseable values ({preview.invalidSample.length}{preview.invalidCount > preview.invalidSample.length ? "+" : ""})
+                </summary>
+                <p className="mt-1 break-all text-slate-500">{preview.invalidSample.join(", ")}</p>
+              </details>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={runCommit}
+                disabled={bulkBusy || preview.validCount === 0}
+                className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              >
+                {bulkBusy ? "Importing…" : `Import ${preview.validCount} number${preview.validCount === 1 ? "" : "s"}`}
+              </button>
+              <button
+                onClick={() => {
+                  setPreview(null);
+                  setHasHeaderOverride(null);
+                  setPhoneColumnOverride(null);
+                }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-slate-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {commitResult && (
+          <div className="flex flex-col gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-3 text-xs text-slate-300">
+            <p>
+              Imported {commitResult.imported} number{commitResult.imported === 1 ? "" : "s"}.
+              {commitResult.alreadyOnList > 0 && ` ${commitResult.alreadyOnList} were already on the list.`}
+              {commitResult.invalidCount > 0 && ` ${commitResult.invalidCount} could not be parsed.`}
+            </p>
+            {commitResult.rejectedCsv && (
+              <button onClick={downloadRejected} className="self-start text-cyan hover:underline">
+                Download rejected rows (CSV)
+              </button>
+            )}
+            <button onClick={() => setCommitResult(null)} className="self-start text-slate-500 hover:text-slate-300">
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {message && <p className="text-xs text-slate-500">{message}</p>}
       </div>
 
