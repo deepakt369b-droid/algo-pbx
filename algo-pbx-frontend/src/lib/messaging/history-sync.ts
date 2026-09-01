@@ -8,8 +8,25 @@ import { e164ToWaId } from "./wa-id";
 // rate-limited backlog pull so the agent sees the real history (and any
 // media / own-side messages the webhook never delivered), matching WhatsApp
 // Web's behaviour of showing the full conversation.
+//
+// BAN-RISK NOTE: this is a personal-use customer-service integration, NOT a
+// marketing/bulk tool. Everything here is READ-side:
+//  - message/history pulls read OpenWA's OWN local store, they do not query
+//    WhatsApp per message (baileys can't — see engine-capability-matrix).
+//  - `includeMedia` DOES make baileys download media blobs from WhatsApp's
+//    CDN (normal client behaviour — your phone does the same), so the first
+//    sync is deliberately capped small (FIRST_SYNC_MEDIA_LIMIT) and only
+//    ever runs once per thread, paced by an agent opening one chat at a time.
+//  - text-only history goes back further with no media downloads at all.
+// No send-rate change, no unsolicited messages, no automation-at-scale.
 
 const SYNC_COOLDOWN_MS = 45_000;
+// Recent messages whose media we download on the one-time first sync. Small
+// on purpose — keeps the CDN fetch burst modest. Older media still loads
+// lazily via the /media proxy (sidecar fallback) when the agent scrolls to it.
+const FIRST_SYNC_MEDIA_LIMIT = 80;
+// Text-only backfill depth (no media downloads).
+const FIRST_SYNC_TEXT_LIMIT = 400;
 
 /**
  * Pull recent messages for one WhatsApp conversation from OpenWA and persist
@@ -49,10 +66,6 @@ export async function syncConversationHistory(
     if (!waId) return { synced: false, written: 0, reason: "bad number" };
     const chatId = `${waId}@c.us`;
 
-    // First-ever sync for this thread: pull a big window WITH media bytes so
-    // old voice notes / photos play back. Subsequent syncs are a light
-    // metadata-only top-up (new messages already arrived via the webhook
-    // with their media inline anyway).
     const firstSync = !conversation.historySyncedAt;
 
     // Stamp first so concurrent polls (5s ChatThread interval) don't all fan
@@ -61,12 +74,25 @@ export async function syncConversationHistory(
       .update({ where: { id: conversationId }, data: { historySyncedAt: new Date() } })
       .catch(() => undefined);
 
-    const rows = opts.deep
-      ? await openwa.getChatHistory(sessionId, chatId, { limit: opts.limit ?? 500, deep: true })
-      : await openwa.getChatMessages(sessionId, chatId, {
-          limit: opts.limit ?? (firstSync ? 400 : 60),
-          includeMedia: opts.force || firstSync,
-        });
+    let rows;
+    if (opts.deep) {
+      rows = await openwa.getChatHistory(sessionId, chatId, { limit: opts.limit ?? 500, deep: true });
+    } else if (firstSync || opts.force) {
+      // Two passes: a small recent window WITH media, then a wider text-only
+      // backfill (no CDN downloads). persistNormalizedMessage dedupes the
+      // overlap and backfills mediaData onto any rows a prior text-only pass
+      // created without it.
+      const withMedia = await openwa.getChatMessages(sessionId, chatId, {
+        limit: FIRST_SYNC_MEDIA_LIMIT,
+        includeMedia: true,
+      });
+      const textOnly = await openwa.getChatMessages(sessionId, chatId, {
+        limit: opts.limit ?? FIRST_SYNC_TEXT_LIMIT,
+      });
+      rows = [...textOnly, ...withMedia];
+    } else {
+      rows = await openwa.getChatMessages(sessionId, chatId, { limit: opts.limit ?? 60 });
+    }
 
     let written = 0;
     for (const raw of rows) {

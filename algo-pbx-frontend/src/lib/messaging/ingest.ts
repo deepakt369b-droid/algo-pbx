@@ -85,13 +85,39 @@ export async function persistNormalizedMessage(
   if (!event.fromE164) return null;
   const outbound = event.direction === "outgoing";
 
-  // Dedupe before doing any writes.
+  // ~1.4 MB of base64 (~1 MB decoded). Voice notes and most photos fit;
+  // bigger payloads keep mediaKind (so the bubble still shows) but the
+  // proxy falls back to the sidecar's /media endpoint for them.
+  const MAX_MEDIA_B64 = 1_400_000;
+  const storedB64 =
+    event.mediaBase64 && event.mediaBase64.length <= MAX_MEDIA_B64 ? event.mediaBase64 : null;
+
+  // Dedupe before doing any writes — but if the row exists WITHOUT its media
+  // bytes and this pass has them (e.g. a re-sync now running with
+  // includeMedia), backfill just that.
   const dedupeKeys: Prisma.ChatMessageWhereInput[] = [];
   if (event.waMessageId) dedupeKeys.push({ waMessageId: event.waMessageId });
   if (event.providerMessageId) dedupeKeys.push({ providerMessageId: event.providerMessageId });
   if (dedupeKeys.length) {
-    const seen = await db.chatMessage.findFirst({ where: { OR: dedupeKeys }, select: { id: true } });
-    if (seen) return null;
+    const seen = await db.chatMessage.findFirst({
+      where: { OR: dedupeKeys },
+      select: { id: true, mediaData: true, mediaKind: true, mediaMimeType: true },
+    });
+    if (seen) {
+      if (seen.mediaKind && !seen.mediaData && storedB64) {
+        await db.chatMessage
+          .update({
+            where: { id: seen.id },
+            data: {
+              mediaData: storedB64,
+              mediaMimeType: seen.mediaMimeType ?? event.mediaMimeType ?? null,
+              mediaUrl: `/api/messaging/media/${seen.id}`,
+            },
+          })
+          .catch(() => undefined);
+      }
+      return null;
+    }
   }
 
   const contact = await db.contact.upsert({
@@ -129,13 +155,6 @@ export async function persistNormalizedMessage(
         });
 
   const sensitive = channel === "SMS" && !event.mediaKind && event.body ? isSensitiveSms(event.body) : false;
-
-  // ~1.4 MB of base64 (~1 MB decoded). Voice notes and most photos fit;
-  // bigger payloads keep mediaKind (so the bubble still shows) but the
-  // proxy falls back to the sidecar's /media endpoint for them.
-  const MAX_MEDIA_B64 = 1_400_000;
-  const storedB64 =
-    event.mediaBase64 && event.mediaBase64.length <= MAX_MEDIA_B64 ? event.mediaBase64 : null;
 
   const message = await db.chatMessage.create({
     data: {
