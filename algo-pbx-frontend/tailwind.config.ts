@@ -1,26 +1,68 @@
 import type { Config } from "tailwindcss";
 
-// Algo IT brand: dark slate background, electric cyan + blue accents.
-// See ALGO_PBX_MASTER_DOC.md §1 / §4 for the design language spec.
+// Apple-black design system (F1). Every colour resolves to a CSS variable
+// defined in src/app/globals.css (light on :root, dark on
+// :root[data-theme="dark"] + prefers-color-scheme). No hex lives here.
+//
+// Two families:
+//  - solid tokens   -> "rgb(var(--x) / <alpha-value>)"  (supports /10 etc.)
+//  - pre-baked alpha -> "rgb(var(--x))"                  (hairlines, *-subtle)
+const solid = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
+const baked = (v: string) => `rgb(var(${v}))`;
+
 const config: Config = {
   content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],
-  darkMode: "class",
+  // Explicit choice wins; system default handled by CSS media query.
+  darkMode: ["selector", '[data-theme="dark"]'],
   theme: {
     extend: {
       colors: {
-        background: "#0B0F19",
-        surface: "#111827",
-        border: "#1F2937",
-        cyan: {
-          DEFAULT: "#06B6D4",
+        // ---- semantic (target names; F2 migrates call sites here) ----
+        canvas: solid("--canvas"),
+        surface: {
+          DEFAULT: solid("--surface"),
+          subtle: solid("--surface-subtle"),
+          hover: solid("--surface-hover"),
         },
-        blue: {
-          DEFAULT: "#2563EB",
+        hairline: {
+          DEFAULT: baked("--hairline"),
+          strong: baked("--hairline-strong"),
         },
+        primary: solid("--text-primary"),
+        secondary: solid("--text-secondary"),
+        tertiary: solid("--text-tertiary"),
+        accent: {
+          DEFAULT: solid("--accent"),
+          hover: solid("--accent-hover"),
+          subtle: baked("--accent-subtle"),
+          fg: solid("--text-on-accent"),
+        },
+        success: {
+          DEFAULT: solid("--success"),
+          subtle: baked("--success-subtle"),
+        },
+        warning: {
+          DEFAULT: solid("--warning"),
+          subtle: baked("--warning-subtle"),
+        },
+        danger: {
+          DEFAULT: solid("--danger"),
+          subtle: baked("--danger-subtle"),
+        },
+
+        // ---- legacy names, repointed so existing pages re-skin now ----
+        background: solid("--canvas"),
+        border: baked("--hairline"),
+        cyan: { DEFAULT: solid("--accent") },
+        blue: { DEFAULT: solid("--accent") },
       },
-      backgroundImage: {
-        "glass-gradient":
-          "linear-gradient(135deg, rgba(6,182,212,0.08), rgba(37,99,235,0.08))",
+      borderRadius: {
+        sm: "var(--radius-sm)",
+        DEFAULT: "var(--radius)",
+        lg: "var(--radius-lg)",
+      },
+      ringColor: {
+        DEFAULT: baked("--ring"),
       },
     },
   },

@@ -2,14 +2,142 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================================
+   Apple-black design system (F1). Every colour is a CSS variable defined
+   twice: once for light on bare :root, once for dark. Nothing below the
+   token layer may hardcode a hex — Tailwind colours (tailwind.config.ts)
+   all resolve to these vars, so `bg-canvas`, `text-secondary`,
+   `bg-accent/10`, and the legacy `bg-surface` / `text-cyan` names all
+   theme automatically.
+
+   Theme resolution has three states (see theme-provider.tsx):
+   - explicit choice  -> <html data-theme="light|dark">
+   - system default   -> no attribute, prefers-color-scheme decides
+   ========================================================================= */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --canvas: 255 255 255;          /* page background            #FFFFFF */
+  --surface: 255 255 255;         /* raised card                #FFFFFF */
+  --surface-subtle: 245 245 247;  /* secondary fill / rails     #F5F5F7 */
+  --surface-hover: 240 240 242;
+  --hairline: 0 0 0 / 0.10;       /* separators                          */
+  --hairline-strong: 0 0 0 / 0.16;
+
+  /* text */
+  --text-primary: 29 29 31;       /* #1D1D1F */
+  --text-secondary: 99 99 102;    /* #636366 */
+  --text-tertiary: 142 142 147;   /* #8E8E93 */
+  --text-on-accent: 255 255 255;
+
+  /* one accent — system blue, used sparingly */
+  --accent: 10 132 255;           /* #0A84FF */
+  --accent-hover: 0 113 227;      /* #0071E3 */
+  --accent-subtle: 10 132 255 / 0.10;
+
+  /* semantic state */
+  --success: 48 164 108;
+  --success-subtle: 48 164 108 / 0.12;
+  --warning: 191 137 0;
+  --warning-subtle: 191 137 0 / 0.14;
+  --danger: 215 58 73;
+  --danger-subtle: 215 58 73 / 0.12;
+
+  --ring: 10 132 255 / 0.55;
+
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-lg: 14px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: 0 0 0;                /* true black                 #000000 */
+  --surface: 28 28 30;            /* card                       #1C1C1E */
+  --surface-subtle: 44 44 46;     /* #2C2C2E */
+  --surface-hover: 58 58 60;      /* #3A3A3C */
+  --hairline: 255 255 255 / 0.08;
+  --hairline-strong: 255 255 255 / 0.14;
+
+  --text-primary: 245 245 247;    /* #F5F5F7 */
+  --text-secondary: 174 174 178;  /* #AEAEB2 */
+  --text-tertiary: 122 122 128;   /* #7A7A80 */
+  --text-on-accent: 255 255 255;
+
+  --accent: 10 132 255;           /* #0A84FF */
+  --accent-hover: 51 153 255;
+  --accent-subtle: 10 132 255 / 0.16;
+
+  --success: 48 209 88;
+  --success-subtle: 48 209 88 / 0.16;
+  --warning: 255 214 10;
+  --warning-subtle: 255 214 10 / 0.16;
+  --danger: 255 69 58;
+  --danger-subtle: 255 69 58 / 0.16;
+
+  --ring: 10 132 255 / 0.65;
+}
+
+/* System-preference default: only applies when no explicit data-theme is set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --canvas: 0 0 0;
+    --surface: 28 28 30;
+    --surface-subtle: 44 44 46;
+    --surface-hover: 58 58 60;
+    --hairline: 255 255 255 / 0.08;
+    --hairline-strong: 255 255 255 / 0.14;
+
+    --text-primary: 245 245 247;
+    --text-secondary: 174 174 178;
+    --text-tertiary: 122 122 128;
+    --text-on-accent: 255 255 255;
+
+    --accent: 10 132 255;
+    --accent-hover: 51 153 255;
+    --accent-subtle: 10 132 255 / 0.16;
+
+    --success: 48 209 88;
+    --success-subtle: 48 209 88 / 0.16;
+    --warning: 255 214 10;
+    --warning-subtle: 255 214 10 / 0.16;
+    --danger: 255 69 58;
+    --danger-subtle: 255 69 58 / 0.16;
+
+    --ring: 10 132 255 / 0.65;
+  }
+}
+
 @layer base {
   body {
-    @apply bg-background text-slate-100 antialiased;
+    @apply bg-canvas text-primary antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+      "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* Consistent Apple-style focus ring from the token, not per-component. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
+  }
+
+  * {
+    border-color: rgb(var(--hairline));
   }
 }
 
 @layer components {
-  .glass-card {
-    @apply rounded-2xl border border-border bg-glass-gradient bg-surface/60 backdrop-blur-md shadow-lg shadow-black/20;
+  /* Legacy surface primitive (43 files). Re-skinned in place to the flat
+     Apple card — no gradient, no blur, no glow. F2 renames call sites to
+     `.card`; both classes are identical so the migration is mechanical. */
+  .glass-card,
+  .card {
+    @apply rounded-[var(--radius-lg)] border bg-surface;
+    border-color: rgb(var(--hairline));
   }
 }

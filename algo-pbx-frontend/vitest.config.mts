@@ -7,6 +7,9 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   test: {
     environment: "node",
+    // Playwright specs live in e2e/ and match *.spec.ts — keep vitest
+    // (unit/logic only, node env) from trying to collect them.
+    exclude: ["**/node_modules/**", "**/dist/**", ".next/**", "e2e/**"],
   },
   resolve: {
     // Mirrors tsconfig.json's "@/*": ["./src/*"] — without this, any
