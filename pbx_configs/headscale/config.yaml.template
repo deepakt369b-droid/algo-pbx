@@ -33,16 +33,21 @@ metrics_listen_addr: 127.0.0.1:9090
 
 # The address pool headscale hands out to nodes that join THIS fallback
 # tailnet — confirmed live: headscale refuses to start without at least
-# one prefix configured. Deliberately NOT 100.64.0.0/10 (that's the real
-# Tailscale's own CGNAT range, already in use on this VPS for the legacy
-# path — 100.100.0.0/16 was tried first and is WRONG, it's actually
-# inside 100.64.0.0/10, the exact collision this comment warns against —
-# caught before it shipped) and NOT 10.8.0.0/24 (OpenVPN's own range, see
-# pbx_configs/openvpn/init-pki.sh) or 192.168.11.0/24 (the physical
-# Dinstar LAN) — a genuinely distinct RFC1918 block so all three
-# connectivity paths stay unambiguous from each other.
+# one prefix configured, AND emits "unsupported configuration" for
+# anything outside 100.64.0.0/10 (client software may make assumptions
+# about addresses always being in that range — headscale's own software
+# is the stronger signal here, not general "avoid the range in use
+# elsewhere" instinct: a first attempt at 10.100.0.0/16 avoided colliding
+# with the real Tailscale range but hit this warning instead, corrected).
+# 100.100.0.0/16 IS inside the standard/supported 100.64.0.0/10 range, and
+# doesn't overlap the actual real-Tailscale peers this deployment has
+# (VPS 100.64.32.x, dev PC 100.96.38.x, per production-vps-access notes) —
+# headscale tracks its own node assignments independently in its own DB,
+# so the two overlay networks sharing the same numeric superblock doesn't
+# create a real routing collision the way two nodes on the SAME network
+# claiming the same address would.
 prefixes:
-  v4: 10.100.0.0/16
+  v4: 100.100.0.0/16
 
 # Admin CLI (user/preauth-key management — see
 # src/lib/headscale-runbook.ts's command templates) talks to headscale
