@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+# INTERIM STATE (operator decision, 2026-09): the CA private key is now
+# passphrase-protected (compliance requirement — the CA is the root of
+# per-customer tenant isolation, so an unencrypted CA key on disk was
+# rejected). This script's unattended NEW-cert issuance path is disabled
+# below (see handle_generate) until "CA signing flow v2" ships an
+# admin-approval-at-signing-time flow — new certs are issued manually by
+# an admin in the meantime. Revocation (handle_revoke) is untouched: it
+# also needs the CA passphrase and will hang the same way if triggered
+# unattended — nothing currently calls it automatically, and v2's job
+# includes wiring a real (supervised or approval-gated) caller for it.
+#
 # openvpn-bridge's entrypoint — the ONLY way the web app's server-side code
 # (Next.js, no Docker socket, must never hold OpenVPN private key material
 # in Postgres — see the plan's "Critical design constraint" on Node B) can
@@ -86,11 +97,23 @@ handle_generate() {
   elif [[ -f "/etc/openvpn/pki/issued/${site}.crt" ]]; then
     log "PKI already has an issued cert for '${site}' but no .ovpn on record — regenerating the unified file only"
   else
-    log "issuing new client cert for '${site}'"
-    if ! easyrsa build-client-full "${site}" nopass; then
-      echo "easyrsa build-client-full failed for '${site}'" > "${CLIENTS_DIR}/${site}.error"
-      return
-    fi
+    # INTERIM HARD RULE (operator decision, pending "CA signing flow v2" —
+    # see that plan when it exists): unattended `easyrsa build-client-full`
+    # is DISABLED, not "made to work around" the now-passphrase-protected
+    # CA key. Once the CA has a real passphrase, this call would block on
+    # easyrsa's own interactive prompt for it — and this script has no TTY
+    # and no route to the passphrase at all (it's held only in the
+    # encrypted AppSetting store once v2 lands, never on this container's
+    # filesystem). A hang on stdin inside a container is worse than a
+    # clean, immediate refusal: every new client cert is issued by a human
+    # running `easyrsa build-client-full <site> nopass` directly (client
+    # key stays nopass — only the CA key is passphrase-protected — and
+    # typing the CA passphrase when easyrsa prompts for it) until v2 ships
+    # an admin-approval-at-signing-time flow. This branch only ever
+    # refuses; it never attempts to sign anything.
+    log "REFUSING to issue a new cert for '${site}': unattended signing is disabled (CA key is passphrase-protected, interim rule pending 'CA signing flow v2')"
+    echo "New client certs are issued manually by an admin (easyrsa build-client-full ${site} nopass, typing the CA passphrase when prompted) until the CA signing flow v2 task ships. Ask an admin to issue this cert, then retry." > "${CLIENTS_DIR}/${site}.error"
+    return
   fi
 
   local tmp="${CLIENTS_DIR}/.${site}.ovpn.tmp"
