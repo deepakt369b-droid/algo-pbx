@@ -13,6 +13,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "create-admin": "node scripts/create-admin-user.mjs",
     "cdr-listener": "tsx scripts/ami-cdr-listener.ts",
+    "gateway-syslog-listener": "tsx scripts/gateway-syslog-listener.ts",
     "mcp-server": "tsx mcp-server/index.ts",
     "test": "vitest run",
     "test:e2e": "playwright test"

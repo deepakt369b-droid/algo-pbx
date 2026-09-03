@@ -229,6 +229,11 @@ Mirrors the 4 phases in the master prompt (`ALGO_PBX_MASTER_DOC.md` §1). Check 
 - [x] **Structure graph**
   - [x] Re-run after every major structural change (see Build Log for the running node/edge/community counts) — **due again after the Foundation repair work**, see Build Log's newest entry
   - [ ] Re-check whether the Asterisk `.conf` out-of-scope issue (#1895/#1666) still drops those files
+- [ ] **Dinstar gateway syslog / Remote Server feature (2026-09-03 — see Build Log)**
+  - [x] `GatewayEvent` model + migration (migration.sql hand-authored, unverified — needs a real `prisma migrate diff`/`migrate deploy`), parser/classifier, receiver sidecar, ingest route + real-time alerting, 30-day retention, `/admin/system` panel + dedicated alert banner, `GATEWAY_ALERT_EMAIL` setting. All gates green.
+  - [ ] Deploy (rebuild `web` + new `syslog-listener` service, run the real migration)
+  - [ ] Live traffic confirmed end-to-end (blocked: gateway's Diagnostic → Syslog config saves/persists but zero packets ever observed arriving; operator's SIM was ejected mid-diagnosis — retry once a SIM is back in)
+  - [ ] `syslog-parse.ts`'s taxonomy re-validated/widened against real captured gateway output (built defensively without ever seeing one)
 
 ## 5. Build Log
 
@@ -3719,3 +3724,183 @@ correctly for an agent with a real linked extension, previously untested
 this session since only the admin account (no extension) had been used.
 
 No code committed to git this session (same standing instruction).
+
+## 32. Pending deploy finished, S6 announcement WAVs generated + deployed, CRM/WhatsApp click-through pass — one real gap found (deal↔contact linking has no UI) (2026-09-03, follow-up to §31)
+
+Resumed via `handoff.md`'s "claude continue" checklist. Live-call-specific
+checks (screen-pop on a real inbound call, the disposition prompt) explicitly
+deferred by the operator to a later session; everything else in the
+checklist worked through.
+
+**Deploy finished.** Commit `b056448` (admin Rooms fix)'s pending
+`docker compose build` from the prior session-end was completed: `algo-web` +
+`algo-cdr-listener` rebuilt and restarted on the VPS (user-approved —
+production container restart), health `healthy`, 21/21 migrations applied,
+none pending.
+
+**WhatsApp session check.** `sim1-y3uzfs8s` already `ready` post-restart, no
+manual kick needed. `sim2-4` remain `disconnected`/unpaired — unchanged,
+operator-blocked on real phone numbers, not a regression.
+
+**S6 recording-announcement WAVs — generated and deployed (user-approved —
+production `asterisk` restart).** Neither `piper-tts` nor `sox`/`ffmpeg` were
+available locally or on the VPS; installed `sox`/`ffmpeg`/`python3-venv` via
+`apt` on the VPS, `piper-tts` into a throwaway venv (`/tmp/piper-venv`,
+cleaned up after), downloaded the `en_US-lessac-medium` voice model from
+Hugging Face. Generated both `pbx_configs/sounds/README.md`-specified
+prompts, converted to 8kHz mono 16-bit PCM with `sox`, copied into
+`pbx_configs/sounds/` on the VPS (gitignored, hand-deploy only — see the
+README), `docker compose restart asterisk` — healthy afterward, files
+confirmed present at `/var/lib/asterisk/sounds/en/custom/` inside the
+container. Not yet live-call-tested (that needs an actual inbound/outbound
+call through `[from-dinstar] s`/`[from-agent-common]` — deferred with the
+rest of the live-call verification).
+
+**Dinstar gateway "Failing" on `/admin/system`** — confirmed pre-existing,
+not a regression: `res.status` 302 from `goip_get_status.html`, caused by
+`DINSTAR_SMS_USERNAME`/`PASSWORD` still holding the stale `change-me`
+placeholder (per prior-session memory, unrelated to today's Rooms/S6 work).
+Left alone — not in scope, no fix requested.
+
+**CRM + WhatsApp click-through (browser-driven, admin session via
+claude-in-chrome, real prod data).** Contact detail (notes/tasks/disposition/
+timeline) on `/agent`: confirmed working, a task created there appears in
+the unified timeline immediately. Pipeline Kanban (`/agent/crm/pipeline`):
+deal creation and cross-column drag-and-drop both work. WhatsApp
+(`/agent/chat`): avatars, voice-note playback (`VoiceBubble`), inline images,
+and infinite-scroll history pagination back through several weeks all
+confirmed live against Sarath's and Deepak's real threads. `/admin/rooms`:
+the Rooms fix from `b056448` confirmed live — avatars, "🎤 Voice message"/
+"📷 Photo" previews, click-through to the `ChatThread` slide-over, all
+correct. `/admin/reports`: both Telephony and CRM Insights tabs load and
+correctly reflect live data (the test deal/task created during this pass
+showed up immediately in the Pipeline funnel and Follow-up tasks widgets).
+Test artifacts cleaned up after: task marked complete, test deal dragged to
+"Qualified" (drag to "Lost" didn't take after a horizontal-scroll, deal was
+left there, clearly named "click-through test deal" — harmless).
+Mobile 390px viewport check was **not completed** — `resize_window` didn't
+visibly affect the claude-in-chrome extension's screenshot capture, and
+switching to a separate chrome-devtools MCP browser would have meant a fresh,
+un-authenticated session; not chased further, low value for the time cost.
+
+**Real gap found — deal↔contact linking has no UI**, despite being fully
+supported server-side. `DealCreateSchema`
+(`src/lib/crm/deals.ts`) accepts a `contactId` and links it as the deal's
+primary contact on create; `createDeal()` already writes the
+`DealContact`/`isPrimary` join row when given one. But
+`PipelineBoard`'s "New deal" dialog (`src/components/crm/pipeline-board.tsx`)
+only exposes Name and Value — no contact picker — and `DealCard` has no
+click handler, so there's also no way to open a deal afterward to link a
+contact retroactively (`DealPatchSchema` doesn't even accept `contactId` for
+a PATCH). Net effect: the "contact → create deal … confirm it shows in the
+contact's timeline" flow the operator's checklist describes doesn't
+currently work end-to-end — a deal created today shows "No deals linked" on
+the contact it was meant for. Not fixed this session (pending operator
+priority call); flagged here and to the operator directly.
+
+No code committed to git this session (same standing instruction — the only
+changes were the two generated WAV files, which are gitignored and live only
+on the VPS).
+
+### 32.1 Deal↔contact linking fix + sidebar label fix, deployed (same day, direct follow-up)
+
+Operator asked for two fixes off the gap found above, plus a UI nit noticed
+separately: the agent sidebar labeled `/agent/calls` (call history) just
+"Calls", immediately under "Call" (the dialer) — confusing. Both fixed and
+deployed.
+
+**Deal↔contact linking.** New `ContactPicker` component in
+`src/components/crm/pipeline-board.tsx` — debounced search-as-you-type,
+reuses the existing `/api/agent/crm/contacts`/`/api/admin/contacts` search
+endpoints (no new search API; picked which one by prefix-matching `apiBase`,
+since the admin one predates the `/api/admin/crm/*` namespace and isn't
+under it). Wired into both the "New deal" create dialog and a new "Edit
+deal" dialog, the latter opened by making `DealCard` click-to-open
+(`role="button"`, guarded against firing mid-drag via `isDragging`, and the
+mobile stage `<Select>` gets `stopPropagation` so it doesn't also open the
+dialog). `DealPatchSchema` gained `contactId`; `patchDeal()` in
+`src/lib/crm/deals.ts` replaces the deal's one linked contact (delete then
+create `DealContact`, `null` unlinks) when `contactId` is present in the
+patch — mirrors the existing replace-not-append shape `createDeal()` already
+used.
+
+Live-verified against production data, not just gate-green: linked Sarath
+to the existing "click-through test deal" via the Edit dialog, confirmed
+it showed in Sarath's contact page under Deals as `(primary)` with the
+right stage — checked twice, since the *first* attempt silently failed
+(turned out to be a coordinate-based UI-testing miss on my end, clicking
+the wrong pixel on a shifted dialog, not a code bug — confirmed by
+querying `DealContact` directly both times). Then unlinked via the
+picker's ✕ and confirmed the row was gone from the DB. One operational
+note for later sessions: this 2-vCPU VPS showed a PATCH stuck on
+"Saving…" in the UI for several seconds under concurrent load (a
+simultaneous SSH DB query) during this test — resolved on its own with a
+200, not a bug, just a slow box.
+
+**Sidebar label**: `src/components/agent-shell/agent-shell.tsx`'s nav item
+for `/agent/calls` relabeled "Call History" (was "Calls"), matching the
+page's own `<h1>Call history</h1>`.
+
+Deployed: synced the 3 changed files to the VPS (tar, not a git pull —
+matches this session's earlier pattern), `docker compose build web` +
+restart (both user-approved — production container restart), `algo-web`
+healthy. All four gates green before deploy: typecheck, 357 tests, lint,
+build.
+
+No code committed to git this session (same standing instruction).
+
+- 2026-09-03 (same day, part 3) — **Dinstar gateway syslog (Remote Server)
+  feature: built and gated green, NOT deployed, live traffic unconfirmed.**
+  Descoped from an earlier, unusable draft (which assumed a Connectivity
+  page / multi-site / OpenVPN model that doesn't exist in this repo — that
+  remains a separate future task) down to the current single-gateway-over-
+  Tailscale architecture. Live-diagnosed directly against the real
+  gateway's web UI (`192.168.11.1`) and via VPS `tcpdump`: found the real
+  feature is **Diagnostic → Syslog** (not the generic Tools → Remote
+  Server page — no port/level fields there), configured it
+  (`100.64.32.115:5514`, level INFO, Signal+System+Management Log),
+  confirmed it saves and **persists through a full gateway reboot**
+  (operator-approved, ~36s downtime). Confirmed no NTP on the gateway
+  (its clock read `2025-12-17`). **Zero UDP/TCP traffic was ever observed
+  arriving at the VPS**, despite trying a reboot, a config re-save, a
+  port block/unblock toggle, and a Mobile-Call-Test attempt (each
+  confirmed to have reached the device via its own on-box **Web Operation
+  Log**) — the operator's SIM was ejected mid-diagnosis, deferring the
+  actual root-cause resolution to a later session with a real GSM event
+  available to trigger. New: `GatewayEvent` model + migration (hand-
+  authored `migration.sql`, explicitly flagged unverified — needs a real
+  `prisma migrate diff`/`migrate deploy` per §P2's pattern before trust);
+  `src/lib/dinstar/syslog-parse.ts` (defensive RFC-3164-shaped parser,
+  built WITHOUT a real captured sample — header says so explicitly, 28
+  synthetic-fixture unit tests); `scripts/gateway-syslog-listener.ts` (dumb
+  UDP forwarder, host-networked, Tailscale-IP-only bind) + its Docker
+  target/compose service/ufw rule; `POST /api/gateway-events` ingest
+  (bearer-secret auth) which also triggers real-time alerts via new
+  `src/lib/dinstar/gateway-alerts.ts` (pure, unit-tested; first version
+  alerts on first occurrence per critical type rather than the plan's
+  burst/duration thresholds — no historical state yet to compute those);
+  30-day retention folded into the existing prune route
+  (`COMPLIANCE.md`, new file, PDPL note on phone numbers in gateway
+  messages); `/admin/system` "Gateway events" panel + a **dedicated** new
+  alert banner (deliberately not reusing the top-bar `HealthPill`, already
+  pinned "fail" by the unrelated pre-existing `DINSTAR_SMS_*` `change-me`
+  gap); `GATEWAY_ALERT_EMAIL` registered in the settings UI. **Merge-step
+  verification (independent re-check of the parallel build, not just
+  trusting the workers' self-report) caught two real bugs before they
+  shipped**: (1) `web`'s own `docker-compose.yml` environment block was
+  missing `GATEWAY_INGEST_SECRET` — the receiver's service block had it,
+  `web`'s didn't, so `isAuthorizedIngest()` would have read `undefined` and
+  401'd every real ingest in production; fixed by adding it to `web`'s
+  block alongside `CDR_INGEST_SECRET`. (2) the alert gate's
+  `resendConfigured` check used `Boolean(await getSetting("RESEND_API_KEY"))`,
+  which treats the literal `"change-me"` placeholder as a configured key
+  (non-empty string) — meaning alerts would silently attempt a real,
+  doomed Resend API call instead of cleanly no-op'ing per the plan's
+  explicit "ship in-app alerts only, record blocked-on-secret" requirement;
+  fixed with a new `isConfiguredSecret()` helper in `gateway-alerts.ts`
+  (4 new unit tests) that treats the placeholder as unconfigured. Also
+  de-duplicated a hardcoded `CRITICAL_TYPES` copy in
+  `/api/admin/gateway-alerts` into a shared `CRITICAL_ALERT_TYPES` export.
+  All four gates green after these fixes: typecheck, 397 tests, lint,
+  build. Full detail in `handoff.md`'s "2026-09-03 session, part 3". Not
+  deployed, not committed to git.

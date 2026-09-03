@@ -104,6 +104,27 @@ async function pruneVoicemail(retentionDays: number, actorId: string): Promise<{
   return { deleted, unlinkFailures };
 }
 
+// Dinstar gateway syslog events (GatewayEvent) — a fixed 30-day retention
+// per the feature's own plan, not a tunable AppSetting like
+// RECORDING_RETENTION_DAYS: these rows carry no per-deployment sizing
+// concern recordings/voicemail have (no filesystem, just narrow indexed
+// DB rows), and the plan's PDPL note (see COMPLIANCE.md) treats 30 days as
+// the stated data-minimization mitigation, not an operator-adjustable
+// knob. Bulk-deleted with a single summary AuditLog row rather than one
+// per event — these can arrive in the thousands, unlike recordings.
+const GATEWAY_EVENT_RETENTION_DAYS = 30;
+
+async function pruneGatewayEvents(actorId: string): Promise<{ deleted: number }> {
+  const cutoff = new Date(Date.now() - GATEWAY_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const result = await db.gatewayEvent.deleteMany({ where: { receivedAt: { lt: cutoff } } });
+  if (result.count > 0) {
+    await db.auditLog.create({
+      data: { action: "gateway_event.pruned", actorId, metadata: { deleted: result.count, retentionDays: GATEWAY_EVENT_RETENTION_DAYS } },
+    });
+  }
+  return { deleted: result.count };
+}
+
 export async function POST(request: NextRequest) {
   let actorId: string;
   if (isAuthorizedCronRequest(request)) {
@@ -129,8 +150,15 @@ export async function POST(request: NextRequest) {
   if (!Number.isFinite(retentionDays) || retentionDays < 0) {
     return NextResponse.json({ error: `Invalid RECORDING_RETENTION_DAYS value: ${retentionDaysRaw}` }, { status: 500 });
   }
+
+  // Gateway events run on their own fixed retention regardless of the
+  // recordings/voicemail setting above — an operator disabling
+  // RECORDING_RETENTION_DAYS (0 = pruning disabled) has no bearing on the
+  // PDPL data-minimization commitment for gateway syslog data.
+  const gatewayEvents = await pruneGatewayEvents(actorId);
+
   if (retentionDays === 0) {
-    return NextResponse.json({ ok: true, skipped: true, reason: "Retention is set to 0 (pruning disabled)." });
+    return NextResponse.json({ ok: true, skipped: true, reason: "Recording/voicemail retention is set to 0 (pruning disabled).", gatewayEvents });
   }
 
   const [recordings, voicemail] = await Promise.all([
@@ -138,5 +166,5 @@ export async function POST(request: NextRequest) {
     pruneVoicemail(retentionDays, actorId),
   ]);
 
-  return NextResponse.json({ ok: true, retentionDays, recordings, voicemail });
+  return NextResponse.json({ ok: true, retentionDays, recordings, voicemail, gatewayEvents });
 }

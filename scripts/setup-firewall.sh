@@ -57,6 +57,18 @@ ufw allow "${COTURN_RELAY_START}:${COTURN_RELAY_END}/udp" comment 'Coturn relay'
 # (SIP 5060 to the Dinstar trunk arrives here via the subnet route).
 ufw allow in on tailscale0 comment 'Tailscale mesh - full trust'
 
+# Dinstar gateway syslog forwarding (gateway-syslog-listener service).
+# Scoped to the whole Tailscale CGNAT range (100.64.0.0/10), not just the
+# gateway's own 192.168.11.0/24 LAN address: the gateway reaches the VPS
+# over a Tailscale SUBNET ROUTE (a machine on 192.168.11.0/24 advertising
+# that route into the tailnet), and the source IP a forwarded packet
+# actually carries when it arrives — the subnet router's own tailnet IP,
+# or the gateway's real LAN IP, or something SNAT'd in between — is not
+# yet confirmed (no real traffic has been observed arriving as of this
+# writing). Narrow this to the gateway's actual observed source IP once
+# real syslog traffic is captured and that's known for certain.
+ufw allow from 100.64.0.0/10 to any port 5514 proto udp comment 'Dinstar gateway syslog'
+
 # AMI (5038) and the web app's route to Postgres both cross from a Docker
 # BRIDGE container to a directly-bound HOST socket (asterisk/postgres run
 # outside the bridge or publish to loopback — see manager.conf's own ACL

@@ -963,7 +963,7 @@ model ChatMessage {
   // cap the row keeps mediaKind but mediaData stays null and the proxy
   // falls back to the sidecar. Never SELECTed except by
   // GET /api/messaging/media/[id]. (2026-09-01)
-  mediaData         String?  @db.Text
+  mediaData         String?            @db.Text
   providerMessageId String? // OpenWA's internal message id / Meta / Dinstar id — for status-webhook correlation
   // OpenWA's WhatsApp message id (the `waMessageId` field). Distinct from
   // providerMessageId (OpenWA's own row id). This is what
@@ -1182,4 +1182,50 @@ model PbxRuntimeFlag {
   enabled     Boolean
   updatedAt   DateTime @default(now()) @updatedAt
   updatedById String?
+}
+
+// Dinstar "Remote Server" (syslog) ingest — the gateway pushes GSM/SIP/VPN/
+// system events over UDP to a receiver sidecar, which forwards parsed lines
+// to POST /api/gateway-events. Single-gateway build (siteId nullable for a
+// later multi-site task). `receivedAt` is the CANONICAL clock everywhere —
+// confirmed live against the real UC2000-VE that its own clock drifts with
+// no NTU configured (showed 2025-12-17 on 2026-09-03); `deviceTime` is
+// display-only, never used for ordering. `sourceIp` records the packet's
+// actual origin since a Tailscale subnet route can SNAT it. `raw` is always
+// populated so a classifier miss in syslog-parse.ts is never data loss.
+enum GatewaySeverity {
+  EMERG
+  ALERT
+  CRIT
+  ERROR
+  WARNING
+  NOTICE
+  INFO
+  DEBUG
+}
+
+enum GatewayCategory {
+  GSM
+  SIP
+  VPN
+  SYSTEM
+  RAW
+}
+
+model GatewayEvent {
+  id         String          @id @default(cuid())
+  receivedAt DateTime        @default(now())
+  deviceTime DateTime?
+  siteId     String?
+  sourceIp   String?
+  severity   GatewaySeverity
+  category   GatewayCategory
+  eventType  String?
+  port       Int?
+  message    String
+  raw        String
+
+  @@index([receivedAt])
+  @@index([category, receivedAt])
+  @@index([eventType, receivedAt])
 }

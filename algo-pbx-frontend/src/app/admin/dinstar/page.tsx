@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/client/api";
 
 interface DiscoveredHost {
@@ -170,6 +171,13 @@ export default function DinstarWizardPage() {
       <p className="max-w-2xl text-center text-xs text-tertiary">
         Finds and configures the Dinstar UC2000 SIM gateway automatically. Every step can be entered
         manually if automation doesn&apos;t find what you need.
+      </p>
+      <p className="text-xs text-tertiary">
+        Gateway syslog events (call errors, port/registration state, SIM issues) are on{" "}
+        <Link href="/admin/system" className="text-cyan hover:underline">
+          System Readiness
+        </Link>
+        , under &quot;Gateway events.&quot;
       </p>
 
       <div className="flex gap-2 text-xs text-tertiary">

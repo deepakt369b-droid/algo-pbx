@@ -250,6 +250,12 @@ services:
       AUTH_URL: "${AUTH_URL}"
       AUTH_TRUST_HOST: "${AUTH_TRUST_HOST:-true}"
       CDR_INGEST_SECRET: "${CDR_INGEST_SECRET}"
+      # Auth for POST /api/gateway-events — the bearer secret
+      # gateway-syslog-listener.ts's sidecar presents. Same shared-secret
+      # pattern as CDR_INGEST_SECRET above; without this set here (not just
+      # on the listener's own service block) isAuthorizedIngest() reads
+      # undefined and every ingest 401s.
+      GATEWAY_INGEST_SECRET: "${GATEWAY_INGEST_SECRET}"
       # Unattended cron auth for POST /api/admin/messaging/sms/poll — see
       # .env.example's crontab line.
       SMS_POLL_SECRET: "${SMS_POLL_SECRET}"
@@ -402,6 +408,42 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - algo-net
+    depends_on:
+      web:
+        condition: service_healthy
+
+  # 5b. Dinstar gateway syslog listener — a standalone UDP intake process
+  # for the gateway's Diagnostic -> Syslog forwarding feature (NOT the
+  # generic Tools -> Remote Server page, an unrelated feature). Deliberately
+  # NOT part of the `web` service, same reasoning as `cdr-listener` above:
+  # a small, isolated process facing untrusted network input (a UDP socket
+  # with no auth at the syslog transport layer) that can be restarted
+  # independently and keeps the web tier's own attack surface unchanged.
+  #
+  # network_mode: host (like `asterisk` and `coturn` above) — NOT the
+  # `algo-net` bridge `cdr-listener` uses. This process must bind the VPS's
+  # actual Tailscale interface IP on a specific port; a bridge network only
+  # ever gives it a private 172.x address with no route to the tailnet the
+  # Dinstar gateway is reached over. Reaches `web` via the SAME loopback
+  # port `web`'s own `ports:` block publishes (127.0.0.1:3000), which host
+  # networking makes directly reachable — no algo-net DNS needed here.
+  gateway-syslog-listener:
+    build:
+      context: ./algo-pbx-frontend
+      dockerfile: Dockerfile
+      target: syslog-listener
+    container_name: algo-gateway-syslog-listener
+    restart: always
+    logging: *default-logging
+    network_mode: host
+    environment:
+      # MUST be the VPS's real Tailscale IP (e.g. `tailscale ip -4`), never
+      # 0.0.0.0 — the listener itself refuses to start without this set,
+      # see gateway-syslog-listener.ts's own startup check. Set in .env.
+      SYSLOG_BIND_IP: "${SYSLOG_BIND_IP}"
+      SYSLOG_BIND_PORT: "${SYSLOG_BIND_PORT:-5514}"
+      GATEWAY_EVENTS_INGEST_URL: "http://127.0.0.1:3000/api/gateway-events"
+      GATEWAY_INGEST_SECRET: "${GATEWAY_INGEST_SECRET}"
     depends_on:
       web:
         condition: service_healthy

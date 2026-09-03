@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/client/api";
+import { GatewayAlertBanner } from "@/components/admin-shell/gateway-alert-banner";
+import { GatewayEventsPanel } from "@/components/admin-shell/gateway-events-panel";
 
 interface HealthCheck {
   id: string;
@@ -108,6 +110,9 @@ export default function SystemPage() {
           );
         })}
       </div>
+
+      <GatewayAlertBanner />
+      <GatewayEventsPanel />
     </div>
   );
 }

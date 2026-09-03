@@ -116,3 +116,22 @@ USER nextjs
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=20s \
     CMD node -e "const fs=require('fs');try{const age=Date.now()-Number(fs.readFileSync(process.env.CDR_LISTENER_HEARTBEAT_PATH||'/tmp/cdr-listener-heartbeat','utf8'));process.exit(age<90000?0:1);}catch{process.exit(1);}"
 CMD ["npx", "tsx", "scripts/ami-cdr-listener.ts"]
+
+# Separate target for the Dinstar gateway syslog listener
+# (docker-compose.yml's `gateway-syslog-listener` service). Same reasoning
+# as the `cdr-listener` target immediately above: reuses `deps`'s full
+# node_modules (tsx is this process's only real dependency) plus the raw
+# source rather than the Next standalone `runner` image, which has no
+# node_modules/scripts for a second process to run from. No HEALTHCHECK
+# yet — unlike cdr-listener's AMI TCP connection, a UDP socket has no
+# "connected" state to poll; a heartbeat-file check can be added once this
+# listener has real traffic to prove itself against.
+FROM node:20-alpine AS syslog-listener
+WORKDIR /app
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
+COPY scripts ./scripts
+COPY src/lib ./src/lib
+USER nextjs
+CMD ["npx", "tsx", "scripts/gateway-syslog-listener.ts"]

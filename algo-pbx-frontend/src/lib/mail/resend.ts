@@ -76,6 +76,33 @@ export async function sendPasswordResetEmail(to: string, name: string, resetUrl:
   throwOnResendError(error);
 }
 
+// Dinstar gateway critical-event alert (Diagnostic -> Syslog forwarding,
+// see api/gateway-events and lib/dinstar/gateway-alerts.ts). Unlike the
+// two senders above, this one is genuinely optional: GATEWAY_ALERT_EMAIL
+// has no `default`, so an unconfigured deployment just never calls this —
+// the ingest route checks that first and falls back to in-app-only
+// (the dedicated gateway alert banner on /admin/system, deliberately NOT
+// the existing top-bar HealthPill, which is a different, already-failing
+// indicator for an unrelated reason — see that banner component's own
+// header comment).
+export async function sendGatewayAlertEmail(to: string, alert: { type: string; message: string; port: number | null }): Promise<void> {
+  const from = (await getSetting("INVITE_FROM_EMAIL")) || "invites@algopbx.local";
+  const resend = await getClient();
+  const { error } = await resend.emails.send({
+    from,
+    to,
+    subject: `Algo PBX — gateway alert: ${alert.type}`,
+    html: `
+      <p>The Dinstar gateway reported a critical event.</p>
+      <p><strong>Type:</strong> ${escapeHtml(alert.type)}<br/>
+      ${alert.port !== null ? `<strong>Port:</strong> ${alert.port}<br/>` : ""}
+      <strong>Message:</strong> ${escapeHtml(alert.message)}</p>
+      <p>See the "Gateway events" panel on <code>/admin/system</code> for the full log.</p>
+    `,
+  });
+  throwOnResendError(error);
+}
+
 // The Resend SDK does NOT throw on an API-level failure (invalid key,
 // unverified sending domain, rejected recipient) — it resolves with
 // { data: null, error: {...} }. Callers that ignore the return value
