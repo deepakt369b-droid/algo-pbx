@@ -14,6 +14,16 @@
 
 server_url: https://vpn.${VM_PUBLIC_DOMAIN}
 
+# Both required by 0.23's config schema (confirmed live: headscale refuses
+# to start without noise.private_key_path specifically — "Fatal config
+# error"). Both live in the persisted headscale_data volume (NOT this
+# read-only bind-mounted config file) so they survive a container
+# recreate; headscale generates each key file itself on first boot if it
+# doesn't already exist at the given path.
+private_key_path: /var/lib/headscale/private.key
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
 # Internal-only — Caddy (docker-compose.yml's `headscale` service comment)
 # reverse-proxies this on the algo-net bridge network; never published to
 # the host.
