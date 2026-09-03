@@ -45,18 +45,56 @@ if [[ -f "${OVPN_DATA_DIR}/pki/ca.crt" ]]; then
   exit 1
 fi
 
+# CORRECTED live on the real deployment VM (2026-09) — the original
+# invocation here was flat-out wrong, caught only by actually running it:
+#   1. `-c AES-256-CBC -a SHA256` — WRONG FLAGS. Confirmed via
+#      `ovpn_genconfig --help` on the real image: `-c` is a boolean
+#      "enable client-to-client" switch (no value), not a cipher flag —
+#      there is no plain `-c`/`--cipher` flag for the data-channel
+#      cipher at all. The generated openvpn.conf had NEITHER a `cipher`
+#      nor an `auth` directive — meaning it would have silently fallen
+#      back to OpenVPN's own modern AEAD defaults, defeating the entire
+#      point of this legacy-compatibility work. Fixed below by appending
+#      `cipher`/`auth` directly, same as tls-version-min already is.
+#   2. No `-s SERVER_SUBNET` was passed, so kylemanna's own default
+#      subnet was used — which is 192.168.255.0/24, NOT 10.8.0.0/24 (this
+#      script's own header used to claim 10.8.0.0/24 was "OpenVPN's own
+#      default" — that was never actually verified and was wrong. Every
+#      other piece of this feature — the syslog dual-homing firewall
+#      rules, the GatewaySite/client-config-dir plan, Headscale's own
+#      config comment — assumes 10.8.0.0/24, so it's now passed
+#      explicitly rather than trusted to any default.
+#   3. `-d` (disable default route) and `-b -D` (disable the DNS-related
+#      pushes) added — this tunnel exists so the VPS can reach ONE
+#      embedded telephony gateway, not to become that device's default
+#      internet route or to reconfigure its DNS. `-n 8.8.8.8 -n 1.1.1.1`
+#      removed (only meaningful paired with DNS pushing, now disabled).
+#   4. The stray `route 192.168.254.0/24` and the default
+#      `status /tmp/...` line ovpn_genconfig emits regardless are
+#      stripped below — the first pushes a route to a subnet that
+#      doesn't exist anywhere in this deployment (harmless but
+#      confusing), the second would otherwise leave two different
+#      `status` directives in the same file alongside the real one this
+#      script appends further down.
 echo "Generating openvpn.conf (legacy-client-compatible settings)..."
 ovpn_genconfig \
   -u "udp://${VM_PUBLIC_IP}:1194" \
-  -n 8.8.8.8 -n 1.1.1.1 \
-  -c AES-256-CBC \
-  -a SHA256
+  -s 10.8.0.0/24 \
+  -d -b -D
+
+sed -i '/^route 192\.168\.254\.0/d; /^status \/tmp\//d' "${OVPN_DATA_DIR}/openvpn.conf"
 
 # ovpn_genconfig has no flags for these — append directly. Order matters
 # less than presence; OpenVPN reads the whole file.
 {
   echo ""
   echo "# --- Legacy-client compatibility (see init-pki.sh's header) ---"
+  echo "# cipher/auth: NOT set via ovpn_genconfig flags (see the header"
+  echo "# comment above on why -c/-a were wrong) — set directly here."
+  echo "# AES-256-CBC (not an AEAD/GCM cipher) and SHA256 auth are what"
+  echo "# the old embedded client can actually negotiate."
+  echo "cipher AES-256-CBC"
+  echo "auth SHA256"
   echo "# tls-version-min 1.0: the old embedded client cannot negotiate"
   echo "# TLS 1.2+, which modern OpenVPN otherwise requires by default."
   echo "tls-version-min 1.0"
@@ -89,7 +127,7 @@ echo "interactively, do not pipe a blank CA passphrase into production:"
 ovpn_initpki
 
 echo ""
-echo "Done. Server identity: 10.8.0.1 (OpenVPN's own default first"
-echo "server-side address for its default 10.8.0.0/24 subnet)."
+echo "Done. Server identity: 10.8.0.1 (the -s 10.8.0.0/24 subnet passed"
+echo "above, NOT a genconfig default — see this script's header)."
 echo "Next: generate a per-site client cert via the requests/clients"
 echo "file-drop contract documented in bridge-watch.sh, not this script."
