@@ -84,6 +84,29 @@ ovpn_genconfig \
 
 sed -i '/^route 192\.168\.254\.0/d; /^status \/tmp\//d' "${OVPN_DATA_DIR}/openvpn.conf"
 
+# Caught live generating the FIRST client cert: `ovpn_getclient` (used by
+# both the manual admin flow and bridge-watch.sh's idempotent re-emit
+# path) does NOT read the server's own openvpn.conf for cipher/auth —
+# it only honors $OVPN_CIPHER/$OVPN_AUTH from ovpn_env.sh, which
+# ovpn_genconfig's own CLI flags (-a/-C/-T) map to ambiguously/
+# unreliably (already burned twice this session trusting genconfig flag
+# semantics that turned out wrong — not gambling a third time). Setting
+# these directly in the persisted env file is the same fix already
+# proven to work live. Without this, every generated client .ovpn
+# silently omits cipher/auth entirely, the exact "legacy-compat work
+# quietly didn't apply" failure mode this whole script exists to avoid —
+# just on the CLIENT config this time instead of the server's.
+# OVPN_ROUTES is also cleared here — it independently persists the same
+# stray default route stripped from openvpn.conf above, and a fresh
+# `ovpn_getclient` run reads this env file, not the already-patched
+# openvpn.conf, so both had to be fixed for the fix to actually hold.
+sed -i \
+  -e 's/^declare -x OVPN_AUTH=$/declare -x OVPN_AUTH=SHA256/' \
+  -e 's/^declare -x OVPN_CIPHER=$/declare -x OVPN_CIPHER=AES-256-CBC/' \
+  -e '/^declare -x OVPN_ROUTES=/d' \
+  "${OVPN_DATA_DIR}/ovpn_env.sh"
+echo 'declare -x OVPN_ROUTES=()' >> "${OVPN_DATA_DIR}/ovpn_env.sh"
+
 # ovpn_genconfig has no flags for these — append directly. Order matters
 # less than presence; OpenVPN reads the whole file.
 {
