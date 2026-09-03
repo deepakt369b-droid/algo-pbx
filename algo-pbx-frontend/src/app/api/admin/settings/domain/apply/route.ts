@@ -38,6 +38,23 @@ https://${domain} {
 
 	reverse_proxy web:3000
 }
+
+# Headscale (OpenVPN/Headscale/connectivity task, Node C) — the fallback
+# connectivity control plane's own subdomain. Same Cloudflare DNS-01
+# token as the block above (one Caddy instance, one cert store); a
+# separate \`tls\` block because this is a different site host, not because
+# it needs a different challenge method. Internal port 8080 matches
+# headscale's config.yaml.template listen_addr — see docker-compose.yml's
+# headscale service comment if that ever changes.
+https://vpn.${domain} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	encode zstd gzip
+
+	reverse_proxy headscale:8080
+}
 `;
 }
 
@@ -61,6 +78,23 @@ https://${domain} {
 // Caddyfile a safe plain-HTTP-only default (see its header) that this
 // route's generated Caddyfile only ever UPGRADES from, never the only
 // thing standing between a fresh deploy and a working web UI.
+//
+// GAP, stated plainly rather than silently worked around (Node C,
+// OpenVPN/Headscale/connectivity task): this route has never created or
+// managed a Cloudflare A record for VM_PUBLIC_DOMAIN itself — it only
+// proves domain ownership for ACME via the `dns cloudflare` DNS-01
+// challenge (a TXT record Caddy manages internally), which doesn't
+// require an A record to exist at all. The main domain's own A record
+// was presumably added by hand in the Cloudflare dashboard at initial
+// setup. There is therefore no existing DNS-upsert mechanism to extend
+// for vpn.<domain> either — it needs the SAME manual step (a grey-cloud/
+// DNS-only A record pointing vpn.<domain> at this VPS's public IP)
+// before Caddy can issue it a cert, documented in the connectivity
+// page's runbook (Node E) rather than automated here. Building a real
+// Cloudflare DNS API write path is a separate, larger feature decision
+// (new credentials scope, error handling, a genuinely destructive
+// operation on the operator's DNS zone) than this task's stated scope —
+// flagged for the coordinator/operator to decide, not improvised.
 export async function POST() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;

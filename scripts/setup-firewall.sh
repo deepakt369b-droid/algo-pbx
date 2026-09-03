@@ -69,6 +69,32 @@ ufw allow in on tailscale0 comment 'Tailscale mesh - full trust'
 # real syslog traffic is captured and that's known for certain.
 ufw allow from 100.64.0.0/10 to any port 5514 proto udp comment 'Dinstar gateway syslog'
 
+# Same syslog receiver, OpenVPN-tunnel path (OpenVPN/Headscale/connectivity
+# task, Node F) — gateway-syslog-listener.ts is dual-homed during the
+# cutover transition: once G2 re-points the gateway's Diagnostic -> Syslog
+# target at 10.8.0.1 (the tunnel's server-side address), events can arrive
+# on EITHER this rule or the Tailscale one above, and both stay active
+# until Tailscale is formally deprecated (G2 step 7) — do not remove the
+# 100.64.0.0/10 rule above when adding this one. Scoped to the tunnel's own
+# /24 (not the whole 10.8.0.0/8 a naive read of "10.x" might suggest),
+# matching the server=10.8.0.1/client=10.8.0.10 addressing Node B
+# documented. Port 514 included alongside 5514 since the gateway's own
+# Remote Server config field takes an arbitrary port and 514 remains a
+# plausible operator choice even though 5514 is what was actually
+# configured live this session.
+ufw allow from 10.8.0.0/24 to any port 514 proto udp comment 'Dinstar gateway syslog - OpenVPN tunnel path'
+ufw allow from 10.8.0.0/24 to any port 5514 proto udp comment 'Dinstar gateway syslog - OpenVPN tunnel path'
+
+# OpenVPN server (openvpn-server service) — the Dinstar gateway's PRIMARY
+# connectivity path (operator decision, supersedes Tailscale once proven
+# live). Unlike every other rule in this file, this one is DELIBERATELY
+# NOT scoped to a private range: a VPN server's whole purpose is remote
+# clients (the Dinstar gateway, and any future site) dialing in from the
+# public internet. Note: Hostinger's own control-panel firewall (separate
+# from ufw, not managed by this script) may ALSO need 1194/udp opened —
+# check that panel if the tunnel still can't connect after this.
+ufw allow 1194/udp comment 'OpenVPN server - Dinstar gateway primary link'
+
 # AMI (5038) and the web app's route to Postgres both cross from a Docker
 # BRIDGE container to a directly-bound HOST socket (asterisk/postgres run
 # outside the bridge or publish to loopback — see manager.conf's own ACL

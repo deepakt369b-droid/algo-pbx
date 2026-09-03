@@ -1,42 +1,257 @@
-# Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE + deployed. S6 WAVs DONE + deployed. CRM/WhatsApp click-through DONE (live-call parts deferred). Deal↔contact linking fix + sidebar label fix DONE + deployed. Dinstar gateway syslog feature BUILT, all gates green, **live traffic still unconfirmed** (SIM ejected mid-diagnosis, see below). 33+ session commits on `main`, NONE pushed (H4), not committed this session either. Read "2026-09-03 session" below.
+# Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE + deployed. S6 WAVs DONE + deployed. CRM/WhatsApp click-through DONE (live-call parts deferred). Deal↔contact linking fix + sidebar label fix DONE + deployed. Dinstar gateway syslog feature DEPLOYED to VPS, gates green, **live traffic still unconfirmed** (SIM ejected mid-diagnosis, see below). Extensions/Dinstar page merge DEPLOYED. Admin-not-a-contact-owner + full country-code picker DEPLOYED. **OpenVPN-primary/Headscale-fallback/connectivity feature BUILT + gated green, NOT yet deployed** — see "OpenVPN/Headscale/connectivity" session below; the live cutover is an explicit human-supervised gate (G2), not run yet. `main` is pushed to `origin/main` as of this session (H4 resolved — operator approved).
 
 ## ▶ "claude continue" — the remaining work, in order
 
-Updated 2026-09-03. Items 1–4 below (deploy, WhatsApp session check, non-live-call
-click-through, S6 WAVs) are **DONE** — see "2026-09-03 session" for what was
-found. Live-call verification is explicitly deferred by the operator to a
-later session. Remaining:
+Updated 2026-09-03 (OpenVPN/Headscale session). Remaining:
 
 1. **Live-call verification (deferred by the operator to a later session)**:
    screen-pop on a real inbound call + the disposition prompt (Operator TODO
    old #3's last bullet), S6 announcement prompt heard on a real call
    (`docs/S6-real-call-test-plan.md`), Manager-merge/Phase MM
    (`LLM.md §30`, never live-call-tested).
-2. ~~Fix the deal↔contact linking gap~~ — **DONE, deployed, live-verified**
-   2026-09-03. See "2026-09-03 session" below.
-3. **Ask the operator about `git push`** (H4) — 44+ unpushed commits, PUBLIC
-   repo. Do not push without an explicit yes.
-4. **Optional / infra decision** — if the operator wants unlimited
-   WhatsApp-Web scroll-back, plan the `OPENWA_ENGINE=whatsapp-web.js` switch
-   (RAM cost — see "To get WhatsApp EXACTLY like WhatsApp Web" below).
-5. **SIM ports 2–4** — still blocked on the operator having phone numbers to
-   scan. Pure ops.
-6. **Dinstar gateway syslog — live traffic verification (deferred by the
-   operator, SIM was ejected mid-diagnosis this session)**: everything is
-   built and gated green (schema, parser, receiver sidecar, ingest route,
-   retention, UI panel, alerts — see "2026-09-03 session, part 3" below),
-   but **zero packets have ever been observed arriving** at the VPS despite
-   the gateway's Diagnostic → Syslog config saving and persisting through a
-   full reboot. Next session, once the operator has re-inserted a SIM:
+2. **G1 — deploy the OpenVPN/Headscale/connectivity infra** (low-risk,
+   reversible, does NOT touch the live call path): rebuild `web`, build the
+   new `openvpn-server`/`openvpn-bridge`/`headscale` services, run the new
+   `GatewaySite` migration, run `pbx_configs/openvpn/init-pki.sh` once. See
+   "OpenVPN/Headscale/connectivity" session below for the exact checklist.
+   Needs operator go-ahead — awaiting it.
+3. **G2 — the live, human-supervised cutover** (only after G1): generate +
+   push the gateway's OpenVPN client cert, confirm the tunnel handshakes
+   (the Dinstar's embedded OpenVPN client is old firmware — cipher/auth
+   mismatch is the expected first failure mode, not a crisis, see below),
+   re-point the SIP trunk, place a real inbound+outbound test call over the
+   tunnel, confirm syslog arrives via the new path, only then deprecate
+   Tailscale. Full checklist in the plan file (see below) and in `LLM.md`.
+4. **Dinstar gateway syslog — live traffic verification (deferred by the
+   operator, SIM was ejected mid-diagnosis)**: everything is built and
+   deployed (schema, parser, receiver sidecar, ingest route, retention, UI
+   panel, alerts), but **zero packets have ever been observed arriving** at
+   the VPS despite the gateway's Diagnostic → Syslog config saving and
+   persisting through a full reboot. Next session, once the operator has
+   re-inserted a SIM:
    place a real call / trigger a real GSM event, confirm a `GatewayEvent`
    row lands, confirm the alert banner + email fire for a critical type,
    and widen `src/lib/dinstar/syslog-parse.ts`'s taxonomy against the real
    captured line shapes (it was built defensively, without ever having
-   seen one — see that file's own header). Also still open: deploy (rebuild
-   `web` + the new `syslog-listener` service, run the real
-   `prisma migrate deploy` for `20260903180000_add_gateway_event` — the
-   migration.sql in that directory is hand-authored, unverified DDL and
-   must not be trusted without that real run naming the migration).
+   seen one — see that file's own header). **Deploy itself is done**: `web`
+   + `gateway-syslog-listener` rebuilt/started, `20260903180000_add_gateway_event`
+   confirmed applied by name (not "no pending"), `GatewayEvent` table
+   verified live via direct schema query, listener confirmed bound to the
+   VPS's Tailscale IP only (`ss -ulnp`), firewall rule active — see
+   "OpenVPN/Headscale/connectivity" session below for the deploy record.
+
+---
+
+## 2026-09-03 session, part 4 — syslog feature deployed, Extensions/Dinstar
+## merge + admin-visibility + country-list fixes deployed, `git push`
+## resolved, OpenVPN/Headscale/connectivity BUILT (not yet deployed)
+
+**`git push` — H4 resolved.** Operator explicitly approved. Pushed
+`1a469a6` (Dinstar syslog feature), `1289099` (Extensions→Dinstar merge),
+`ba3273f`+`f2fbe54` (admin-visibility/country-list fix, the latter pushed
+via the operator's own GitHub Desktop after CLI `git` got blocked
+mid-session by a Windows Application Control policy — see below).
+
+**Dinstar syslog feature deployed.** Before touching the VPS: the VPS's
+git tree had ~40 commits of uncommitted local drift (old CRM/redesign work
+done directly on the box in past sessions, never committed) — backed up
+BOTH via `git stash -u` (kept, not dropped) AND an independent patch-file
+export to `/root/pre-deploy-backup-20260903/` before doing anything, then
+a clean fast-forward pull with zero conflicts (the incoming commits turned
+out to already supersede the stashed content). **The stash is still
+sitting on the VPS, unreviewed — flag for a future session before it's
+ever dropped.** Then: `web` + new `gateway-syslog-listener` service built
+and started, `20260903180000_add_gateway_event` confirmed applied by name
+via `docker exec algo-web node node_modules/prisma/build/index.js migrate
+deploy`, `GatewayEvent` table schema verified directly via `\d`, listener
+log confirmed `listening on 100.64.32.115:5514`, `ss -ulnp` confirmed the
+socket bound to the Tailscale IP only (never `0.0.0.0`), `ufw allow from
+100.64.0.0/10 to any port 5514 proto udp` applied. **Live traffic still
+unconfirmed** (see checklist item 4 above — deferred, SIM ejected
+mid-diagnosis by the operator this session).
+
+**Extensions/Dinstar page merge deployed** (`1289099`) — `/admin/dinstar`
+now tabs Gateway/Extensions via the same `Tabs` pattern `/admin/reports`
+already used; `/admin/extensions` redirects. `web` rebuilt, no migration.
+
+**Admin-visibility + full country-code picker fix, deployed** (`ba3273f`,
+`f2fbe54`). Operator reported (with screenshots) that Admin showed up like
+a normal agent on `/admin/users`' Existing Users list AND was selectable
+as a contact owner on `/admin/contacts`, and that the country picker only
+offered India/UAE + a manual ISO-code fallback. Fixed: `/admin/users`
+filters `role !== "ADMIN"` before rendering the list (still creates/edits
+ADMIN accounts via the form above, just doesn't list them back — operator
+explicitly chose "hide entirely" over a separate section or a dimmed row,
+via `AskUserQuestion`); `activeAgents` in `admin/contacts/page.tsx` now
+excludes ADMIN too, fixing every owner-assignment surface in that file
+(single-add, bulk-import batch owner, the list's owner filter) from one
+change; new `src/lib/countries.ts` builds the full ~245-country
+ISO-3166 list via `libphonenumber-js`'s `getCountries()` +
+`Intl.DisplayNames` (same source `caller-id-format.ts` already uses for
+country names), India/UAE pinned first; both Contacts and DNC bulk-import
+now use the existing `Combobox` primitive (searchable) instead of a plain
+`<select>`, since a flat list of ~245 countries needs search. Verified
+live in production via `claude-in-chrome`: Admin gone from both surfaces,
+searching "united" in the country picker correctly returns UAE/UK/US.
+`f2fbe54` also carries three pre-existing unrelated files (deal↔contact
+linking work from before this session, `agent-shell.tsx`/
+`pipeline-board.tsx`/`crm/deals.ts`) that got swept in by the operator's
+own GitHub Desktop "select all" default — real, legitimate content, just
+bundled with a generic "commit" message; left alone, not rewritten.
+
+**CLI `git` got blocked mid-session** by a Windows Application Control
+policy (`error launching git: An Application Control policy has blocked
+this file` — both Bash's and PowerShell's git.exe, and even the
+operator's own direct terminal command hit the identical error; Windows
+Security's "Protection history" showed nothing, since WDAC/AppLocker log
+to Event Viewer's `CodeIntegrity`/`AppLocker` channels, not there).
+**PowerShell's `git` recovered on its own partway through** (unclear why —
+possibly a policy re-evaluation or a transient EDR scan) and has been used
+for all git/SSH operations since; Bash's own git-wrapper stayed blocked
+for unrelated commands (even `pwd`) for the rest of the session — use
+PowerShell for anything git-adjacent until this is understood. The
+operator separately used GitHub Desktop successfully throughout (it
+bundles its own git binaries, unaffected by whatever this policy targets).
+
+---
+
+## OpenVPN/Headscale/connectivity — BUILT, gated green, NOT deployed
+## (2026-09-03, task graph, 7 subagent nodes + 1 retry + coordinator fixes)
+
+**Operator decision, explicitly superseding the syslog task's earlier
+Tailscale-only descoping**: the Dinstar's built-in OpenVPN client
+(confirmed live: Network Configuration → VPN Parameter, OpenVPN is its
+only VPN type) becomes the **primary** gateway link; a self-hosted
+**Headscale** becomes the **documented fallback**; Tailscale stays live
+only until OpenVPN is proven end-to-end, then formally deprecated. Full
+plan (task graph, all 4 operator-requested additions) at
+`~/.claude/plans/currently-we-need-a-nifty-lightning.md`.
+
+**Verified live before building, corrected two stale assumptions:**
+- **Gateway LAN IP is `192.168.11.1`, NOT `.20`** — `.20` appeared in
+  stale notes from an earlier session and answers nothing from anywhere
+  (checked from this machine's direct LAN and from the VPS); `.1` answers
+  2/2 locally. Every reference in the build uses `.1`.
+- **The Dinstar's embedded OpenVPN client is old firmware** (its VPN
+  Parameter page offers zero cipher/auth negotiation options — a
+  hallmark of a fixed-suite old client, likely 2.x/2.3-era). A modern
+  OpenVPN server's defaults (AEAD/GCM cipher, TLS 1.2+) will silently
+  fail to handshake against it — `pbx_configs/openvpn/init-pki.sh`
+  deliberately generates `AES-256-CBC`/`SHA256`/`tls-version-min 1.0`/
+  `data-ciphers-fallback` instead, heavily commented so a future session
+  doesn't "fix" this back to something broken. **Expect the tunnel
+  handshake to be the first thing that needs live iteration in G2** — the
+  gateway's own "Download Log" button (same VPN Parameter page) is the
+  first diagnostic if it doesn't come up.
+- The live VPN form (`https://192.168.11.1/enVPNCfg.htm`) is genuinely
+  static HTML with live values embedded — unlike the SIM-port page's
+  documented unverifiable gap, a real GET-and-parse read-back
+  verification was buildable here, and was built (`vpn-push.ts`'s
+  `isOpenVpnEnabledInHtml`).
+- `DINSTAR_WEBUI_USERNAME`/`PASSWORD` already existed as global settings
+  (same section as `DINSTAR_SMS_*`) and were already exactly the
+  credentials the cookie-login needs — the "unify credentials" ask was
+  already satisfied by existing code, no new fields needed.
+- `DINSTAR_LAN_IP` is the single setting driving both the SIP trunk and
+  the SMS provider's base URL, and `provisionDinstarConfig()` already
+  verifies via AMI — reused completely unmodified for the cutover.
+
+**Built (task graph — A/B/C in parallel, then D/E/F/G in parallel once A's
+schema landed, one Node G run had to be retried after it did no real work
+first time, then coordinator-level integration fixes + independent V1
+security review):**
+- **Schema**: `GatewaySite` model (name/gatewayLanIp/tunnelIp/transport/
+  status/handshake+reachable timestamps), `GatewayEvent.siteId` wired to a
+  real FK. Migration `20260903190000_add_gateway_site`.
+- **OpenVPN server**: `openvpn-server` (kylemanna/openvpn, `network_mode:
+  host` so `tun0`/`10.8.0.1` is visible to the syslog listener too,
+  `NET_ADMIN`+`/dev/net/tun`) + a separate `openvpn-bridge` container
+  (same image, same PKI volume, runs only `bridge-watch.sh` — a file-drop
+  request/response queue so the web app can request cert
+  generation/revocation **without ever holding a Docker socket or storing
+  private key material in Postgres**). `pbx_configs/openvpn/init-pki.sh`
+  is the one-time, by-hand PKI bootstrap (CA + server cert, run once,
+  refuses to re-run against an existing PKI).
+- **Headscale**: `headscale` service (official image, SQLite, no
+  Postgres), `vpn.<domain>` Caddy block added to the existing
+  `domain/apply` route's render function (not a parallel mechanism).
+  **Real gap found and flagged, not fabricated**: there is no existing
+  Cloudflare DNS-record-upsert mechanism in this codebase to extend (the
+  main domain's own A record was apparently added by hand originally) —
+  `vpn.<domain>`'s A record needs the same manual step, documented
+  prominently in the connectivity page's runbook, not automated.
+- **Multipart push**: `device-client.ts` extended with a hand-built
+  RFC 2388 multipart body (no new dependency) + a GET helper;
+  `vpn-push.ts` orchestrates login → push → the genuine HTML read-back
+  verification; new `generate-cert`/`push-vpn-config`/`download-cert`
+  routes.
+- **`/admin/connectivity` page**: site table (status color-coded, green
+  only if handshake < 3min), an Add-site wizard (`Step`-union pattern
+  matching the existing `gateway-tab.tsx` precedent — manual download and
+  automated push always offered side-by-side, per the task's explicit
+  "never hide the manual path" requirement), an always-visible runbook
+  (Dinstar click-path + Download Log troubleshooting + Headscale fallback
+  commands + the DNS-record manual step called out prominently).
+- **Connectivity poller + alerts**: 60s cron-secret-gated route (same
+  `PRUNE_SECRET`/`SMS_POLL_SECRET` pattern), extends `gateway-alerts.ts`
+  with `vpn.handshake_stale`/`vpn.tunnel_unreachable`/
+  `headscale.node_offline` on the same shared taxonomy the existing
+  GSM/SIP alerts use (banner needed zero changes). Two honest deviations,
+  not fabrications: ping → TCP:80 connect probe (Alpine has no `ping`
+  binary and ICMP needs root anyway); Headscale node status returns
+  `null`/"not checked" rather than a fabricated UP/DOWN, since checking
+  it needs `docker exec` and `web` deliberately has no Docker socket.
+- **Syslog dual-homing**: `gateway-syslog-listener.ts` now optionally
+  binds a second IP (`SYSLOG_BIND_IP_SECONDARY`) for the OpenVPN tunnel
+  path during the transition window; matching `ufw` rule for
+  `10.8.0.0/24`.
+- **Cutover mechanism**: `site-cutover.ts` + `POST .../cutover` — calls
+  the existing unmodified `provisionDinstarConfig()`, explicitly NOT
+  wired into any automated trigger (grepped every call site to confirm),
+  ADMIN-only, explicitly documents (in code AND in the audit row itself:
+  `syslogRemoteServerRetargeted: false`) that it does NOT re-point the
+  gateway's own Diagnostic → Syslog target — that's a separate manual G2
+  step.
+
+**Independent V1 security review (fresh subagent, no prior context) found
+3 real issues, all fixed by the coordinator, gates re-run clean after:**
+1. **Medium** — `generate-cert`'s stale-sentinel cleanup tried to
+   `unlink()` files in a directory mounted **read-only** into `web`
+   (deliberately, so the app can never hold write access to real private
+   keys) — the cleanup silently no-op'd, so a leftover `.error` from a
+   prior failed attempt could be misread as the current request's result.
+   **Fixed**: moved the cleanup into `bridge-watch.sh`, which has genuine
+   read-write access to the same volume.
+2. **Low** — `push-vpn-config` was the one route in the set that didn't
+   independently re-validate `GatewaySite.name` against the same
+   `^[A-Za-z0-9_-]{1,64}$` allowlist its sibling routes (and
+   `bridge-watch.sh` itself) all enforce before building a filesystem
+   path — currently unexploitable (name is Zod-validated and immutable at
+   creation) but broke the stated defense-in-depth guarantee. **Fixed**:
+   added the same check.
+3. **Medium** — `cutoverToSite()` returned `ok:true`/HTTP 200 even when
+   `provisionDinstarConfig()`'s own verification failed, and
+   unconditionally set `GatewaySite.transport = "OPENVPN"` regardless of
+   whether the trunk re-point was ever confirmed live. **Fixed**:
+   `transport` is now only set when `provision.verified` is true; the
+   route now returns HTTP 502 (with the full result body) when
+   verification failed. Deliberately did NOT add an automatic rollback of
+   `DINSTAR_LAN_IP` — a rollback that isn't itself re-verified could leave
+   Postgres and whatever Asterisk actually has loaded in a WORSE
+   disagreement than surfacing the failure loudly for the human G2
+   operator to handle directly.
+
+**Gates, after all fixes**: typecheck clean, 435/435 tests, lint clean,
+build clean. **Not deployed, not committed to git.**
+
+**Explicitly NOT done**: G1 (infra deploy — needs operator go-ahead), G2
+(the live, human-supervised cutover — needs a real gateway/SIM session,
+same framing as the syslog task's live diagnosis), the manual Cloudflare
+`vpn.<domain>` A record, actually running `init-pki.sh` on the VPS,
+building a "Cutover" button in the UI (the route exists, deliberately
+nothing calls it yet — G2 is meant to be invoked directly by an admin
+during the supervised session, not from a UI button that could be
+misclicked outside that context).
 
 ---
 

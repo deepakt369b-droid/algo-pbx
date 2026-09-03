@@ -40,6 +40,7 @@
 // apply-and-verify design, not an oversight.
 
 import https from "node:https";
+import { randomBytes } from "node:crypto";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -173,4 +174,114 @@ export function loginToDevice(host: string, username: string, password: string):
  * /goform/PortCfg) using an already-obtained session cookie. */
 export function postForm(host: string, cookie: string, path: string, formBody: string): Promise<DeviceRequestResult> {
   return request(host, path, { method: "POST", body: formBody, cookie });
+}
+
+/** GET a page from an authenticated admin-UI endpoint using an
+ * already-obtained session cookie — added for vpn-push.ts's read-back
+ * verification (re-fetching /enVPNCfg.htm to confirm OpenVPNEnable
+ * actually rendered as checked, since unlike the SIM-port page this one is
+ * static HTML with live values embedded and genuinely re-readable). Reuses
+ * the same shared insecureAgent as every other request in this module —
+ * no separate connection pool to the same host. */
+export function getPage(host: string, cookie: string, path: string): Promise<DeviceRequestResult> {
+  return request(host, path, { method: "GET", cookie });
+}
+
+export interface MultipartFile {
+  /** The form field name the device expects the file under (e.g. "opvn"). */
+  fieldName: string;
+  filename: string;
+  content: Buffer;
+}
+
+/** Builds a real RFC 2388 multipart/form-data body by hand — added for the
+ * VPN Parameter form (POST /goform/VPNCfg, confirmed live to be
+ * enctype="multipart/form-data" because it includes a file input), which
+ * postForm()'s urlencoded-only body can't express. No new dependency:
+ * Node's Buffer concatenation is entirely sufficient for a body this
+ * simple (a handful of plain fields + one file part), matching this
+ * module's existing zero-dependency style. */
+export function buildMultipartBody(fields: Record<string, string>, file: MultipartFile, boundary: string): Buffer {
+  const CRLF = "\r\n";
+  const parts: Buffer[] = [];
+
+  for (const [name, value] of Object.entries(fields)) {
+    parts.push(
+      Buffer.from(
+        `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"${CRLF}${CRLF}${value}${CRLF}`,
+        "utf8"
+      )
+    );
+  }
+
+  parts.push(
+    Buffer.from(
+      `--${boundary}${CRLF}Content-Disposition: form-data; name="${file.fieldName}"; filename="${file.filename}"${CRLF}Content-Type: application/octet-stream${CRLF}${CRLF}`,
+      "utf8"
+    )
+  );
+  parts.push(file.content);
+  parts.push(Buffer.from(CRLF, "utf8"));
+
+  parts.push(Buffer.from(`--${boundary}--${CRLF}`, "utf8"));
+
+  return Buffer.concat(parts);
+}
+
+/** POST a multipart/form-data body (plain fields + one file part) to an
+ * authenticated admin-UI endpoint using an already-obtained session
+ * cookie — the file-upload counterpart to postForm(). Field/filename
+ * values are the operator's own settings/generated artifacts (DINSTAR_WEBUI_*,
+ * a server-generated .ovpn filename), never raw end-user input, so no
+ * additional escaping beyond the boundary/CRLF structure itself is
+ * needed — the same trust boundary postForm()'s URLSearchParams-encoded
+ * body already relies on. */
+export function postMultipart(
+  host: string,
+  cookie: string,
+  path: string,
+  fields: Record<string, string>,
+  file: MultipartFile
+): Promise<DeviceRequestResult> {
+  return new Promise((resolve) => {
+    const boundary = `----AlgoPBX${randomBytes(16).toString("hex")}`;
+    const body = buildMultipartBody(fields, file, boundary);
+
+    const req = https.request(
+      {
+        host,
+        port: 443,
+        path,
+        method: "POST",
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": String(body.length),
+          Cookie: cookie,
+        },
+        agent: insecureAgent,
+        timeout: REQUEST_TIMEOUT_MS,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            ok: (res.statusCode ?? 0) < 400,
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+            location: res.headers.location,
+          });
+        });
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ ok: false, status: 0, body: "", error: `Timed out after ${REQUEST_TIMEOUT_MS}ms.` });
+    });
+    req.on("error", (err) => {
+      resolve({ ok: false, status: 0, body: "", error: err.message });
+    });
+    req.write(body);
+    req.end();
+  });
 }

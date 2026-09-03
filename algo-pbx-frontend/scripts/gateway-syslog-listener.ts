@@ -29,21 +29,39 @@
 // GSM/call event be tried next. Do not assume this listener has been
 // proven to receive real gateway traffic; it has only been built to be
 // correct once traffic does arrive.
+//
+// DUAL-HOMING (OpenVPN/Headscale/connectivity task, Node F, 2026-09-03):
+// G2's live cutover re-points the gateway's Diagnostic -> Syslog Remote
+// Server target at 10.8.0.1 (the OpenVPN tunnel's server-side address,
+// host-visible here because openvpn-server also runs network_mode: host).
+// Both the Tailscale path and the OpenVPN path must keep receiving during
+// the transition window — the operator explicitly deferred deprecating
+// Tailscale until G2 step 7 confirms the OpenVPN path works end-to-end, so
+// dropping Tailscale-path events before then would be a real, silent data
+// loss regression. SYSLOG_BIND_IP_SECONDARY (optional) opens a second
+// socket on the same port when set; unset, behavior is byte-for-byte
+// identical to before this change — no default second bind, same
+// "never assume a wildcard address" posture as the primary bind below.
 
 import dgram from "node:dgram";
 
-const BIND_IP = process.env.SYSLOG_BIND_IP;
 const BIND_PORT = Number(process.env.SYSLOG_BIND_PORT || 5514);
 const INGEST_URL = process.env.GATEWAY_EVENTS_INGEST_URL || "http://127.0.0.1:3000/api/gateway-events";
 const INGEST_SECRET = process.env.GATEWAY_INGEST_SECRET || "";
 
+const PRIMARY_BIND_IP = process.env.SYSLOG_BIND_IP;
+// Optional — only set once G2's cutover has re-pointed the gateway at
+// 10.8.0.1 and dual-homing is actually needed. Left unset, this process
+// binds only the primary (Tailscale) address, exactly as before.
+const SECONDARY_BIND_IP = process.env.SYSLOG_BIND_IP_SECONDARY;
+
 // Fail loudly rather than default to 0.0.0.0 — a wildcard bind on a
 // syslog-over-UDP port facing the internet (this VPS's other interface) is
 // exactly the kind of quiet misconfiguration that turns into an open relay
-// or a log-injection vector. The gateway is reached ONLY over the
-// Tailscale tailnet (LLM.md hard constraint), so this must be told the
-// VPS's own tailnet IP explicitly — never assumed.
-if (!BIND_IP) {
+// or a log-injection vector. The gateway is reached over Tailscale and (once
+// G2 lands) the OpenVPN tunnel — this must be told each address explicitly,
+// never assumed.
+if (!PRIMARY_BIND_IP) {
   console.error("gateway-syslog-listener: SYSLOG_BIND_IP must be set to the VPS's Tailscale IP. Refusing to bind 0.0.0.0. Exiting.");
   process.exit(1);
 }
@@ -66,6 +84,10 @@ interface CapturedLine {
   receivedAt: string;
 }
 
+// One shared batch/flush pipeline across BOTH sockets — a line's downstream
+// handling (batching, POST, drop-counting) doesn't care which interface it
+// arrived on; only `sourceIp` (already per-datagram, from `rinfo`) carries
+// that distinction through to the ingest route.
 let buffer: CapturedLine[] = [];
 let flushTimer: NodeJS.Timeout | null = null;
 let droppedOversized = 0;
@@ -108,9 +130,7 @@ async function flush() {
   }
 }
 
-const socket = dgram.createSocket("udp4");
-
-socket.on("message", (msg, rinfo) => {
+function handleDatagram(msg: Buffer, rinfo: { address: string }) {
   try {
     if (msg.length > MAX_LINE_BYTES) {
       droppedOversized++;
@@ -135,15 +155,28 @@ socket.on("message", (msg, rinfo) => {
     droppedParseError++;
     console.error("gateway-syslog-listener: failed to handle datagram, dropping:", err);
   }
-});
+}
 
-socket.on("error", (err) => {
-  console.error("gateway-syslog-listener: socket error:", err);
-});
+/** Binds one UDP socket to `bindIp:BIND_PORT`, wired to the shared
+ * datagram handler above. Used for both the primary (Tailscale) and,
+ * when set, the secondary (OpenVPN tunnel) bind — identical handling,
+ * only the bound address differs. */
+function bindSocket(bindIp: string, label: string): dgram.Socket {
+  const socket = dgram.createSocket("udp4");
+  socket.on("message", handleDatagram);
+  socket.on("error", (err) => {
+    console.error(`gateway-syslog-listener: socket error (${label}, ${bindIp}):`, err);
+  });
+  socket.bind(BIND_PORT, bindIp, () => {
+    console.log(`gateway-syslog-listener: listening on ${bindIp}:${BIND_PORT} (${label}), forwarding to ${INGEST_URL}`);
+  });
+  return socket;
+}
 
-socket.bind(BIND_PORT, BIND_IP, () => {
-  console.log(`gateway-syslog-listener: listening on ${BIND_IP}:${BIND_PORT}, forwarding to ${INGEST_URL}`);
-});
+const sockets: dgram.Socket[] = [bindSocket(PRIMARY_BIND_IP, "primary/tailscale")];
+if (SECONDARY_BIND_IP) {
+  sockets.push(bindSocket(SECONDARY_BIND_IP, "secondary/openvpn"));
+}
 
 // Periodic visibility into drop counts — this process otherwise runs
 // silent between events, and a steadily climbing drop count with zero
@@ -156,5 +189,10 @@ setInterval(() => {
 }, 60_000).unref();
 
 process.on("SIGTERM", () => {
-  socket.close(() => process.exit(0));
+  let remaining = sockets.length;
+  const done = () => {
+    remaining--;
+    if (remaining <= 0) process.exit(0);
+  };
+  for (const s of sockets) s.close(done);
 });

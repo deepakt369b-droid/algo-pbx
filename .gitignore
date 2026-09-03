@@ -24,6 +24,13 @@ pbx_configs/keys/*
 !pbx_configs/keys/README.md
 pbx_configs/generated/*
 !pbx_configs/generated/README.md
+# OpenVPN server bridge — requests/ is operational state (empty marker
+# files), clients/ contains real .ovpn files with embedded private keys.
+# PKI itself (CA/server/client certs+keys) lives in the openvpn_data named
+# Docker volume, never here at all — see pbx_configs/openvpn/README.md.
+pbx_configs/openvpn/requests/*
+pbx_configs/openvpn/clients/*
+pbx_configs/openvpn/ccd/*
 
 # Music-on-hold audio — licensing is an operator concern, don't commit media.
 # moh/README.md documents provenance and lives OUTSIDE this directory

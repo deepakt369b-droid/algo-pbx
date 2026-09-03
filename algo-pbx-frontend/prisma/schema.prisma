@@ -1186,8 +1186,9 @@ model PbxRuntimeFlag {
 
 // Dinstar "Remote Server" (syslog) ingest — the gateway pushes GSM/SIP/VPN/
 // system events over UDP to a receiver sidecar, which forwards parsed lines
-// to POST /api/gateway-events. Single-gateway build (siteId nullable for a
-// later multi-site task). `receivedAt` is the CANONICAL clock everywhere —
+// to POST /api/gateway-events. `siteId` links to GatewaySite (below) once a
+// site record exists for the gateway an event came from; still nullable
+// since it's optional at ingest time. `receivedAt` is the CANONICAL clock everywhere —
 // confirmed live against the real UC2000-VE that its own clock drifts with
 // no NTU configured (showed 2025-12-17 on 2026-09-03); `deviceTime` is
 // display-only, never used for ordering. `sourceIp` records the packet's
@@ -1217,6 +1218,7 @@ model GatewayEvent {
   receivedAt DateTime        @default(now())
   deviceTime DateTime?
   siteId     String?
+  site       GatewaySite?    @relation(fields: [siteId], references: [id])
   sourceIp   String?
   severity   GatewaySeverity
   category   GatewayCategory
@@ -1228,4 +1230,51 @@ model GatewayEvent {
   @@index([receivedAt])
   @@index([category, receivedAt])
   @@index([eventType, receivedAt])
+  @@index([siteId, receivedAt])
+}
+
+// OpenVPN-primary / Headscale-fallback / Tailscale-legacy gateway
+// connectivity tracking (2026-09-03). One row per physical gateway site —
+// this build starts with exactly one (the UAE office gateway, LAN IP
+// confirmed live as 192.168.11.1 — NOT .20, which appears in stale notes
+// from an earlier session and does not respond on either the local LAN or
+// from the VPS). `transport` records which path is currently authoritative
+// for this site; the migration plan is TAILSCALE (today) -> OPENVPN
+// (primary, once its tunnel is proven live end-to-end: ping + a real
+// inbound/outbound call + syslog arriving via the tunnel) -> HEADSCALE
+// (documented fallback, switched to explicitly, not automatically).
+// `tunnelIp` is the deterministic address assigned via the OpenVPN server's
+// client-config-dir (server 10.8.0.1, this site's client 10.8.0.10) or
+// Headscale's own allocation. No PKI material (CA/cert/key) lives on this
+// model or anywhere in Postgres — the OpenVPN server container owns its own
+// PKI directory in its named volume; this row only tracks identity and
+// observed connectivity state, never secrets.
+enum SiteTransport {
+  TAILSCALE
+  OPENVPN
+  HEADSCALE
+}
+
+enum SiteConnectivityStatus {
+  UNKNOWN
+  UP
+  DEGRADED
+  DOWN
+}
+
+model GatewaySite {
+  id               String                 @id @default(cuid())
+  name             String                 @unique
+  gatewayLanIp     String
+  tunnelIp         String?
+  transport        SiteTransport          @default(TAILSCALE)
+  headscaleNodeKey String?
+  lastHandshakeAt  DateTime?
+  lastReachableAt  DateTime?
+  status           SiteConnectivityStatus @default(UNKNOWN)
+  events           GatewayEvent[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@index([status])
 }

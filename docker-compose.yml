@@ -263,6 +263,10 @@ services:
       # (POST /api/admin/maintenance/prune), same bearer pattern as
       # SMS_POLL_SECRET above.
       PRUNE_SECRET: "${PRUNE_SECRET}"
+      # OpenVPN/Headscale/connectivity task (Node F) — unattended cron auth
+      # for POST /api/admin/gateway-sites/connectivity-check, same bearer
+      # pattern as SMS_POLL_SECRET/PRUNE_SECRET above.
+      CONNECTIVITY_CHECK_SECRET: "${CONNECTIVITY_CHECK_SECRET}"
       # Encrypts every runtime setting stored via /admin/settings or the
       # first-run /setup wizard (src/lib/settings/crypto.ts) — required
       # before either can be used; POST /api/setup refuses without it.
@@ -365,6 +369,49 @@ services:
       # caddy.env and the restart-request marker here; `cert-sync` (its
       # own service below) reads both from the same host path.
       - ./pbx_configs/generated:/generated
+      # OpenVPN/Headscale/connectivity task (Node F) — the connectivity-
+      # check poller reads this ONE file to determine per-site OpenVPN
+      # handshake freshness. Deliberately a `subpath` mount of just
+      # openvpn-status.log from the `openvpn_data` named volume, NOT the
+      # whole volume read-only — that volume also holds the CA/server/
+      # client private keys (see openvpn-server's own volume comment
+      # below), and `web` must never have filesystem access to those even
+      # read-only (same "no PKI material outside the PKI containers"
+      # constraint the openvpn-bridge service was built around). Requires
+      # Docker Engine 20.10+/Compose v2 for volume subpath support — this
+      # stack already requires `docker compose` v2 syntax elsewhere.
+      #
+      # DEPLOY-ORDER CAVEAT, UNVERIFIED AGAINST A LIVE ENGINE: a subpath
+      # mount generally needs its target to already exist inside the
+      # volume — run pbx_configs/openvpn/init-pki.sh AND start
+      # openvpn-server (which is what actually creates openvpn-status.log,
+      # per the `status` directive init-pki.sh appends) BEFORE the first
+      # `docker compose up web` that includes this mount, or `web` may
+      # fail to start / Docker may create an empty directory in place of
+      # the expected file. The connectivity-check route treats a missing
+      # or unreadable file as "no data yet" rather than crashing, but
+      # `web` refusing to START at all over this is a real risk worth a
+      # deliberate check during G1's deploy, not assumed away here.
+      - type: volume
+        source: openvpn_data
+        target: /app/openvpn-status.log
+        read_only: true
+        volume:
+          subpath: openvpn-status.log
+      # OpenVPN/Headscale/connectivity task (Node D) — the two sides of
+      # openvpn-bridge's file-drop contract (see
+      # pbx_configs/openvpn/bridge-watch.sh's header for the full
+      # request/response spec). `web` only ever WRITES empty
+      # <site>.generate/.revoke marker files into requests/, and only ever
+      # READS the resulting <site>.ovpn/.done/.error files from clients/ —
+      # never the other way, hence the asymmetric :ro on clients/ only.
+      # Real bind mounts (not the openvpn_data named volume above), same
+      # host paths openvpn-bridge itself mounts, so a write from one side
+      # is immediately visible to the other with no extra sync step —
+      # matches the existing pjsip_dynamic.conf/pjsip_dinstar.conf pattern
+      # already used elsewhere in this same volumes list.
+      - ./pbx_configs/openvpn/requests:/app/openvpn-requests
+      - ./pbx_configs/openvpn/clients:/app/openvpn-clients:ro
     ports:
       # Loop B0: bind to loopback only. Docker-published ports bypass ufw's
       # INPUT chain entirely, so `"3000:3000"` exposed the whole Next.js app
@@ -442,11 +489,109 @@ services:
       # see gateway-syslog-listener.ts's own startup check. Set in .env.
       SYSLOG_BIND_IP: "${SYSLOG_BIND_IP}"
       SYSLOG_BIND_PORT: "${SYSLOG_BIND_PORT:-5514}"
+      # OpenVPN/Headscale/connectivity task (Node F) — optional second bind
+      # (10.8.0.1, the OpenVPN tunnel's server-side address) so this
+      # listener keeps receiving on BOTH paths during the cutover
+      # transition. Unset by default — set only after G2 re-points the
+      # gateway's Diagnostic -> Syslog target; see the script's own header.
+      SYSLOG_BIND_IP_SECONDARY: "${SYSLOG_BIND_IP_SECONDARY:-}"
       GATEWAY_EVENTS_INGEST_URL: "http://127.0.0.1:3000/api/gateway-events"
       GATEWAY_INGEST_SECRET: "${GATEWAY_INGEST_SECRET}"
     depends_on:
       web:
         condition: service_healthy
+
+  # 5c. OpenVPN server — the Dinstar gateway's PRIMARY connectivity path
+  # (operator decision: OpenVPN primary, Headscale fallback, Tailscale
+  # deprecated once this is proven live end-to-end — see the task plan).
+  # kylemanna/docker-openvpn: bundles easyrsa PKI management
+  # (ovpn_genconfig/ovpn_initpki/ovpn_getclient/easyrsa) so this doesn't
+  # need hand-rolled PKI scripting — see pbx_configs/openvpn/README.md for
+  # the one-time setup this image still needs (PKI init is NOT automatic).
+  #
+  # network_mode: host, not the algo-net bridge — NOT just "matches
+  # coturn/asterisk convention" here, it's actually required: the tun0
+  # interface OpenVPN creates only exists inside whichever network
+  # namespace this container runs in. On bridge networking, 10.8.0.1 (the
+  # tunnel's server-side address) would only be reachable from INSIDE this
+  # container — but gateway-syslog-listener (also network_mode: host, see
+  # its own block above) needs to bind that same address once the syslog
+  # dual-homing work lands, and `web` needs to reach it too. Host
+  # networking makes tun0 a real, host-visible interface both of those can
+  # actually use.
+  #
+  # LEGACY-CLIENT COMPATIBILITY: the Dinstar's embedded OpenVPN client is
+  # old firmware (confirmed live: its VPN Parameter page offers no
+  # cipher/auth negotiation at all — a fixed-suite old client). openvpn.conf
+  # (generated by pbx_configs/openvpn/init-pki.sh, NOT this compose file)
+  # deliberately sets AES-256-CBC / SHA256 / tls-version-min 1.0 /
+  # data-ciphers-fallback rather than modern AEAD-cipher defaults, which
+  # would silently fail to handshake against it — see that script's own
+  # header for the full reasoning. Don't "modernize" the generated config
+  # without re-testing against the real device.
+  openvpn-server:
+    image: kylemanna/openvpn
+    container_name: algo-openvpn-server
+    restart: always
+    logging: *default-logging
+    # Explicit rather than relying on the image's own implicit default —
+    # ovpn_run is the image's normal "start the actual VPN daemon" command
+    # (as opposed to ovpn_genconfig/ovpn_initpki, the one-time setup
+    # commands run manually via init-pki.sh, never as this service's
+    # steady-state command).
+    command: ["ovpn_run"]
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      # PKI + generated openvpn.conf live ONLY in this named volume — never
+      # bind-mounted to the host checkout, so private key material can
+      # never end up in this git-tracked directory even by accident. See
+      # pbx_configs/openvpn/README.md.
+      - openvpn_data:/etc/openvpn
+      - ./pbx_configs/openvpn/init-pki.sh:/scripts/init-pki.sh:ro
+    environment:
+      VM_PUBLIC_IP: "${VM_PUBLIC_IP}"
+
+  # 5d. openvpn-bridge — the ONLY way the web app can get a client cert
+  # generated/revoked without ever holding a Docker socket itself or
+  # storing OpenVPN private key material in Postgres (see the task plan's
+  # "Critical design constraint" on this node). Same image, same shared
+  # openvpn_data volume as openvpn-server above, but this container never
+  # runs the VPN daemon — its entrypoint is bridge-watch.sh, a poll loop
+  # that watches a file-drop request queue and runs easyrsa/ovpn_getclient
+  # against the shared PKI directory. See bridge-watch.sh's own header for
+  # the exact request/response file contract the web app's caller-side
+  # code (a later task) must match.
+  #
+  # requests/ and clients/ are real host bind-mounts (unlike the PKI
+  # volume above) SPECIFICALLY so `web` can be given its own mount of the
+  # same two directories once its caller-side route is built — requests/
+  # holds only empty marker files, but clients/ holds real .ovpn files
+  # with embedded private keys, so both are gitignored
+  # (pbx_configs/openvpn/README.md documents this split explicitly).
+  #
+  # NOT network_mode: host — this container never touches a tun interface
+  # or does any routing, it only runs local CLI commands against a shared
+  # volume; algo-net is fine (and it doesn't strictly need to reach
+  # anything else on it either, kept for compose convention consistency).
+  openvpn-bridge:
+    image: kylemanna/openvpn
+    container_name: algo-openvpn-bridge
+    restart: always
+    logging: *default-logging
+    entrypoint: ["/bin/bash", "/scripts/bridge-watch.sh"]
+    networks:
+      - algo-net
+    volumes:
+      - openvpn_data:/etc/openvpn
+      - ./pbx_configs/openvpn/bridge-watch.sh:/scripts/bridge-watch.sh:ro
+      - ./pbx_configs/openvpn/requests:/requests
+      - ./pbx_configs/openvpn/clients:/clients
+    depends_on:
+      - openvpn-server
 
   # 6. OpenWA sidecar (Workstream E) — WhatsApp engine, MIT-licensed,
   # vendored under vendor/openwa (see that directory's README for why
@@ -641,11 +786,52 @@ services:
       caddy:
         condition: service_started
 
+  # 9. Headscale — self-hosted Tailscale control plane, the DOCUMENTED
+  # FALLBACK connectivity path for a gateway site (OpenVPN is primary, see
+  # the openvpn-server service above and /admin/connectivity). Own
+  # subdomain (vpn.${VM_PUBLIC_DOMAIN}) behind Caddy — see
+  # POST /api/admin/settings/domain/apply's Caddyfile-render extension.
+  # Builds from Dockerfile.headscale (envsubst's VM_PUBLIC_DOMAIN into
+  # config.yaml at container start, same reasoning Dockerfile.caddy's own
+  # header gives for customizing a stock image with a small build step).
+  # SQLite-backed (no Postgres — nothing else in this single-VPS stack
+  # needs HA either). Admin CLI (user/preauth-key creation) goes through
+  # `docker exec algo-headscale headscale ...` against the Unix socket in
+  # config.yaml, not a published gRPC port.
+  headscale:
+    build:
+      context: .
+      dockerfile: Dockerfile.headscale
+    container_name: algo-headscale
+    restart: always
+    logging: *default-logging
+    environment:
+      VM_PUBLIC_DOMAIN: "${VM_PUBLIC_DOMAIN}"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      # Persists the SQLite DB + Noise/WireGuard keys — without this every
+      # node registration and pre-auth key is wiped on container
+      # recreate, same failure mode openwa_data's own comment documents
+      # for OpenWA sessions.
+      - headscale_data:/var/lib/headscale
+    networks:
+      - algo-net
+
 volumes:
   postgres_data:
   openwa_data:
   caddy_data:
   caddy_config:
+  headscale_data:
+  # PKI (CA/server/client certs+keys) + generated openvpn.conf for the
+  # OpenVPN server — see pbx_configs/openvpn/README.md for why this is a
+  # named Docker volume, not a bind mount into the git-tracked checkout.
+  openvpn_data:
 
 networks:
   algo-net:

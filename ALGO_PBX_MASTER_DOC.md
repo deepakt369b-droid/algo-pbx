@@ -466,7 +466,21 @@ exten => s,1,NoOp(Inbound Call Received from Dinstar Gateway)
 
 ### 6.3 Tailscale Dinstar Subnet Routing Guide
 
-To link the physical Dinstar box in the UAE office to the cloud VM:
+**Superseded as of 2026-09-03 (Tailscale kept only as fallback-of-last-
+resort).** The operator has moved the gateway link to a two-tier design:
+the Dinstar's own **built-in OpenVPN client** (Network Configuration → VPN
+Parameter on its web UI) is now the **primary** path to a self-hosted
+OpenVPN server on the VPS, with a self-hosted **Headscale** instance as
+the **documented fallback**. Tailscale (the guide below) stays live only
+until the OpenVPN path is proven end-to-end (see `LLM.md`'s Build Log and
+`handoff.md`'s "OpenVPN/Headscale/connectivity" session for the full
+migration record, the new `/admin/connectivity` page, and the
+human-supervised cutover checklist) — then it's formally deprecated,
+scripts kept for reference. This subsection is left as-is below for
+historical/fallback reference, not rewritten.
+
+To link the physical Dinstar box in the UAE office to the cloud VM
+(legacy/fallback-of-last-resort path):
 
 ```bash
 # -------------------------------------------------------------

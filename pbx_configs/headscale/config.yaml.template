@@ -1,0 +1,50 @@
+# Headscale config template (Node C). ${VM_PUBLIC_DOMAIN} is substituted at
+# container start by docker-entrypoint.sh — see that file and
+# Dockerfile.headscale for why. NOT hand-edited; the rendered
+# /etc/headscale/config.yaml lives only inside the container.
+#
+# UNVERIFIED against a live `headscale serve` run in this environment —
+# this is a best-effort config for headscale 0.23.0's schema, written from
+# documentation, not exercised. First real boot on the deployment VM must
+# confirm it starts clean (check `docker logs algo-headscale`) before this
+# comment can be removed.
+
+server_url: https://vpn.${VM_PUBLIC_DOMAIN}
+
+# Internal-only — Caddy (docker-compose.yml's `headscale` service comment)
+# reverse-proxies this on the algo-net bridge network; never published to
+# the host.
+listen_addr: 0.0.0.0:8080
+
+metrics_listen_addr: 127.0.0.1:9090
+
+# Admin CLI (user/preauth-key management — see
+# src/lib/headscale-runbook.ts's command templates) talks to headscale
+# over this Unix socket via `docker exec algo-headscale headscale ...`,
+# not the network — no gRPC port exposed at all.
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+# derp servers relay traffic when a direct connection can't be established
+# between two nodes — the default (Tailscale's own public DERP map) is
+# fine for a fallback VPN path; this isn't a low-latency requirement here.
+derp:
+  server:
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
+
+log:
+  level: info
+
+# No MagicDNS — this fallback path is used for site-to-gateway connectivity,
+# not general-purpose device DNS resolution.
+dns:
+  magic_dns: false

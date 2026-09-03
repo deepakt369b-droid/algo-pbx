@@ -30,6 +30,7 @@ import {
   Radio,
   Disc3,
   Globe,
+  Wifi,
   Settings,
   Activity,
   LogIn,
@@ -64,6 +65,7 @@ const NAV: NavGroup[] = [
       { href: "/admin/recordings", label: "Recordings", icon: AudioLines },
       { href: "/admin/monitor", label: "Live monitor", icon: Radio },
       { href: "/admin/dinstar", label: "Dinstar gateway", icon: Router },
+      { href: "/admin/connectivity", label: "Connectivity", icon: Wifi },
     ],
   },
   {
