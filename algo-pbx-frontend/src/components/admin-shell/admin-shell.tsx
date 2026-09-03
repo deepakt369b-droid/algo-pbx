@@ -63,7 +63,6 @@ const NAV: NavGroup[] = [
       { href: "/admin/cdr", label: "Call log", icon: Phone },
       { href: "/admin/recordings", label: "Recordings", icon: AudioLines },
       { href: "/admin/monitor", label: "Live monitor", icon: Radio },
-      { href: "/admin/extensions", label: "Extensions", icon: Router },
       { href: "/admin/dinstar", label: "Dinstar gateway", icon: Router },
     ],
   },

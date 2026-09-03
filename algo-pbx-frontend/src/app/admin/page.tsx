@@ -23,7 +23,7 @@ export default async function AdminDashboard() {
         <div className="w-full max-w-3xl rounded-lg border border-border bg-surface p-4 text-sm text-secondary">
           Live call intervention (listen-in / whisper / barge) is unavailable: your account has no
           linked extension. Ask an admin to provision one under{" "}
-          <a href="/admin/extensions" className="text-cyan hover:underline">
+          <a href="/admin/dinstar" className="text-cyan hover:underline">
             Extensions
           </a>
           .
