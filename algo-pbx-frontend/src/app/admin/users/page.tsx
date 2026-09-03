@@ -72,6 +72,13 @@ export default function UsersPage() {
   }, []);
 
   const freePorts = waInstances.filter((w) => !w.assignedUser);
+  // ADMIN accounts don't get an extension/SIM port/WhatsApp OTP and are
+  // never a contact owner — they administer, they don't work the queue as
+  // an agent. Listing them here alongside AGENT/SUPERVISOR rows read as
+  // "admin is just another user," which the operator explicitly doesn't
+  // want. This page still creates/edits ADMIN accounts (see the role
+  // picker above); it just doesn't list them back.
+  const visibleUsers = users.filter((u) => u.role !== "ADMIN");
 
   const create = async () => {
     setCreating(true);
@@ -368,11 +375,11 @@ export default function UsersPage() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">
           Existing Users
         </h2>
-        {users.length === 0 ? (
+        {visibleUsers.length === 0 ? (
           <p className="text-tertiary">None yet.</p>
         ) : (
           <ul className="flex flex-col gap-2 text-sm text-primary">
-            {users.map((u) => (
+            {visibleUsers.map((u) => (
               <li key={u.id} className="flex gap-3 border-t border-border pt-2 first:border-0 first:pt-0">
                 {u.photoPath ? (
                   // eslint-disable-next-line @next/next/no-img-element

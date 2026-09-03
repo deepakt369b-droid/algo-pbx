@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Combobox } from "@/components/ui";
+import { COUNTRY_OPTIONS } from "@/lib/countries";
 
 interface Contact {
   id: string;
@@ -22,15 +23,9 @@ interface AgentOption {
   id: string;
   name: string;
   disabled: boolean;
+  role: "AGENT" | "SUPERVISOR" | "ADMIN";
   extension: { number: string } | null;
 }
-
-// Countries worth surfacing by default — every agent seat is India-based
-// and the GSM trunk is UAE, mirrors src/app/admin/dnc/page.tsx's picker.
-const COMMON_COUNTRIES: { code: string; label: string }[] = [
-  { code: "IN", label: "India (IN)" },
-  { code: "AE", label: "UAE (AE)" },
-];
 
 interface PreviewResult {
   hasHeader: boolean;
@@ -123,7 +118,6 @@ export default function ContactsAdminPage() {
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [bulkCountry, setBulkCountry] = useState("IN");
-  const [customCountry, setCustomCountry] = useState("");
   const [bulkOwnerId, setBulkOwnerId] = useState("");
   const [hasHeaderOverride, setHasHeaderOverride] = useState<boolean | null>(null);
   const [phoneColumnOverride, setPhoneColumnOverride] = useState<number | null>(null);
@@ -134,8 +128,12 @@ export default function ContactsAdminPage() {
   const [bulkError, setBulkError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const effectiveCountry = bulkCountry === "OTHER" ? customCountry.toUpperCase() : bulkCountry;
-  const activeAgents = useMemo(() => agents.filter((a) => !a.disabled), [agents]);
+  // ADMIN is never a contact owner — it administers and allocates contacts
+  // to real agents/supervisors, it doesn't work them itself (operator
+  // requirement). Excluded here rather than just in this one picker so
+  // every owner-assignment surface in this file (single-add, bulk-import
+  // batch owner, the list's owner filter) stays consistent automatically.
+  const activeAgents = useMemo(() => agents.filter((a) => !a.disabled && a.role !== "ADMIN"), [agents]);
   const allTags = useMemo(() => Array.from(new Set(contacts.flatMap((c) => c.tags))).sort(), [contacts]);
 
   const load = (opts?: { q?: string; owner?: string; tag?: string; limit?: number }) => {
@@ -318,7 +316,7 @@ export default function ContactsAdminPage() {
   const buildBulkForm = (mode: "preview" | "commit") => {
     const form = new FormData();
     form.set("mode", mode);
-    form.set("defaultCountry", effectiveCountry);
+    form.set("defaultCountry", bulkCountry);
     if (bulkOwnerId) form.set("ownerId", bulkOwnerId);
     if (hasHeaderOverride !== null) form.set("hasHeader", String(hasHeaderOverride));
     if (phoneColumnOverride !== null) form.set("phoneColumnIndex", String(phoneColumnOverride));
@@ -468,19 +466,15 @@ export default function ContactsAdminPage() {
                   className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
                 />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-secondary">
+              <label className="flex w-40 flex-col gap-1 text-xs text-secondary">
                 Country
-                <select
+                <Combobox
+                  aria-label="Country"
                   value={form.country}
-                  onChange={(e) => setForm({ ...form, country: e.target.value })}
-                  className="rounded-lg border border-border bg-background px-2 py-2 text-sm text-primary outline-none focus:border-cyan"
-                >
-                  {COMMON_COUNTRIES.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, country: v ?? "IN" })}
+                  options={COUNTRY_OPTIONS.map((c) => ({ value: c.code, label: c.label }))}
+                  placeholder="Search countries…"
+                />
               </label>
             </div>
 
@@ -675,30 +669,16 @@ export default function ContactsAdminPage() {
           />
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex flex-col gap-1 text-xs text-secondary">
+            <label className="flex w-56 flex-col gap-1 text-xs text-secondary">
               Country for bare (non-+) numbers
-              <select
+              <Combobox
+                aria-label="Country for bare numbers"
                 value={bulkCountry}
-                onChange={(e) => setBulkCountry(e.target.value)}
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
-              >
-                {COMMON_COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.label}
-                  </option>
-                ))}
-                <option value="OTHER">Other (ISO code)…</option>
-              </select>
-            </label>
-            {bulkCountry === "OTHER" && (
-              <input
-                value={customCountry}
-                onChange={(e) => setCustomCountry(e.target.value.slice(0, 2))}
-                placeholder="e.g. US"
-                maxLength={2}
-                className="mt-5 w-16 rounded-lg border border-border bg-background px-2 py-2 text-sm uppercase outline-none focus:border-cyan"
+                onChange={(v) => setBulkCountry(v ?? "IN")}
+                options={COUNTRY_OPTIONS.map((c) => ({ value: c.code, label: c.label }))}
+                placeholder="Search countries…"
               />
-            )}
+            </label>
             <label className="flex flex-col gap-1 text-xs text-secondary">
               Owner for the whole batch
               <select
@@ -721,7 +701,7 @@ export default function ContactsAdminPage() {
           {!preview && !commitResult && (
             <button
               onClick={runPreview}
-              disabled={bulkBusy || (bulkCountry === "OTHER" && customCountry.length !== 2)}
+              disabled={bulkBusy}
               className="rounded-lg bg-blue px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"
             >
               {bulkBusy ? "Parsing…" : "Preview import"}
