@@ -20,6 +20,7 @@ export const DealPatchSchema = z.object({
   value: z.number().nonnegative().max(1_000_000_000).optional(),
   currency: z.string().length(3).optional(),
   companyId: z.string().nullable().optional(),
+  contactId: z.string().nullable().optional(),
   ownerId: z.string().optional(),
   expectedCloseAt: z.coerce.date().nullable().optional(),
 });
@@ -70,6 +71,16 @@ export async function patchDeal(
 ) {
   const before = await db.deal.findUnique({ where: { id: dealId } });
   if (!before) return null;
+
+  // A deal has at most one linked contact today (the picker in the UI is
+  // single-select) — "contactId" replaces whatever was linked rather than
+  // appending, same replace-not-append shape as the create-time link.
+  if (data.contactId !== undefined) {
+    await db.dealContact.deleteMany({ where: { dealId } });
+    if (data.contactId) {
+      await db.dealContact.create({ data: { dealId, contactId: data.contactId, isPrimary: true } });
+    }
+  }
 
   const deal = await db.deal.update({
     where: { id: dealId },

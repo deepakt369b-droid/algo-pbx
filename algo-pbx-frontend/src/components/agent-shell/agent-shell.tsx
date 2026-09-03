@@ -160,7 +160,7 @@ export function AgentShell({
       items: [
         { href: "/agent", label: "Contacts", icon: Users },
         { href: "/agent/call", label: "Call", icon: Phone },
-        { href: "/agent/calls", label: "Calls", icon: History },
+        { href: "/agent/calls", label: "Call History", icon: History },
         { href: "/agent/missed", label: "Missed", icon: PhoneMissed, badge: missedCallsCount },
         { href: "/agent/voicemail", label: "Voicemail", icon: VoicemailIcon, badge: voicemailCount },
       ],
