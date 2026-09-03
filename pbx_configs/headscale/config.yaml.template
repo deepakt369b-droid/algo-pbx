@@ -1,7 +1,10 @@
-# Headscale config template (Node C). ${VM_PUBLIC_DOMAIN} is substituted at
-# container start by docker-entrypoint.sh — see that file and
-# Dockerfile.headscale for why. NOT hand-edited; the rendered
-# /etc/headscale/config.yaml lives only inside the container.
+# Headscale config template (Node C). ${VM_PUBLIC_DOMAIN} is substituted on
+# the HOST by scripts/render-headscale-config.sh (not at container start —
+# the official headscale/headscale image is shell-less/distroless, so a
+# baked-in entrypoint script can't run inside it; see that script's own
+# header for the full reasoning). The rendered
+# pbx_configs/headscale/generated/config.yaml is bind-mounted read-only
+# into the container. NOT hand-edited directly.
 #
 # UNVERIFIED against a live `headscale serve` run in this environment —
 # this is a best-effort config for headscale 0.23.0's schema, written from

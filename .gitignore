@@ -24,6 +24,10 @@ pbx_configs/keys/*
 !pbx_configs/keys/README.md
 pbx_configs/generated/*
 !pbx_configs/generated/README.md
+# Host-rendered headscale config (scripts/render-headscale-config.sh) —
+# same "written by a script from .env, never hand-tracked" convention as
+# pbx_configs/generated/ above; contains the real public domain.
+pbx_configs/headscale/generated/
 # OpenVPN server bridge — requests/ is operational state (empty marker
 # files), clients/ contains real .ovpn files with embedded private keys.
 # PKI itself (CA/server/client certs+keys) lives in the openvpn_data named

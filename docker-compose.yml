@@ -791,24 +791,32 @@ services:
   # the openvpn-server service above and /admin/connectivity). Own
   # subdomain (vpn.${VM_PUBLIC_DOMAIN}) behind Caddy — see
   # POST /api/admin/settings/domain/apply's Caddyfile-render extension.
-  # Builds from Dockerfile.headscale (envsubst's VM_PUBLIC_DOMAIN into
-  # config.yaml at container start, same reasoning Dockerfile.caddy's own
-  # header gives for customizing a stock image with a small build step).
   # SQLite-backed (no Postgres — nothing else in this single-VPS stack
   # needs HA either). Admin CLI (user/preauth-key creation) goes through
   # `docker exec algo-headscale headscale ...` against the Unix socket in
   # config.yaml, not a published gRPC port.
+  #
+  # STOCK image, no custom Dockerfile — the original design (a
+  # Dockerfile.headscale that installed gettext + ran envsubst at
+  # container start) does not work: headscale/headscale is a `ko`-built
+  # distroless image with NO shell and NO package manager at all
+  # (confirmed live: /bin/sh doesn't exist, `apk add` and even `ls` both
+  # fail). VM_PUBLIC_DOMAIN is instead substituted on the HOST by
+  # scripts/render-headscale-config.sh (run once before first bring-up,
+  # mirrors render-caddy-env.sh's own pattern) into
+  # pbx_configs/headscale/generated/config.yaml, bind-mounted read-only
+  # below. The healthcheck is CMD array form (not CMD-SHELL, which also
+  # needs a shell that isn't there) invoking the headscale binary
+  # directly — `nodes list` talking over the Unix socket in config.yaml is
+  # the same liveness signal the admin CLI itself relies on.
   headscale:
-    build:
-      context: .
-      dockerfile: Dockerfile.headscale
+    image: headscale/headscale:0.23.0
     container_name: algo-headscale
     restart: always
     logging: *default-logging
-    environment:
-      VM_PUBLIC_DOMAIN: "${VM_PUBLIC_DOMAIN}"
+    command: ["serve"]
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      test: ["CMD", "/ko-app/headscale", "nodes", "list"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -819,6 +827,10 @@ services:
       # recreate, same failure mode openwa_data's own comment documents
       # for OpenWA sessions.
       - headscale_data:/var/lib/headscale
+      # Host-rendered (scripts/render-headscale-config.sh) — see the
+      # service comment above for why this can't be templated inside the
+      # container itself.
+      - ./pbx_configs/headscale/generated/config.yaml:/etc/headscale/config.yaml:ro
     networks:
       - algo-net
 
