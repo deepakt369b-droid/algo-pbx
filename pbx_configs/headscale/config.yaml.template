@@ -31,6 +31,19 @@ listen_addr: 0.0.0.0:8080
 
 metrics_listen_addr: 127.0.0.1:9090
 
+# The address pool headscale hands out to nodes that join THIS fallback
+# tailnet — confirmed live: headscale refuses to start without at least
+# one prefix configured. Deliberately NOT 100.64.0.0/10 (that's the real
+# Tailscale's own CGNAT range, already in use on this VPS for the legacy
+# path — 100.100.0.0/16 was tried first and is WRONG, it's actually
+# inside 100.64.0.0/10, the exact collision this comment warns against —
+# caught before it shipped) and NOT 10.8.0.0/24 (OpenVPN's own range, see
+# pbx_configs/openvpn/init-pki.sh) or 192.168.11.0/24 (the physical
+# Dinstar LAN) — a genuinely distinct RFC1918 block so all three
+# connectivity paths stay unambiguous from each other.
+prefixes:
+  v4: 10.100.0.0/16
+
 # Admin CLI (user/preauth-key management — see
 # src/lib/headscale-runbook.ts's command templates) talks to headscale
 # over this Unix socket via `docker exec algo-headscale headscale ...`,
