@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAmiClient } from "@/lib/ami-client";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { addQueueMember, removeQueueMember, pauseQueueMember } from "@/lib/queue-membership";
 
@@ -29,6 +28,7 @@ const Schema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -38,8 +38,10 @@ export async function POST(request: NextRequest) {
 
   // Only mutate queues we actually own — a typo'd queue name would
   // otherwise make Asterisk reject it anyway, but failing fast here gives
-  // the UI a clean error instead of a raw AMI failure.
-  const known = await db.queue.findUnique({ where: { name: queue } });
+  // the UI a clean error instead of a raw AMI failure. Queue.name was
+  // globally @unique; it's tenant-composite now (`@@unique([tenantId,
+  // name])`, plan §1), hence the compound key.
+  const known = await db.queue.findUnique({ where: { tenantId_name: { tenantId: session.user.tenantId, name: queue } } });
   if (!known) {
     return NextResponse.json({ error: `Unknown queue: ${queue}` }, { status: 404 });
   }

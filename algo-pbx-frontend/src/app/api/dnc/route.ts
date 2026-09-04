@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
@@ -10,6 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const entries = await db.doNotCallEntry.findMany({
     select: {
@@ -38,6 +38,7 @@ const CreateDncEntrySchema = z.object({
 export async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const body = await req.json();
   const parsed = CreateDncEntrySchema.safeParse(body);
@@ -50,13 +51,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `"${parsed.data.number}" doesn't look like a valid phone number.` }, { status: 400 });
   }
 
+  // DoNotCallEntry.numberE164 was globally @unique; it's tenant-composite
+  // now (`@@unique([tenantId, numberE164])`, plan §1), hence the compound
+  // key. `tenantId` is included in `create` to satisfy the generated
+  // CreateInput type — the TenantClient extension force-overrides it at
+  // runtime to the caller's own tenant regardless (see
+  // crm/activity.ts's comment on the same pattern), so passing the real
+  // value here is redundant but harmless, not load-bearing.
   const entry = await db.doNotCallEntry.upsert({
-    where: { numberE164 },
+    where: { tenantId_numberE164: { tenantId: session.user.tenantId, numberE164 } },
     create: {
+      tenantId: session.user.tenantId,
       numberE164,
       reason: parsed.data.reason,
       source: "manual",
-      addedById: guard.session.user.id,
+      addedById: session.user.id,
     },
     update: { reason: parsed.data.reason },
   });

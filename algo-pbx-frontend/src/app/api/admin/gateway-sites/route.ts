@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession, requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const sites = await db.gatewaySite.findMany({ orderBy: { name: "asc" } });
   return NextResponse.json({ sites });
@@ -34,6 +35,7 @@ const CreateSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -49,11 +51,11 @@ export async function POST(request: NextRequest) {
   // a site only moves to OPENVPN/HEADSCALE once the operator actually runs
   // the cutover (Node G), never optimistically at creation time.
   const site = await db.gatewaySite.create({
-    data: { name: parsed.data.name, gatewayLanIp: parsed.data.gatewayLanIp, transport: "TAILSCALE", status: "UNKNOWN" },
+    data: { name: parsed.data.name, gatewayLanIp: parsed.data.gatewayLanIp, transport: "TAILSCALE", status: "UNKNOWN" } as unknown as Prisma.GatewaySiteUncheckedCreateInput,
   });
 
   await db.auditLog.create({
-    data: { action: "site.created", actorId: guard.session.user.id, targetId: site.id, metadata: { name: site.name, gatewayLanIp: site.gatewayLanIp } },
+    data: { action: "site.created", actorId: session.user.id, targetId: site.id, metadata: { name: site.name, gatewayLanIp: site.gatewayLanIp } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ site }, { status: 201 });

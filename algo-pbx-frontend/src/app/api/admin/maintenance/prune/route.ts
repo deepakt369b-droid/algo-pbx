@@ -2,7 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { readdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+// Deliberate unsafeGlobalDb usage throughout this file (same reasoning as
+// pjsip-provision.ts and connectivity-check/route.ts): this is a cron/
+// webhook route with no single tenant — a nightly prune must sweep expired
+// recordings/voicemail/gateway events across EVERY tenant in one run, not
+// just whichever tenant an interactive admin caller happens to belong to.
+import { unsafeGlobalDb as db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getSetting } from "@/lib/settings/service";
 import { isExpired } from "@/lib/retention";
@@ -28,7 +33,12 @@ function isAuthorizedCronRequest(req: NextRequest): boolean {
 
 async function pruneRecordings(retentionDays: number, actorId: string): Promise<{ deleted: number; unlinkFailures: number }> {
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-  const expired = await db.recording.findMany({ where: { createdAt: { lt: cutoff } }, select: { id: true, filePath: true, cdrId: true } });
+  // `tenantId` is selected alongside the rest so each row's own AuditLog
+  // write below can be attributed to the actual tenant it belongs to
+  // (unsafeGlobalDb has no tenant-scoping extension to infer this itself,
+  // unlike TenantClient elsewhere) — precise per-row, not a single
+  // whole-run assumption.
+  const expired = await db.recording.findMany({ where: { createdAt: { lt: cutoff } }, select: { id: true, filePath: true, cdrId: true, tenantId: true } });
 
   const dir = path.resolve(process.env.RECORDINGS_DIR || "/recordings");
   let unlinkFailures = 0;
@@ -37,7 +47,7 @@ async function pruneRecordings(retentionDays: number, actorId: string): Promise<
     // Audit BEFORE delete, same ordering as the manual hard-delete route
     // — the trail survives even if the delete or unlink fails partway.
     await db.auditLog.create({
-      data: { action: "recording.pruned", actorId, targetId: rec.id, metadata: { filePath: rec.filePath, cdrId: rec.cdrId, retentionDays } },
+      data: { tenantId: rec.tenantId, action: "recording.pruned", actorId, targetId: rec.id, metadata: { filePath: rec.filePath, cdrId: rec.cdrId, retentionDays } },
     });
     await db.recording.delete({ where: { id: rec.id } });
 
@@ -47,7 +57,7 @@ async function pruneRecordings(retentionDays: number, actorId: string): Promise<
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // already gone — harmless
       unlinkFailures++;
       await db.auditLog.create({
-        data: { action: "recording.pruned.unlink_failed", actorId, targetId: rec.id, metadata: { filePath: rec.filePath, error: err instanceof Error ? err.message : String(err) } },
+        data: { tenantId: rec.tenantId, action: "recording.pruned.unlink_failed", actorId, targetId: rec.id, metadata: { filePath: rec.filePath, error: err instanceof Error ? err.message : String(err) } },
       });
     });
   }
@@ -55,7 +65,24 @@ async function pruneRecordings(retentionDays: number, actorId: string): Promise<
   return { deleted: expired.length, unlinkFailures };
 }
 
-async function pruneVoicemail(retentionDays: number, actorId: string): Promise<{ deleted: number; unlinkFailures: number }> {
+// The voicemail spool has no per-mailbox tenant link anywhere in this
+// codebase today (mailbox = bare extension number on disk, no DB lookup
+// tying it back to Extension.tenantId — wiring that up is a bigger job
+// than this route's scope), and the gateway-events summary row below
+// covers a bulk deleteMany across every tenant's events at once, so
+// neither has a single real tenant to attribute its AuditLog row to.
+// Falls back to the earliest-created Tenant — the same "good enough
+// until a real system-actor/system-tenant concept exists" reasoning this
+// file already applies to `actorId` resolution for cron-triggered runs
+// (see POST's own comment), and consistent with the documented
+// single-tenant-in-production state elsewhere in this codebase (e.g.
+// dinstar/site-cutover.ts's header comment).
+async function resolveDefaultTenantId(): Promise<string | null> {
+  const tenant = await db.tenant.findFirst({ orderBy: { createdAt: "asc" }, select: { id: true } });
+  return tenant?.id ?? null;
+}
+
+async function pruneVoicemail(retentionDays: number, actorId: string, tenantId: string | null): Promise<{ deleted: number; unlinkFailures: number }> {
   const root = path.resolve(process.env.VOICEMAIL_DIR || "/voicemail", "default");
   let deleted = 0;
   let unlinkFailures = 0;
@@ -84,9 +111,11 @@ async function pruneVoicemail(retentionDays: number, actorId: string): Promise<{
 
       if (!isExpired(new Date(metadata.origtime * 1000), retentionDays)) continue;
 
-      await db.auditLog.create({
-        data: { action: "voicemail.pruned", actorId, metadata: { mailbox, file, retentionDays } },
-      });
+      if (tenantId) {
+        await db.auditLog.create({
+          data: { tenantId, action: "voicemail.pruned", actorId, metadata: { mailbox, file, retentionDays } },
+        });
+      }
       deleted++;
       const results = await Promise.allSettled([unlink(txtPath), unlink(wavPath)]);
       const hardFailure = results.find(
@@ -94,9 +123,11 @@ async function pruneVoicemail(retentionDays: number, actorId: string): Promise<{
       );
       if (hardFailure) {
         unlinkFailures++;
-        await db.auditLog.create({
-          data: { action: "voicemail.pruned.unlink_failed", actorId, metadata: { mailbox, file, error: (hardFailure.reason as Error).message } },
-        });
+        if (tenantId) {
+          await db.auditLog.create({
+            data: { tenantId, action: "voicemail.pruned.unlink_failed", actorId, metadata: { mailbox, file, error: (hardFailure.reason as Error).message } },
+          });
+        }
       }
     }
   }
@@ -114,12 +145,12 @@ async function pruneVoicemail(retentionDays: number, actorId: string): Promise<{
 // per event — these can arrive in the thousands, unlike recordings.
 const GATEWAY_EVENT_RETENTION_DAYS = 30;
 
-async function pruneGatewayEvents(actorId: string): Promise<{ deleted: number }> {
+async function pruneGatewayEvents(actorId: string, tenantId: string | null): Promise<{ deleted: number }> {
   const cutoff = new Date(Date.now() - GATEWAY_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   const result = await db.gatewayEvent.deleteMany({ where: { receivedAt: { lt: cutoff } } });
-  if (result.count > 0) {
+  if (result.count > 0 && tenantId) {
     await db.auditLog.create({
-      data: { action: "gateway_event.pruned", actorId, metadata: { deleted: result.count, retentionDays: GATEWAY_EVENT_RETENTION_DAYS } },
+      data: { tenantId, action: "gateway_event.pruned", actorId, metadata: { deleted: result.count, retentionDays: GATEWAY_EVENT_RETENTION_DAYS } },
     });
   }
   return { deleted: result.count };
@@ -151,11 +182,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Invalid RECORDING_RETENTION_DAYS value: ${retentionDaysRaw}` }, { status: 500 });
   }
 
+  const tenantId = await resolveDefaultTenantId();
+
   // Gateway events run on their own fixed retention regardless of the
   // recordings/voicemail setting above — an operator disabling
   // RECORDING_RETENTION_DAYS (0 = pruning disabled) has no bearing on the
   // PDPL data-minimization commitment for gateway syslog data.
-  const gatewayEvents = await pruneGatewayEvents(actorId);
+  const gatewayEvents = await pruneGatewayEvents(actorId, tenantId);
 
   if (retentionDays === 0) {
     return NextResponse.json({ ok: true, skipped: true, reason: "Recording/voicemail retention is set to 0 (pruning disabled).", gatewayEvents });
@@ -163,7 +196,7 @@ export async function POST(request: NextRequest) {
 
   const [recordings, voicemail] = await Promise.all([
     pruneRecordings(retentionDays, actorId),
-    pruneVoicemail(retentionDays, actorId),
+    pruneVoicemail(retentionDays, actorId, tenantId),
   ]);
 
   return NextResponse.json({ ok: true, retentionDays, recordings, voicemail, gatewayEvents });

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { getAmiClient } from "@/lib/ami-client";
 import { requireStaffSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -53,8 +53,9 @@ const CHANNEL_SHAPE = /^PJSIP\/[A-Za-z0-9._-]{1,32}-[0-9a-fA-F]{6,}$/;
 export async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
-  const supervisorExtension = guard.session.user.extension;
+  const supervisorExtension = session.user.extension;
   if (!supervisorExtension) {
     return NextResponse.json(
       { error: "Your account has no linked extension — intervention requires one to originate the spy call from." },
@@ -99,10 +100,10 @@ export async function POST(req: NextRequest) {
     await db.auditLog.create({
       data: {
         action: `intervention.${mode}`,
-        actorId: guard.session.user.id,
+        actorId: session.user.id,
         targetId: targetChannel,
         metadata: { supervisorExtension, mode, targetChannel },
-      },
+      } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
 
     const res = await ami.send({

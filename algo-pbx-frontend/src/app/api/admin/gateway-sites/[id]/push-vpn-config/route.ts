@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 import { pushVpnConfig } from "@/lib/dinstar/vpn-push";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +29,7 @@ const SAFE_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export async function POST(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const site = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });
@@ -49,7 +49,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
     );
   }
 
-  const result = await pushVpnConfig(site.id, site.gatewayLanIp, ovpnFile, `${site.name}.ovpn`, guard.session.user.id);
+  const result = await pushVpnConfig(db, site.id, site.gatewayLanIp, ovpnFile, `${site.name}.ovpn`, session.user.id);
 
   return NextResponse.json(result, { status: result.verifiedByReadback ? 200 : 502 });
 }

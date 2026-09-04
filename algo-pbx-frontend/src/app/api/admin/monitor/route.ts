@@ -3,7 +3,6 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { getAmiClient } from "@/lib/ami-client";
 import { requireStaffSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -52,8 +51,9 @@ const MonitorSchema = z.object({
 export async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
-  const monitorExtension = guard.session.user.extension;
+  const monitorExtension = session.user.extension;
   if (!monitorExtension) {
     return NextResponse.json(
       { error: "Your account has no linked extension — monitoring originates the listen call from it." },
@@ -85,10 +85,10 @@ export async function POST(req: NextRequest) {
     await db.auditLog.create({
       data: {
         action: "monitor.listen",
-        actorId: guard.session.user.id,
+        actorId: session.user.id,
         targetId: targetChannel,
         metadata: { monitorExtension, targetChannel } as Prisma.InputJsonValue,
-      },
+      } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
 
     const res = await ami.send({

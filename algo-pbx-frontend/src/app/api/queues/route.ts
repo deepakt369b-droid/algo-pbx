@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getAmiClient } from "@/lib/ami-client";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { getQueueSnapshots } from "@/lib/queue-status";
 import type { QueueSnapshot } from "@/types";
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const queues = await db.queue.findMany({ include: { members: true } });
   const ami = getAmiClient();

@@ -1,7 +1,7 @@
 import { unlink } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const recording = await db.recording.findUnique({ where: { id: params.id } });
   if (!recording) {
@@ -30,7 +30,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
       actorId: session.user.id,
       targetId: recording.id,
       metadata: { filePath: recording.filePath, cdrId: recording.cdrId },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   await db.recording.delete({ where: { id: params.id } });
@@ -55,7 +55,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
           actorId: session.user.id,
           targetId: recording.id,
           metadata: { filePath: recording.filePath, error: err instanceof Error ? err.message : String(err) },
-        },
+        } as unknown as Prisma.AuditLogUncheckedCreateInput,
       });
     });
   }

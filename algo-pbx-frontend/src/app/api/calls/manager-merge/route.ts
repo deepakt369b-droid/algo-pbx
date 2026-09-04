@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomInt } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { getAmiClient } from "@/lib/ami-client";
 import { requireSession } from "@/lib/auth-guard";
 import { findChannelsToRedirect } from "@/lib/conference-orchestration";
-import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +46,7 @@ const CONFERENCE_CONTEXT = "conference";
 export async function POST(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const agentExtension = session.user.extension;
   if (!agentExtension) {
@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
           answered,
           observedOutcome: outcome ?? null,
         },
-      },
+      } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
 
     return NextResponse.json({

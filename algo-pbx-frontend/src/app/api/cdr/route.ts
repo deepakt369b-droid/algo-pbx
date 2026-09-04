@@ -1,7 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import { unsafeGlobalDb } from "@/lib/db";
+import { tenantDb } from "@/lib/db-tenant";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { emitEvent } from "@/lib/emit-event";
 import { withApiErrorHandler } from "@/lib/api-handler";
@@ -29,6 +31,7 @@ const CdrQuerySchema = z.object({
 export const GET = withApiErrorHandler(async function GET(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const { searchParams } = new URL(req.url);
   const parsed = CdrQuerySchema.safeParse({
@@ -109,6 +112,27 @@ function isAuthorizedIngestRequest(req: NextRequest): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// This ingest route is server-to-server (no session), yet several models it
+// writes to (CallDetailRecord, Recording, Contact, Extension, AuditLog) are
+// now tenant-scoped and `recordActivity()` REQUIRES a real `TenantClient`
+// (src/lib/crm/activity.ts). There is no session to pull `tenantId` from,
+// so it's resolved here instead: prefer the tenant that owns the reporting
+// agent's Extension (a real, precise answer whenever the call had an
+// agent leg), falling back to the earliest-created Tenant otherwise (an
+// unanswered/missed inbound call may have no agentExtension at all) — same
+// single-tenant-today reasoning already documented in
+// admin/maintenance/prune/route.ts and POST /api/gateway-events. One shared
+// Asterisk instance serves every tenant today (wave 6 hasn't happened),
+// so a CDR genuinely has no stronger signal than this to go on yet.
+async function resolveIngestTenantId(agentExtension: string | undefined): Promise<string | null> {
+  if (agentExtension) {
+    const ext = await unsafeGlobalDb.extension.findFirst({ where: { number: agentExtension }, select: { tenantId: true } });
+    if (ext) return ext.tenantId;
+  }
+  const tenant = await unsafeGlobalDb.tenant.findFirst({ orderBy: { createdAt: "asc" }, select: { id: true } });
+  return tenant?.id ?? null;
+}
+
 export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   if (!isAuthorizedIngestRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -120,6 +144,16 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  const tenantId = await resolveIngestTenantId(parsed.data.agentExtension);
+  if (!tenantId) {
+    // No Tenant exists yet anywhere — nothing sensible to attribute this
+    // CDR to. Should be unreachable in practice (a Tenant is created
+    // before any agent can register), but fail loudly rather than crash
+    // on a null tenantDb().
+    return NextResponse.json({ error: "No tenant exists yet to attribute this CDR to." }, { status: 500 });
+  }
+  const db = tenantDb(tenantId);
+
   // P2 CRM data layer (LLM.md §28/29): normalized at ingest so every new
   // call is caller-ID-matchable to a Contact without the old
   // last-2000-CDRs-normalized-in-process approach
@@ -128,12 +162,18 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   // instead). Historical rows are covered by the one-time
   // POST /api/admin/maintenance/backfill-caller-e164.
   const callerNumberE164 = normalizeToE164(parsed.data.callerNumber);
+  // No `tenantId` in this literal — the TenantClient extension
+  // force-injects it at runtime regardless of what's passed on `create`
+  // (see crm/activity.ts's comment on the same pattern); the double-casts
+  // below (one per target shape — create vs. update expect slightly
+  // different generated types even for the same literal) satisfy the
+  // compiler about that runtime guarantee.
   const data = { ...parsed.data, callerNumberE164 };
 
   const row = await db.callDetailRecord.upsert({
     where: { uniqueId: parsed.data.uniqueId },
-    create: data,
-    update: data,
+    create: data as unknown as Prisma.CallDetailRecordUncheckedCreateInput,
+    update: data as unknown as Prisma.CallDetailRecordUncheckedUpdateInput,
   });
 
   // Phase D: a Recording row is what src/lib/recording-access.ts's
@@ -153,7 +193,9 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   if (parsed.data.recordingUrl) {
     const existing = await db.recording.findFirst({ where: { cdrId: row.id } });
     if (!existing) {
-      await db.recording.create({ data: { cdrId: row.id, filePath: `${parsed.data.uniqueId}.wav` } });
+      await db.recording.create({
+        data: { cdrId: row.id, filePath: `${parsed.data.uniqueId}.wav` } as unknown as Prisma.RecordingUncheckedCreateInput,
+      });
     }
   }
 
@@ -169,14 +211,16 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   {
     const candidateE164 = callerNumberE164 ?? normalizeToE164(parsed.data.destination);
     if (candidateE164) {
-      const contact = await db.contact.findUnique({ where: { numberE164: candidateE164 } });
+      const contact = await db.contact.findUnique({
+        where: { tenantId_numberE164: { tenantId, numberE164: candidateE164 } },
+      });
       // Unified CRM timeline (S2) — one CALL activity per CDR, idempotent on
       // uniqueId. Written for every call with a matching contact, not just
       // answered ones (a missed call is timeline-worthy too).
       if (contact) {
         const ext = parsed.data.agentExtension
           ? await db.extension.findUnique({
-              where: { number: parsed.data.agentExtension },
+              where: { tenantId_number: { tenantId, number: parsed.data.agentExtension } },
               select: { userId: true },
             })
           : null;
@@ -186,14 +230,17 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
               ? "Inbound call"
               : "Outbound call"
             : `Call ${parsed.data.disposition.toLowerCase()}`;
-        await recordActivity({
-          type: "CALL",
-          summary: `${verb}${row.durationSec ? ` · ${row.durationSec}s` : ""}`,
-          refId: row.uniqueId,
-          occurredAt: row.startedAt,
-          contactId: contact.id,
-          actorId: ext?.userId ?? null,
-        });
+        await recordActivity(
+          {
+            type: "CALL",
+            summary: `${verb}${row.durationSec ? ` · ${row.durationSec}s` : ""}`,
+            refId: row.uniqueId,
+            occurredAt: row.startedAt,
+            contactId: contact.id,
+            actorId: ext?.userId ?? null,
+          },
+          db
+        );
       }
     }
   }
@@ -201,10 +248,12 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   if (parsed.data.disposition === "ANSWERED" && parsed.data.agentExtension) {
     const candidateE164 = callerNumberE164 ?? normalizeToE164(parsed.data.destination);
     if (candidateE164) {
-      const contact = await db.contact.findUnique({ where: { numberE164: candidateE164 } });
+      const contact = await db.contact.findUnique({
+        where: { tenantId_numberE164: { tenantId, numberE164: candidateE164 } },
+      });
       if (contact && !contact.ownerId) {
         const ext = await db.extension.findUnique({
-          where: { number: parsed.data.agentExtension },
+          where: { tenantId_number: { tenantId, number: parsed.data.agentExtension } },
           select: { userId: true },
         });
         if (ext?.userId) {
@@ -221,7 +270,7 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
                 actorId: ext.userId,
                 targetId: contact.id,
                 metadata: { via: "cdr_answered_call", uniqueId: row.uniqueId },
-              },
+              } as unknown as Prisma.AuditLogUncheckedCreateInput,
             });
           }
         }
@@ -232,7 +281,7 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   // Not awaited — see emit-event.ts's header. A CRM webhook endpoint being
   // slow or down must never add latency to CDR ingestion, which is on the
   // hot path of every single call ending.
-  void emitEvent("call.ended", {
+  void emitEvent(db, "call.ended", {
     uniqueId: row.uniqueId,
     callerNumber: row.callerNumber,
     destination: row.destination,

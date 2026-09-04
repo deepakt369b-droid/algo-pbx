@@ -1,7 +1,6 @@
 import https from "node:https";
 import { statfs } from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getSetting } from "@/lib/settings/service";
 import { encryptSetting, decryptSetting, SettingsEncryptionError } from "@/lib/settings/crypto";
@@ -67,6 +66,7 @@ function pinnedHttpsGet(
 export async function GET() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const now = () => new Date().toISOString();
   const checks: HealthCheck[] = [];

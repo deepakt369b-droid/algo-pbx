@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +22,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   // THE decisive enforcement point for the agent-registration hard gate
   // (see src/middleware.ts's comment on why a page redirect alone isn't
@@ -32,7 +32,7 @@ export async function GET() {
   // an unregistered/unverified AGENT from taking a single call,
   // independent of whatever the browser does. Staff roles are never
   // gated (see profileComplete's own doc comment for why).
-  if (guard.session.user.role === "AGENT" && !guard.session.user.profileComplete) {
+  if (session.user.role === "AGENT" && !session.user.profileComplete) {
     return NextResponse.json(
       { error: "Complete your registration and verify your phone number before signing in to the softphone." },
       { status: 403 }
@@ -40,7 +40,7 @@ export async function GET() {
   }
 
   const extension = await db.extension.findUnique({
-    where: { userId: guard.session.user.id },
+    where: { userId: session.user.id },
     select: { number: true, sipSecret: true, voicemailPin: true },
   });
 

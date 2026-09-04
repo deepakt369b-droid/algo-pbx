@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { CountryCode } from "libphonenumber-js";
 import { getCountries } from "libphonenumber-js";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireStaffSession } from "@/lib/auth-guard";
 import {
   buildImportPreview,
@@ -51,6 +51,7 @@ function humanizeZodError(error: z.ZodError): string {
 export async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
@@ -136,8 +137,8 @@ export async function POST(req: NextRequest) {
         numberE164: v.e164,
         reason,
         source: "bulk_import",
-        addedById: guard.session.user.id,
-      })),
+        addedById: session.user.id,
+      })) as unknown as Prisma.DoNotCallEntryCreateManyInput[],
       skipDuplicates: true,
     });
     imported += result.count;
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
   await db.auditLog.create({
     data: {
       action: "dnc.bulk_import",
-      actorId: guard.session.user.id,
+      actorId: session.user.id,
       metadata: {
         imported,
         submittedValid: preview.valid.length,
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest) {
         duplicatesInFile: preview.duplicatesInFile,
         defaultCountry,
       },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({

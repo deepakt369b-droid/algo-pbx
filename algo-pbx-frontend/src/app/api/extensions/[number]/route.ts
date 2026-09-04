@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession, requireSession, requireStaffSession } from "@/lib/auth-guard";
 import { regeneratePjsipConfigAndReload } from "@/lib/pjsip-provision";
 import { getAmiClient } from "@/lib/ami-client";
@@ -33,7 +33,7 @@ const PatchSchema = z.union([
 export async function PATCH(req: NextRequest, { params }: { params: { number: string } }) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const body = await req.json();
   const parsed = PatchSchema.safeParse(body);
@@ -41,7 +41,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const extension = await db.extension.findUnique({ where: { number: params.number } });
+  // Extension.number was globally @unique; it's tenant-composite now
+  // (`@@unique([tenantId, number])`, plan §1) — a plain `{ number }` where
+  // no longer identifies a unique row, so the compound `tenantId_number`
+  // key is used instead. `session.user.tenantId` is safe to reach for
+  // directly here (unlike in a shared lib function such as
+  // crm/activity.ts) since this route already has the session in scope.
+  const extension = await db.extension.findUnique({
+    where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
+  });
   if (!extension) {
     return NextResponse.json({ error: "Extension not found" }, { status: 404 });
   }
@@ -64,7 +72,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
     }
 
     const updated = await db.extension.update({
-      where: { number: params.number },
+      where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
       data: { userId: parsed.data.userId },
     });
     await db.auditLog.create({
@@ -73,7 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
         actorId: adminGuard.session.user.id,
         targetId: extension.id,
         metadata: { number: extension.number, userId: parsed.data.userId, previousUserId: extension.userId },
-      },
+      } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
     return NextResponse.json({ extension: updated });
   }
@@ -83,7 +91,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
     if ("response" in staffGuard) return staffGuard.response;
 
     const updated = await db.extension.update({
-      where: { number: params.number },
+      where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
       data: { dialPermission: parsed.data.dialPermission },
     });
 
@@ -110,9 +118,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
     if ("response" in adminGuard) return adminGuard.response;
 
     const sipSecret = randomBytes(24).toString("hex");
-    const updated = await db.extension.update({ where: { number: params.number }, data: { sipSecret } });
+    const updated = await db.extension.update({
+      where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
+      data: { sipSecret },
+    });
     await db.auditLog.create({
-      data: { action: "extension.rotate_secret", actorId: adminGuard.session.user.id, targetId: extension.id, metadata: { number: extension.number } },
+      data: { action: "extension.rotate_secret", actorId: adminGuard.session.user.id, targetId: extension.id, metadata: { number: extension.number } } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
 
     try {
@@ -136,7 +147,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
   }
 
   const updated = await db.extension.update({
-    where: { number: params.number },
+    where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
     data: { status: parsed.data.status, lastSeenAt: new Date() },
   });
 
@@ -170,8 +181,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
 export async function DELETE(_req: NextRequest, { params }: { params: { number: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
-  const extension = await db.extension.findUnique({ where: { number: params.number } });
+  const extension = await db.extension.findUnique({
+    where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
+  });
   if (!extension) return NextResponse.json({ error: "Extension not found" }, { status: 404 });
 
   // Best-effort — an AMI hiccup here must not block the actual deletion;
@@ -179,7 +193,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: { number: 
   // a cosmetic cleanup issue, not a security one.
   await removeQueueMember(getAmiClient(), extension.number).catch(() => undefined);
 
-  await db.extension.delete({ where: { number: params.number } });
+  await db.extension.delete({
+    where: { tenantId_number: { tenantId: session.user.tenantId, number: params.number } },
+  });
 
   let reloadWarning: string | undefined;
   try {
@@ -189,7 +205,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { number: 
   }
 
   await db.auditLog.create({
-    data: { action: "extension.delete", actorId: guard.session.user.id, targetId: extension.id, metadata: { number: extension.number } },
+    data: { action: "extension.delete", actorId: session.user.id, targetId: extension.id, metadata: { number: extension.number } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true, warning: reloadWarning });

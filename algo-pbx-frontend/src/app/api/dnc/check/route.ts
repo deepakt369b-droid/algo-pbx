@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const number = req.nextUrl.searchParams.get("number");
   if (!number) {
@@ -28,6 +28,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ blocked: false });
   }
 
-  const entry = await db.doNotCallEntry.findUnique({ where: { numberE164 } });
+  const entry = await db.doNotCallEntry.findUnique({
+    where: { tenantId_numberE164: { tenantId: session.user.tenantId, numberE164 } },
+  });
   return NextResponse.json({ blocked: entry !== null, numberE164 });
 }

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +17,7 @@ const QuerySchema = z.object({
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const { searchParams } = new URL(request.url);
   const parsed = QuerySchema.safeParse({

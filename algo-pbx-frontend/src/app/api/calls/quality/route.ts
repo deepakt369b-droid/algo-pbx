@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +29,7 @@ const QualitySampleSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const parsed = QualitySampleSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
   await db.callQualitySample.create({
     data: {
       callId: parsed.data.callId,
-      extension: guard.session.user.extension ?? null,
+      extension: session.user.extension ?? null,
       jitterMs: parsed.data.jitterMs ?? null,
       packetsLost: parsed.data.packetsLost ?? null,
       packetsReceived: parsed.data.packetsReceived ?? null,
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
       packetsSent: parsed.data.packetsSent ?? null,
       audioLevel: parsed.data.audioLevel ?? null,
       totalAudioEnergy: parsed.data.totalAudioEnergy ?? null,
-    },
+    } as unknown as Prisma.CallQualitySampleUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true });

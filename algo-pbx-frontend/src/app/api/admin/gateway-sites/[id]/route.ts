@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession, requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const site = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!site) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -34,6 +35,7 @@ const PatchSchema = z
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const existing = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -54,7 +56,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   });
 
   await db.auditLog.create({
-    data: { action: "site.updated", actorId: guard.session.user.id, targetId: site.id, metadata: parsed.data },
+    data: { action: "site.updated", actorId: session.user.id, targetId: site.id, metadata: parsed.data } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ site });
@@ -63,6 +65,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const existing = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -70,7 +73,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
   await db.gatewaySite.delete({ where: { id: params.id } });
 
   await db.auditLog.create({
-    data: { action: "site.deleted", actorId: guard.session.user.id, targetId: existing.id, metadata: { name: existing.name } },
+    data: { action: "site.deleted", actorId: session.user.id, targetId: existing.id, metadata: { name: existing.name } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true });

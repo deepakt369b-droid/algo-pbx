@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessRecording } from "@/lib/recording-access";
 
@@ -29,7 +29,7 @@ const HideSchema = z.object({ id: z.string(), hidden: z.boolean().default(true) 
 export async function POST(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const body = await req.json();
   const parsed = HideSchema.safeParse(body);
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       action: parsed.data.hidden ? "recording.hide" : "recording.unhide",
       actorId: session.user.id,
       targetId: recording.id,
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ recording: updated });

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { assertProbeableHost } from "@/lib/dinstar-discovery";
 import { applyStandardPortConfig } from "@/lib/dinstar/port-config";
 import { getSetting, setSetting } from "@/lib/settings/service";
-import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,7 @@ const ApplySchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const parsed = ApplySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
@@ -70,17 +71,17 @@ export async function POST(request: NextRequest) {
     // Only persist credentials AFTER a successful login+write — never
     // store an unverified guess, same principle the existing
     // /admin/dinstar apply route already follows for its own credentials.
-    await setSetting("DINSTAR_WEBUI_USERNAME", parsed.data.username, guard.session.user.id);
-    await setSetting("DINSTAR_WEBUI_PASSWORD", parsed.data.password, guard.session.user.id);
+    await setSetting("DINSTAR_WEBUI_USERNAME", parsed.data.username, session.user.id);
+    await setSetting("DINSTAR_WEBUI_PASSWORD", parsed.data.password, session.user.id);
   }
 
   await db.auditLog.create({
     data: {
       action: "dinstar.ports_configured",
-      actorId: guard.session.user.id,
+      actorId: session.user.id,
       targetId: host,
       metadata: { hotline: parsed.data.hotline, ok: result.ok, ports: result.ports, error: result.error },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   if (!result.ok) {

@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { ALERT_RATE_LIMIT_MS, CRITICAL_ALERT_TYPES } from "@/lib/dinstar/gateway-alerts";
 
@@ -30,6 +29,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const since = new Date(Date.now() - ALERT_RATE_LIMIT_MS);
   const [events, unhealthySites] = await Promise.all([

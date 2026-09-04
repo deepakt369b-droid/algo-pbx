@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +41,7 @@ async function fileExists(p: string): Promise<boolean> {
 export async function POST(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const site = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });
@@ -67,14 +68,14 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
   while (Date.now() < deadline) {
     if (await fileExists(doneFile)) {
       await db.auditLog.create({
-        data: { action: "site.cert_generated", actorId: guard.session.user.id, targetId: site.id, metadata: { siteName: site.name } },
+        data: { action: "site.cert_generated", actorId: session.user.id, targetId: site.id, metadata: { siteName: site.name } } as unknown as Prisma.AuditLogUncheckedCreateInput,
       });
       return NextResponse.json({ ok: true });
     }
     if (await fileExists(errorFile)) {
       const message = await readFile(errorFile, "utf8").catch(() => "Certificate generation failed.");
       await db.auditLog.create({
-        data: { action: "site.cert_generated", actorId: guard.session.user.id, targetId: site.id, metadata: { siteName: site.name, error: message.trim() } },
+        data: { action: "site.cert_generated", actorId: session.user.id, targetId: site.id, metadata: { siteName: site.name, error: message.trim() } } as unknown as Prisma.AuditLogUncheckedCreateInput,
       });
       return NextResponse.json({ ok: false, error: message.trim() }, { status: 502 });
     }

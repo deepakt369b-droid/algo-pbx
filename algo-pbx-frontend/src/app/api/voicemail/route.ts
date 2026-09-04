@@ -1,7 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessMailbox, parseVoicemailMessageMetadata } from "@/lib/voicemail-spool";
 
@@ -23,7 +22,7 @@ const SAFE_MAILBOX = /^\d{3,6}$/;
 export async function GET(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const isStaff = session.user.role === "ADMIN" || session.user.role === "SUPERVISOR";
   const requestedMailbox = req.nextUrl.searchParams.get("mailbox");
@@ -88,7 +87,8 @@ export async function GET(req: NextRequest) {
 export async function POST() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
-  await db.user.update({ where: { id: guard.session.user.id }, data: { voicemailSeenAt: new Date() } });
+  await db.user.update({ where: { id: session.user.id }, data: { voicemailSeenAt: new Date() } });
   return NextResponse.json({ ok: true });
 }

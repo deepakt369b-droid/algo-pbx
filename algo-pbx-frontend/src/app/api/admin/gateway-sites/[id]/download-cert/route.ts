@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +24,7 @@ const SAFE_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const site = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });

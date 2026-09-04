@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +17,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const isStaff = session.user.role === "ADMIN" || session.user.role === "SUPERVISOR";
 

@@ -2,7 +2,6 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessRecording } from "@/lib/recording-access";
 
@@ -21,7 +20,7 @@ const SAFE_UNIQUEID = /^[A-Za-z0-9._-]+$/;
 export async function GET(req: NextRequest, { params }: { params: { uniqueid: string } }) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const { uniqueid } = params;
   if (!SAFE_UNIQUEID.test(uniqueid)) {

@@ -1,7 +1,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { regeneratePjsipConfigAndReload } from "@/lib/pjsip-provision";
 import { regenerateVoicemailConfigAndReload } from "@/lib/voicemail-provision";
@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 export const GET = withApiErrorHandler(async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   // sipSecret is deliberately excluded — even from staff — on every listing
   // request. It's disclosed exactly once, in the POST response body below,
@@ -62,6 +63,7 @@ const CreateExtensionSchema = z.object({
 export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const body = await req.json();
   const parsed = CreateExtensionSchema.safeParse(body);
@@ -79,7 +81,10 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   const voicemailPin = String(randomInt(1000, 10000));
 
   const extension = await db.extension.create({
-    data: { ...parsed.data, sipSecret, voicemailPin },
+    // No `tenantId` — the TenantClient extension force-injects it at
+    // runtime (see crm/activity.ts's comment on the same pattern); the
+    // double-cast satisfies the compiler about that runtime guarantee.
+    data: { ...parsed.data, sipSecret, voicemailPin } as unknown as Prisma.ExtensionUncheckedCreateInput,
   });
 
   try {

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 import { cutoverToSite } from "@/lib/dinstar/site-cutover";
 
 export const dynamic = "force-dynamic";
@@ -26,13 +25,15 @@ export const dynamic = "force-dynamic";
 export async function POST(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const site = await db.gatewaySite.findUnique({ where: { id: params.id } });
   if (!site) return NextResponse.json({ error: "Site not found." }, { status: 404 });
 
   const result = await cutoverToSite(
+    db,
     { id: site.id, tunnelIp: site.tunnelIp, gatewayLanIp: site.gatewayLanIp },
-    guard.session.user.id
+    session.user.id
   );
 
   if (!result.ok) {

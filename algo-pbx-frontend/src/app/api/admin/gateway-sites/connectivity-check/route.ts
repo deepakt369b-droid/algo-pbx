@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import net from "node:net";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getSetting } from "@/lib/settings/service";
 import { sendGatewayAlertEmail } from "@/lib/mail/resend";
@@ -153,11 +153,11 @@ async function resolveSystemActor(): Promise<{ id: string } | null> {
   // No "system" actor concept in this schema — same resolution the prune
   // route and the syslog ingest route's triggerAlerts() already use:
   // attribute machine-triggered rows to the earliest-created ADMIN account.
-  return db.user.findFirst({ where: { role: "ADMIN" }, orderBy: { createdAt: "asc" }, select: { id: true } });
+  return unsafeGlobalDb.user.findFirst({ where: { role: "ADMIN" }, orderBy: { createdAt: "asc" }, select: { id: true } });
 }
 
 async function maybeSendAlert(site: GatewaySite, alertType: SiteCriticalAlertType, message: string, actorId: string): Promise<void> {
-  const lastSent = await db.auditLog.findFirst({
+  const lastSent = await unsafeGlobalDb.auditLog.findFirst({
     where: { action: "gateway_alert.sent", targetId: site.id, metadata: { path: ["eventType"], equals: alertType } },
     orderBy: { createdAt: "desc" },
     select: { createdAt: true },
@@ -178,8 +178,13 @@ async function maybeSendAlert(site: GatewaySite, alertType: SiteCriticalAlertTyp
     }
   }
 
-  await db.auditLog.create({
+  await unsafeGlobalDb.auditLog.create({
     data: {
+      // unsafeGlobalDb has no tenant-scoping extension to auto-inject
+      // tenantId (unlike TenantClient elsewhere) — this route genuinely
+      // operates across every tenant's sites in one run, so the tenantId
+      // for each written row is taken explicitly from the site it's about.
+      tenantId: site.tenantId,
       action: "gateway_alert.sent",
       actorId,
       targetId: site.id,
@@ -202,7 +207,14 @@ export async function POST(request: NextRequest) {
     actorId = guard.session.user.id;
   }
 
-  const sites = await db.gatewaySite.findMany();
+  // Deliberate unsafeGlobalDb exception (see this route's dual-auth header
+  // comment): this poller must see and update EVERY tenant's GatewaySite
+  // rows in one run regardless of which caller (cron secret, or an
+  // interactive admin session scoped to just their own tenant) triggered
+  // it — a tenant-scoped `db` from the admin-session branch would silently
+  // skip every other tenant's sites. GatewaySite is genuinely per-tenant
+  // data, but this specific route's job is cross-tenant by design.
+  const sites = await unsafeGlobalDb.gatewaySite.findMany();
   const statusLogContent = await readOpenVpnStatusLog();
   const now = new Date();
 
@@ -218,7 +230,7 @@ export async function POST(request: NextRequest) {
     const wasUnhealthy = site.status === "DOWN" || site.status === "DEGRADED";
     const isNowHealthy = result.status === "UP";
 
-    await db.gatewaySite.update({
+    await unsafeGlobalDb.gatewaySite.update({
       where: { id: site.id },
       data: {
         status: result.status,
@@ -239,8 +251,13 @@ export async function POST(request: NextRequest) {
       // showing this site the moment the update above lands — this
       // AuditLog row is the historical record, not what un-shows the
       // banner.
-      await db.auditLog.create({
+      await unsafeGlobalDb.auditLog.create({
         data: {
+          // Same reasoning as maybeSendAlert()'s auditLog.create above —
+          // unsafeGlobalDb has no tenant-scoping extension to auto-inject
+          // tenantId, so it's taken explicitly from the site this recovery
+          // row is about.
+          tenantId: site.tenantId,
           action: "gateway_alert.resolved",
           actorId,
           targetId: site.id,

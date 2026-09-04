@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, requireStaffSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ const ANNOUNCE_KEY = "recording_announcement_enabled";
 
 type FlagRow = { key: string; enabled: boolean };
 
-async function readFlags(): Promise<{ recordingEnabled: boolean; announcementEnabled: boolean }> {
+async function readFlags(db: TenantClient): Promise<{ recordingEnabled: boolean; announcementEnabled: boolean }> {
   const rows = await db.$queryRaw<FlagRow[]>`
     SELECT "key", "enabled" FROM "PbxRuntimeFlag" WHERE "key" IN (${RECORDING_KEY}, ${ANNOUNCE_KEY})
   `;
@@ -38,7 +38,7 @@ async function readFlags(): Promise<{ recordingEnabled: boolean; announcementEna
   };
 }
 
-async function writeFlag(key: string, enabled: boolean, actorId: string): Promise<void> {
+async function writeFlag(db: TenantClient, key: string, enabled: boolean, actorId: string): Promise<void> {
   await db.$executeRaw`
     INSERT INTO "PbxRuntimeFlag" ("key", "enabled", "updatedAt", "updatedById")
     VALUES (${key}, ${enabled}, CURRENT_TIMESTAMP, ${actorId})
@@ -53,7 +53,7 @@ async function writeFlag(key: string, enabled: boolean, actorId: string): Promis
 export const GET = withApiErrorHandler(async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
-  return NextResponse.json(await readFlags());
+  return NextResponse.json(await readFlags(guard.db));
 });
 
 const PostSchema = z
@@ -70,13 +70,14 @@ const PostSchema = z
 export const POST = withApiErrorHandler(async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const parsed = PostSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const current = await readFlags();
+  const current = await readFlags(db);
   const next = {
     recordingEnabled: parsed.data.recordingEnabled ?? current.recordingEnabled,
     announcementEnabled: parsed.data.announcementEnabled ?? current.announcementEnabled,
@@ -94,14 +95,14 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
   }
   if (next.recordingEnabled) next.announcementEnabled = true;
 
-  const actorId = guard.session.user.id;
+  const actorId = session.user.id;
   const changed: Record<string, boolean> = {};
   if (next.recordingEnabled !== current.recordingEnabled) {
-    await writeFlag(RECORDING_KEY, next.recordingEnabled, actorId);
+    await writeFlag(db, RECORDING_KEY, next.recordingEnabled, actorId);
     changed.recordingEnabled = next.recordingEnabled;
   }
   if (next.announcementEnabled !== current.announcementEnabled) {
-    await writeFlag(ANNOUNCE_KEY, next.announcementEnabled, actorId);
+    await writeFlag(db, ANNOUNCE_KEY, next.announcementEnabled, actorId);
     changed.announcementEnabled = next.announcementEnabled;
   }
 
@@ -112,7 +113,7 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
         actorId,
         targetId: RECORDING_KEY,
         metadata: changed as Prisma.InputJsonValue,
-      },
+      } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
   }
 
