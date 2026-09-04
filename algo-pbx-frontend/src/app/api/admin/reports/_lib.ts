@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 
 // Shared filter parsing for every /api/admin/reports/* route. The Reports hub
 // drives all of its charts from one <ReportFilters> control, which appends
@@ -44,6 +44,7 @@ export function parseReportFilters(request: NextRequest): ReportFilters {
 //   null       -> agent has no extension; caller should return zero rows
 export async function resolveAgentExtension(
   agentId: string | null,
+  db: TenantClient,
 ): Promise<string | null | undefined> {
   if (!agentId) return undefined;
   const ext = await db.extension.findUnique({

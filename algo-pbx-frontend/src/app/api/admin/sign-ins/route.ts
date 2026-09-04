@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const limit = Math.min(Number(request.nextUrl.searchParams.get("limit") ?? 100), 500);
 
@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
 export async function POST() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   await db.user.update({ where: { id: guard.session.user.id }, data: { signInFeedSeenAt: new Date() } });
   return NextResponse.json({ ok: true });

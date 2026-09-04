@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { parseReportFilters } from "../_lib";
 
@@ -11,6 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const { agentId, from, to } = parseReportFilters(request);
 

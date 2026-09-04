@@ -1,12 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { db } from "@/lib/db";
 import { getSettingDef, SETTINGS_REGISTRY } from "@/lib/settings/schema";
 import { getSetting, getSettingMeta, setSetting } from "@/lib/settings/service";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
 export const dynamic = "force-dynamic";
+
+// Multi-tenant SaaS foundation, wave 2d: every getSetting/getSettingMeta/
+// setSetting call below deliberately omits `tenantId`, resolving the
+// platform-default row exactly as before this wave — settings/service.ts's
+// signature is backward compatible for exactly this reason. Most of this
+// registry (Resend, Firebase, Cloudflare, OpenWA/Meta WhatsApp, OTP, domain/
+// TLS, retention, CRM webhook secret) is genuinely platform-wide
+// infrastructure config, not a per-tenant concern.
+//
+// The "sms_dinstar" section (DINSTAR_LAN_IP, DINSTAR_SIP_PORT,
+// DINSTAR_SMS_USERNAME/PASSWORD, DINSTAR_AUTH_STYLE, DINSTAR_TLS_CERT_PEM,
+// DINSTAR_WEBUI_USERNAME/PASSWORD) is the one candidate flagged in this
+// wave's task brief (plan §8 gap analysis) as arguably per-tenant — a
+// second tenant with its own GSM trunk would need its own Dinstar
+// credentials, not the platform default this route currently writes/reads.
+// Left as platform-global here deliberately: re-scoping specific settings
+// to a tenant override is explicitly a later wave's job (5/6), not this
+// one, which only needed to make this route compile against the new
+// optional-tenantId signature.
 
 // GET /api/admin/settings — every registered setting's DISPLAY state
 // (section, label, whether a value exists, last 4 chars if secret,
@@ -55,6 +74,7 @@ const PatchSchema = z.object({
 export const PATCH = withApiErrorHandler(async function PATCH(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -75,8 +95,9 @@ export const PATCH = withApiErrorHandler(async function PATCH(request: NextReque
   await setSetting(def.key, parsed.data.value, guard.session.user.id);
 
   // Never log the value, secret or not — see AppSetting's schema comment.
+  // No `tenantId` — force-injected at runtime by the tenant-scoped `db`.
   await db.auditLog.create({
-    data: { action: "settings.update", actorId: guard.session.user.id, targetId: def.key, metadata: { key: def.key, section: def.section } },
+    data: { action: "settings.update", actorId: guard.session.user.id, targetId: def.key, metadata: { key: def.key, section: def.section } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true });

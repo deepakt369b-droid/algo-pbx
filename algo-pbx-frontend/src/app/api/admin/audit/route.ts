@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const action = request.nextUrl.searchParams.get("action") || undefined;
   const actorEmail = request.nextUrl.searchParams.get("actorEmail") || undefined;

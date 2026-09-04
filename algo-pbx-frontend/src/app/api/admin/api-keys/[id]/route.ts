@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const key = await db.apiKey.update({
     where: { id: params.id },
@@ -19,8 +20,10 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
 
   if (!key) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // No `tenantId` — force-injected at runtime by the tenant-scoped `db`,
+  // see the matching comment in ../route.ts.
   await db.auditLog.create({
-    data: { action: "api_key.revoke", actorId: guard.session.user.id, targetId: key.id, metadata: {} },
+    data: { action: "api_key.revoke", actorId: guard.session.user.id, targetId: key.id, metadata: {} } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true });

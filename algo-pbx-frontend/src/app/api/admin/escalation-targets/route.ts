@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const targets = await db.escalationTarget.findMany({ orderBy: { createdAt: "asc" } });
   return NextResponse.json({ targets });
@@ -33,14 +34,16 @@ const CreateSchema = z
 export async function POST(req: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  // No `tenantId` — force-injected at runtime by the tenant-scoped `db`.
   const target = await db.escalationTarget.create({
-    data: { ...parsed.data, createdById: guard.session.user.id },
+    data: { ...parsed.data, createdById: guard.session.user.id } as unknown as Prisma.EscalationTargetUncheckedCreateInput,
   });
   return NextResponse.json({ target }, { status: 201 });
 }

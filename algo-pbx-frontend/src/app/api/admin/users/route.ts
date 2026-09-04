@@ -2,8 +2,10 @@ import { createHash, randomBytes, randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import { unsafeGlobalDb } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
+import type { TenantClient } from "@/lib/db-tenant";
 import { regeneratePjsipConfigAndReload } from "@/lib/pjsip-provision";
 import { regenerateVoicemailConfigAndReload } from "@/lib/voicemail-provision";
 import { sendInviteEmail } from "@/lib/mail/resend";
@@ -20,6 +22,7 @@ export const dynamic = "force-dynamic";
 export const GET = withApiErrorHandler(async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   // Owner override (2026-08-29): plaintext passwords are surfaced to ADMIN
   // sessions only — a SUPERVISOR who can list users still never sees them.
@@ -100,7 +103,7 @@ const CreateUserSchema = z.object({
 const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 const AUTO_EXTENSION_RANGE = { start: 1001, end: 1999 };
 
-async function nextFreeExtensionNumber(): Promise<string | null> {
+async function nextFreeExtensionNumber(db: TenantClient): Promise<string | null> {
   const existing = new Set((await db.extension.findMany({ select: { number: true } })).map((e) => e.number));
   for (let n = AUTO_EXTENSION_RANGE.start; n <= AUTO_EXTENSION_RANGE.end; n++) {
     if (!existing.has(String(n))) return String(n);
@@ -111,6 +114,7 @@ async function nextFreeExtensionNumber(): Promise<string | null> {
 export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const body = await req.json();
   const parsed = CreateUserSchema.safeParse(body);
@@ -132,14 +136,26 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     if (!phoneE164) {
       return NextResponse.json({ error: "Invalid payload", details: { phoneE164: ["Not a valid phone number."] } }, { status: 400 });
     }
-    const phoneConflict = await db.user.findUnique({ where: { phoneE164 } });
+    // User.phoneE164 is DELIBERATELY globally unique across tenants (plan
+    // §1, Requirement A) — the DB constraint itself is a plain @unique, not
+    // a tenant-composite one. A tenant-scoped `db` lookup here would only
+    // check within this tenant's own rows and miss a genuine cross-tenant
+    // collision (which would otherwise surface as a raw 500 from the
+    // `create()` below instead of this clean 409), so this one check
+    // deliberately goes through unsafeGlobalDb.
+    const phoneConflict = await unsafeGlobalDb.user.findUnique({ where: { phoneE164 } });
     if (phoneConflict) {
       return NextResponse.json({ error: `${phoneE164} is already linked to another account.` }, { status: 409 });
     }
   }
 
   if (simPort) {
-    const existing = await db.waInstance.findUnique({
+    // WaInstance.simPort is tenant-composite now (`@@unique([tenantId,
+    // simPort])`, wave 1 — plan §1), not a bare unique field, so this can no
+    // longer be a `findUnique`. `findFirst` under the tenant-scoped `db`
+    // still resolves to exactly one row (tenant-filtered + genuinely unique
+    // within a tenant).
+    const existing = await db.waInstance.findFirst({
       where: { simPort },
       include: { assignedUser: { select: { name: true, email: true } } },
     });
@@ -161,7 +177,7 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
 
   let extensionNumber = requestedExtension;
   if (!extensionNumber && autoExtension) {
-    extensionNumber = (await nextFreeExtensionNumber()) ?? undefined;
+    extensionNumber = (await nextFreeExtensionNumber(db)) ?? undefined;
     if (!extensionNumber) {
       return NextResponse.json({ error: `No free extension number in ${AUTO_EXTENSION_RANGE.start}-${AUTO_EXTENSION_RANGE.end}.` }, { status: 409 });
     }
@@ -174,6 +190,17 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   const voicemailPin = extensionNumber ? String(randomInt(1000, 10000)) : undefined;
   const passwordHash = password ? await bcrypt.hash(password, 12) : undefined;
 
+  // No top-level `tenantId` — the tenant-scoped `db` force-injects it on
+  // `user.create()` at runtime (src/lib/db-tenant.ts). The nested
+  // `extension: { create: {...} }` write, however, does NOT go through the
+  // extension's per-model interception (only the top-level `User` op does —
+  // same "rides on the already-scoped parent" reasoning as
+  // src/lib/crm/deals.ts's createDeal()), and Extension.tenantId is a
+  // required column with no default, so it must be set explicitly here.
+  // Likewise `waInstance: { connect: {...} } }` needs a real unique
+  // selector — WaInstance.simPort is tenant-composite now
+  // (`@@unique([tenantId, simPort])`, wave 1), not a bare unique field, so
+  // the connect must use the compound key.
   const user = await db.user.create({
     data: {
       email,
@@ -203,10 +230,10 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
           }
         : {}),
       ...(extensionNumber
-        ? { extension: { create: { number: extensionNumber, kind: extensionKind, sipSecret, voicemailPin } } }
+        ? { extension: { create: { tenantId: guard.session.user.tenantId, number: extensionNumber, kind: extensionKind, sipSecret, voicemailPin } } }
         : {}),
-      ...(simPort ? { waInstance: { connect: { simPort } } } : {}),
-    },
+      ...(simPort ? { waInstance: { connect: { tenantId_simPort: { tenantId: guard.session.user.tenantId, simPort } } } } : {}),
+    } as unknown as Prisma.UserUncheckedCreateInput,
     include: { extension: true, waInstance: true },
   });
 
@@ -217,8 +244,9 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
 
+    // No `tenantId` — force-injected at runtime by the tenant-scoped `db`.
     await db.invite.create({
-      data: { userId: user.id, tokenHash, expiresAt, createdById: guard.session.user.id },
+      data: { userId: user.id, tokenHash, expiresAt, createdById: guard.session.user.id } as unknown as Prisma.InviteUncheckedCreateInput,
     });
 
     inviteUrl = `${process.env.AUTH_URL ?? ""}/invite/${rawToken}`;

@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import { unsafeGlobalDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ const MintSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = MintSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
@@ -39,7 +41,10 @@ export async function POST(request: NextRequest) {
   const scope = parsed.data.unscoped ? "*" : parsed.data.scope;
   const expiresAt = new Date(Date.now() + parsed.data.ttlMinutes * 60 * 1000);
 
-  const approval = await db.mcpApproval.create({
+  // McpApproval is deliberately platform-global (no tenantId column) —
+  // src/lib/tenancy/scope-rules.ts's PLATFORM_GLOBAL_MODELS — so it must be
+  // reached via unsafeGlobalDb, never the tenant-scoped `db`.
+  const approval = await unsafeGlobalDb.mcpApproval.create({
     data: {
       tokenHash,
       mintedByAdminId: guard.session.user.id,
@@ -48,13 +53,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  // No `tenantId` — force-injected at runtime by the tenant-scoped `db`.
   await db.auditLog.create({
     data: {
       action: "mcp_approval.mint",
       actorId: guard.session.user.id,
       targetId: approval.id,
       metadata: { scope, expiresAt: expiresAt.toISOString() },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   // The raw token — this is the ONLY response that will ever contain it.
@@ -65,7 +71,8 @@ export async function GET() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
 
-  const approvals = await db.mcpApproval.findMany({
+  // Platform-global — see the comment in POST above.
+  const approvals = await unsafeGlobalDb.mcpApproval.findMany({
     orderBy: { createdAt: "desc" },
     take: 100,
     select: {

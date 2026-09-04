@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 import { recordActivity, truncateBody } from "@/lib/crm/activity";
@@ -18,6 +17,7 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const contacts = await db.contact.findMany({ select: { id: true, numberE164: true } });
   const byNumber = new Map(contacts.map((c) => [c.numberE164, c.id]));
@@ -64,7 +64,7 @@ export async function POST() {
       occurredAt: cdr.startedAt,
       contactId,
       actorId: cdr.agentExtension ? extUsers.get(cdr.agentExtension) ?? null : null,
-    });
+    }, db);
     calls++;
   }
 
@@ -91,7 +91,7 @@ export async function POST() {
       refId: m.id,
       occurredAt: m.createdAt,
       contactId: m.conversation.contactId,
-    });
+    }, db);
     msgs++;
   }
 

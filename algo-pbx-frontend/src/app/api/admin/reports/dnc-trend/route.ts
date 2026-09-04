@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { parseReportFilters } from "../_lib";
 
@@ -12,16 +12,21 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session } = guard;
 
   const { agentId, from, to } = parseReportFilters(request);
   const agentFilter = agentId
     ? Prisma.sql`AND "addedById" = ${agentId}`
     : Prisma.empty;
 
-  const raw = await db.$queryRaw<{ day: Date; source: string; count: bigint }[]>`
+  // $queryRaw bypasses the tenant-scoped client's query extension entirely
+  // (src/lib/db-tenant.ts's header comment: raw SQL is a known, unhandled
+  // bypass) — RLS is the belt here, but this route also filters by hand as
+  // braces, same as call-volume/route.ts.
+  const raw = await unsafeGlobalDb.$queryRaw<{ day: Date; source: string; count: bigint }[]>`
     SELECT date_trunc('day', "createdAt") AS day, "source", count(*) AS count
     FROM "DoNotCallEntry"
-    WHERE "createdAt" >= ${from} AND "createdAt" <= ${to}
+    WHERE "tenantId" = ${session.user.tenantId} AND "createdAt" >= ${from} AND "createdAt" <= ${to}
     ${agentFilter}
     GROUP BY 1, 2
     ORDER BY 1

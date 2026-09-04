@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
@@ -16,6 +15,7 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const rows = await db.callDetailRecord.findMany({
     where: { callerNumberE164: null },

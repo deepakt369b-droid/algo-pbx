@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,7 @@ const CreateSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -25,12 +26,17 @@ export async function POST(request: NextRequest) {
   const key = randomBytes(32).toString("hex");
   const keyHash = createHash("sha256").update(key).digest("hex");
 
+  // No `tenantId` in either `data` below — the tenant-scoped `db`
+  // force-injects it at runtime (src/lib/db-tenant.ts); the `as unknown as`
+  // cast is needed only because the generated *UncheckedCreateInput type
+  // still marks tenantId required (it has no knowledge of the extension),
+  // same pattern as src/lib/crm/deals.ts's createDeal().
   const apiKey = await db.apiKey.create({
-    data: { keyHash, label: parsed.data.label, createdById: guard.session.user.id },
+    data: { keyHash, label: parsed.data.label, createdById: guard.session.user.id } as unknown as Prisma.ApiKeyUncheckedCreateInput,
   });
 
   await db.auditLog.create({
-    data: { action: "api_key.create", actorId: guard.session.user.id, targetId: apiKey.id, metadata: { label: apiKey.label } },
+    data: { action: "api_key.create", actorId: guard.session.user.id, targetId: apiKey.id, metadata: { label: apiKey.label } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ key, id: apiKey.id, label: apiKey.label }, { status: 201 });
@@ -39,6 +45,7 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const keys = await db.apiKey.findMany({
     orderBy: { createdAt: "desc" },

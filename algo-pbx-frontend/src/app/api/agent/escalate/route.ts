@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { getAmiClient } from "@/lib/ami-client";
 import { watchEscalationOutcome } from "@/lib/escalation";
@@ -23,7 +23,7 @@ const Schema = z.object({ targetId: z.string().min(1) });
 export async function POST(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const parsed = Schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // No `tenantId` — force-injected at runtime by the tenant-scoped `db`.
   const attempt = await db.escalationAttempt.create({
     data: {
       agentId: session.user.id,
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
       waNotified,
       waError,
       resolvedAt: new Date(),
-    },
+    } as unknown as Prisma.EscalationAttemptUncheckedCreateInput,
   });
 
   return NextResponse.json({ outcome, attemptId: attempt.id, waNotified, waError });

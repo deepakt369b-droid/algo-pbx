@@ -2,7 +2,8 @@ import { randomBytes, createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import { unsafeGlobalDb } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { maybeCompleteProfile } from "@/lib/registration";
 import { getAmiClient } from "@/lib/ami-client";
@@ -67,6 +68,7 @@ async function syncQueueMembership(number: string | undefined, present: boolean)
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
@@ -90,7 +92,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       data: { disabled: parsed.data.disabled, disabledAt: parsed.data.disabled ? new Date() : null },
     });
     await db.auditLog.create({
-      data: { action: parsed.data.disabled ? "user.disable" : "user.enable", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email } },
+      data: { action: parsed.data.disabled ? "user.disable" : "user.enable", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email } } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
 
     // Feature B6 (2026-08-31, operator-decided requirement) — a deactivated
@@ -114,7 +116,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
             actorId: guard.session.user.id,
             targetId: target.id,
             metadata: { releasedContactCount, deactivatedUserEmail: target.email },
-          },
+          } as unknown as Prisma.AuditLogUncheckedCreateInput,
         });
       }
     }
@@ -134,7 +136,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const expiresAt = new Date(Date.now() + RESET_LINK_TTL_MS);
     await db.invite.upsert({
       where: { userId: target.id },
-      create: { userId: target.id, tokenHash, expiresAt, createdById: guard.session.user.id },
+      create: { userId: target.id, tokenHash, expiresAt, createdById: guard.session.user.id } as unknown as Prisma.InviteUncheckedCreateInput,
       update: { tokenHash, expiresAt, consumedAt: null, createdById: guard.session.user.id },
     });
     const resetUrl = `${process.env.AUTH_URL ?? ""}/invite/${rawToken}`;
@@ -148,7 +150,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       emailWarning = `Reset link created, but the email failed to send: ${err instanceof Error ? err.message : "unknown error"}.`;
     }
     await db.auditLog.create({
-      data: { action: "user.password_reset_admin_triggered", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email } },
+      data: { action: "user.password_reset_admin_triggered", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email } } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
     return NextResponse.json({ ok: true, warning: emailWarning });
   }
@@ -163,9 +165,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       data: { phoneVerifiedAt: new Date(), phoneVerifiedByAdminId: guard.session.user.id },
     });
     await db.auditLog.create({
-      data: { action: "user.phone_verified_by_admin", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email, phoneE164: target.phoneE164 } },
+      data: { action: "user.phone_verified_by_admin", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email, phoneE164: target.phoneE164 } } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
-    await maybeCompleteProfile(target.id);
+    await maybeCompleteProfile(db, target.id);
     return NextResponse.json({ user: { id: updated.id, email: updated.email, phoneVerifiedAt: updated.phoneVerifiedAt, phoneVerifiedByAdminId: updated.phoneVerifiedByAdminId } });
   }
 
@@ -188,7 +190,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
 
   if (p.email && p.email !== target.email) {
-    const clash = await db.user.findUnique({ where: { email: p.email }, select: { id: true } });
+    // User.email is DELIBERATELY globally unique across tenants (plan §1,
+    // Requirement A) — see the matching comment on POST /api/admin/users'
+    // phoneE164 conflict check for why this goes through unsafeGlobalDb
+    // rather than the tenant-scoped `db`.
+    const clash = await unsafeGlobalDb.user.findUnique({ where: { email: p.email }, select: { id: true } });
     if (clash) return NextResponse.json({ error: "That email is already in use." }, { status: 409 });
   }
 
@@ -209,10 +215,14 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (p.simPort !== undefined) {
     const current = target.waInstance?.simPort ?? null;
     if (p.simPort === null && current !== null) {
-      await db.waInstance.update({ where: { simPort: current }, data: { assignedUserId: null } });
+      // WaInstance.simPort is tenant-composite now (`@@unique([tenantId,
+      // simPort])`, wave 1 — plan §1), not a bare unique field, so these can
+      // no longer be `findUnique`/`update` — `updateMany`/`findFirst`
+      // resolve to exactly the one row within this tenant.
+      await db.waInstance.updateMany({ where: { simPort: current }, data: { assignedUserId: null } });
       changes.push("simPort:cleared");
     } else if (p.simPort !== null && p.simPort !== current) {
-      const port = await db.waInstance.findUnique({
+      const port = await db.waInstance.findFirst({
         where: { simPort: p.simPort },
         select: { id: true, assignedUserId: true, assignedUser: { select: { name: true, email: true } } },
       });
@@ -224,8 +234,8 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         const holder = port.assignedUser ? `${port.assignedUser.name} (${port.assignedUser.email})` : "another agent";
         return NextResponse.json({ error: `SIM port ${p.simPort} is already assigned to ${holder}.` }, { status: 409 });
       }
-      if (current !== null) await db.waInstance.update({ where: { simPort: current }, data: { assignedUserId: null } });
-      await db.waInstance.update({ where: { simPort: p.simPort }, data: { assignedUserId: target.id } });
+      if (current !== null) await db.waInstance.updateMany({ where: { simPort: current }, data: { assignedUserId: null } });
+      await db.waInstance.updateMany({ where: { simPort: p.simPort }, data: { assignedUserId: target.id } });
       changes.push(`simPort:${p.simPort}`);
     }
   }
@@ -233,23 +243,27 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   // --- Extension link / unlink ---
   if (p.extensionNumber !== undefined) {
     const currentExt = target.extension?.number ?? null;
+    // Extension.number is tenant-composite now (`@@unique([tenantId,
+    // number])`, wave 1 — plan §1), not a bare unique field, so these can no
+    // longer be `findUnique`/`update` — `updateMany`/`findFirst` resolve to
+    // exactly the one row within this tenant.
     if (p.extensionNumber === null && currentExt) {
-      await db.extension.update({ where: { number: currentExt }, data: { userId: null } });
+      await db.extension.updateMany({ where: { number: currentExt }, data: { userId: null } });
       const w = await syncQueueMembership(currentExt, false);
       if (w) warnings.push(w);
       changes.push("extension:unlinked");
     } else if (p.extensionNumber !== null && p.extensionNumber !== currentExt) {
-      const ext = await db.extension.findUnique({ where: { number: p.extensionNumber }, select: { userId: true } });
+      const ext = await db.extension.findFirst({ where: { number: p.extensionNumber }, select: { userId: true } });
       if (!ext) return NextResponse.json({ error: `Extension ${p.extensionNumber} does not exist. Create it first in Extensions.` }, { status: 409 });
       if (ext.userId && ext.userId !== target.id) {
         return NextResponse.json({ error: `Extension ${p.extensionNumber} is already linked to another user.` }, { status: 409 });
       }
       if (currentExt) {
-        await db.extension.update({ where: { number: currentExt }, data: { userId: null } });
+        await db.extension.updateMany({ where: { number: currentExt }, data: { userId: null } });
         const w = await syncQueueMembership(currentExt, false);
         if (w) warnings.push(w);
       }
-      await db.extension.update({ where: { number: p.extensionNumber }, data: { userId: target.id } });
+      await db.extension.updateMany({ where: { number: p.extensionNumber }, data: { userId: target.id } });
       const w = await syncQueueMembership(p.extensionNumber, target.disabled ? false : true);
       if (w) warnings.push(w);
       changes.push(`extension:${p.extensionNumber}`);
@@ -265,7 +279,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
 
   await db.auditLog.create({
-    data: { action: "user.updated", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email, changes } },
+    data: { action: "user.updated", actorId: guard.session.user.id, targetId: target.id, metadata: { email: target.email, changes } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true, changes, warning: warnings.length ? warnings.join(" ") : undefined });
@@ -283,6 +297,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
   if (guard.session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Only ADMIN may delete accounts." }, { status: 403 });
   }
@@ -306,33 +321,41 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
   const actorId = guard.session.user.id;
   const id = target.id;
 
-  await db.$transaction([
-    // Release shared infra (keep the rows).
-    db.extension.updateMany({ where: { userId: id }, data: { userId: null } }),
-    db.waInstance.updateMany({ where: { assignedUserId: id }, data: { assignedUserId: null } }),
-    db.waInstance.updateMany({ where: { pairedByAdminId: id }, data: { pairedByAdminId: null } }),
-    // Null every remaining nullable back-reference.
-    db.user.updateMany({ where: { phoneVerifiedByAdminId: id }, data: { phoneVerifiedByAdminId: null } }),
-    db.recording.updateMany({ where: { hiddenByUserId: id }, data: { hiddenByUserId: null } }),
-    db.conversation.updateMany({ where: { assignedAgentId: id }, data: { assignedAgentId: null } }),
-    db.smsAccessRequest.updateMany({ where: { decidedById: id }, data: { decidedById: null } }),
-    // Reassign DNC entries (their addedById is required and the list must
-    // survive the person who typed it) to the acting admin.
-    db.doNotCallEntry.updateMany({ where: { addedById: id }, data: { addedById: actorId } }),
-    // Delete rows whose FK to this user is required and which carry no
-    // value once the person is gone.
-    db.smsAccessRequest.deleteMany({ where: { requestedById: id } }),
-    db.escalationAttempt.deleteMany({ where: { agentId: id } }),
-    db.otpChallenge.deleteMany({ where: { userId: id } }),
-    db.trustedDevice.deleteMany({ where: { userId: id } }),
-    db.loginAttempt.deleteMany({ where: { userId: id } }),
-    db.invite.deleteMany({ where: { OR: [{ userId: id }, { createdById: id }] } }),
-    db.auditLog.deleteMany({ where: { OR: [{ actorId: id }, { targetId: id }] } }),
-    db.user.delete({ where: { id } }),
-    db.auditLog.create({
-      data: { action: "user.deleted", actorId, metadata: { originalEmail: target.email, role: target.role, userId: id } },
-    }),
-  ]);
+  // NOTE: this used to be one atomic `db.$transaction([...])` array-batch
+  // against the raw PrismaClient. The tenant-scoped `db` (src/lib/db-tenant.ts)
+  // wraps EVERY individual operation in its own short transaction (to set
+  // the `app.tenant_id` RLS GUC per query — see that file's header
+  // comment), so each call below already returns a plain Promise rather
+  // than the lazy `PrismaPromise` the array form of `$transaction` needs
+  // to batch atomically. Sequential awaits are the closest equivalent
+  // reachable without touching src/lib/db-tenant.ts (out of this wave's
+  // scope) — a genuine cross-row atomic delete for this route would need
+  // a dedicated tenant-aware interactive-transaction helper added there
+  // in a later wave.
+  await db.extension.updateMany({ where: { userId: id }, data: { userId: null } });
+  await db.waInstance.updateMany({ where: { assignedUserId: id }, data: { assignedUserId: null } });
+  await db.waInstance.updateMany({ where: { pairedByAdminId: id }, data: { pairedByAdminId: null } });
+  // Null every remaining nullable back-reference.
+  await db.user.updateMany({ where: { phoneVerifiedByAdminId: id }, data: { phoneVerifiedByAdminId: null } });
+  await db.recording.updateMany({ where: { hiddenByUserId: id }, data: { hiddenByUserId: null } });
+  await db.conversation.updateMany({ where: { assignedAgentId: id }, data: { assignedAgentId: null } });
+  await db.smsAccessRequest.updateMany({ where: { decidedById: id }, data: { decidedById: null } });
+  // Reassign DNC entries (their addedById is required and the list must
+  // survive the person who typed it) to the acting admin.
+  await db.doNotCallEntry.updateMany({ where: { addedById: id }, data: { addedById: actorId } });
+  // Delete rows whose FK to this user is required and which carry no
+  // value once the person is gone.
+  await db.smsAccessRequest.deleteMany({ where: { requestedById: id } });
+  await db.escalationAttempt.deleteMany({ where: { agentId: id } });
+  await db.otpChallenge.deleteMany({ where: { userId: id } });
+  await db.trustedDevice.deleteMany({ where: { userId: id } });
+  await db.loginAttempt.deleteMany({ where: { userId: id } });
+  await db.invite.deleteMany({ where: { OR: [{ userId: id }, { createdById: id }] } });
+  await db.auditLog.deleteMany({ where: { OR: [{ actorId: id }, { targetId: id }] } });
+  await db.user.delete({ where: { id } });
+  await db.auditLog.create({
+    data: { action: "user.deleted", actorId, metadata: { originalEmail: target.email, role: target.role, userId: id } } as unknown as Prisma.AuditLogUncheckedCreateInput,
+  });
 
   return NextResponse.json({ ok: true, warning: warnings.length ? warnings.join(" ") : undefined });
 }

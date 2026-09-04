@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { parseReportFilters, resolveAgentExtension } from "../_lib";
 
@@ -23,19 +23,24 @@ interface Row {
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db, session } = guard;
 
   const { agentId, from, to } = parseReportFilters(request);
-  const ext = await resolveAgentExtension(agentId);
+  const ext = await resolveAgentExtension(agentId, db);
   if (ext === null) return NextResponse.json({ rows: [] });
 
   const extFilter = ext ? Prisma.sql`AND "agentExtension" = ${ext}` : Prisma.empty;
 
-  const raw = await db.$queryRaw<
+  // $queryRaw bypasses the tenant-scoped client's query extension entirely
+  // (src/lib/db-tenant.ts's header comment: raw SQL is a known, unhandled
+  // bypass) — RLS is the belt here, but this route also filters by hand as
+  // braces, same as every other raw-SQL report route in this file.
+  const raw = await unsafeGlobalDb.$queryRaw<
     { day: Date; disposition: string; count: bigint }[]
   >`
     SELECT date_trunc('day', "startedAt") AS day, "disposition", count(*) AS count
     FROM "CallDetailRecord"
-    WHERE "startedAt" >= ${from} AND "startedAt" <= ${to}
+    WHERE "tenantId" = ${session.user.tenantId} AND "startedAt" >= ${from} AND "startedAt" <= ${to}
     ${extFilter}
     GROUP BY 1, 2
     ORDER BY 1
