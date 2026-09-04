@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { db } from "@/lib/db";
+// Pre-session — same unscoped-by-email lookup pattern as src/auth.ts's
+// authorize(). tenantId for the AuditLog write below is taken off the
+// resolved `user` row, matching two-factor.ts's resolveTenantId() pattern.
+import { unsafeGlobalDb } from "@/lib/db";
 import { verifyOtp } from "@/lib/otp/service";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
@@ -28,7 +31,7 @@ export const POST = withApiErrorHandler(async (request: NextRequest) => {
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
-  const user = await db.user.findUnique({ where: { email: parsed.data.email } });
+  const user = await unsafeGlobalDb.user.findUnique({ where: { email: parsed.data.email } });
   if (!user || user.disabled) {
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
   }
@@ -40,10 +43,10 @@ export const POST = withApiErrorHandler(async (request: NextRequest) => {
 
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
   const now = new Date();
-  await db.$transaction([
-    db.user.update({ where: { id: user.id }, data: { passwordHash, passwordPlain: parsed.data.newPassword, passwordChangedAt: now } }),
-    db.auditLog.create({
-      data: { action: "user.password_reset_self_service", actorId: user.id, targetId: user.id, metadata: {} },
+  await unsafeGlobalDb.$transaction([
+    unsafeGlobalDb.user.update({ where: { id: user.id }, data: { passwordHash, passwordPlain: parsed.data.newPassword, passwordChangedAt: now } }),
+    unsafeGlobalDb.auditLog.create({
+      data: { action: "user.password_reset_self_service", actorId: user.id, targetId: user.id, tenantId: user.tenantId, metadata: {} },
     }),
   ]);
 

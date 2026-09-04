@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { sendOtp } from "@/lib/otp/service";
 
@@ -18,6 +17,7 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const user = await db.user.findUnique({ where: { id: guard.session.user.id }, select: { phoneE164: true } });
   if (!user?.phoneE164) {
@@ -30,7 +30,13 @@ export async function POST() {
   }
 
   await db.auditLog.create({
-    data: { action: "user.phone_otp_sent", actorId: guard.session.user.id, targetId: guard.session.user.id, metadata: { channel: "whatsapp" } },
+    data: {
+      action: "user.phone_otp_sent",
+      actorId: guard.session.user.id,
+      targetId: guard.session.user.id,
+      tenantId: guard.session.user.tenantId,
+      metadata: { channel: "whatsapp" },
+    },
   });
 
   return NextResponse.json({ ok: true });

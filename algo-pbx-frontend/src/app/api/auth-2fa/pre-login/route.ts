@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { db } from "@/lib/db";
+// Pre-session: no tenant is known yet at this point in the login flow (this
+// route runs BEFORE authorize() ever sees the request) — an unscoped lookup
+// keyed by the globally-unique email is the only way to find the user (and
+// thus tenant) at all, same pattern as src/auth.ts's authorize().
+import { unsafeGlobalDb } from "@/lib/db";
 import { checkLoginRateLimit, recordLoginFailure, getClientIp } from "@/lib/rate-limit";
 import { sendOtp } from "@/lib/otp/service";
 import { isTrustedDevice, signOtpVerifiedToken, TRUSTED_DEVICE_COOKIE, OTP_VERIFIED_COOKIE, OTP_VERIFIED_MAX_AGE_SECONDS } from "@/lib/two-factor";
@@ -40,7 +44,7 @@ export const POST = withApiErrorHandler(async (request: NextRequest) => {
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
   }
 
-  const user = await db.user.findUnique({ where: { email } });
+  const user = await unsafeGlobalDb.user.findUnique({ where: { email } });
   const hashToCompare = user?.passwordHash ?? DUMMY_HASH;
   const validPassword = await bcrypt.compare(password, hashToCompare);
 

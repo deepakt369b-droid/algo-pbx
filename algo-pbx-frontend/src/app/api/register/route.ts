@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 import { isProfileComplete, maybeCompleteProfile } from "@/lib/registration";
@@ -30,6 +29,7 @@ const RegisterSchema = z.object({
 export const POST = withApiErrorHandler(async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = RegisterSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -66,7 +66,7 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
     },
   });
 
-  await maybeCompleteProfile(guard.session.user.id);
+  await maybeCompleteProfile(db, guard.session.user.id);
 
   return NextResponse.json({ ok: true, phoneE164, phoneVerified: !phoneChanged && Boolean(current?.phoneVerifiedAt) });
 });
@@ -77,6 +77,7 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
 export const GET = withApiErrorHandler(async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const user = await db.user.findUnique({
     where: { id: guard.session.user.id },

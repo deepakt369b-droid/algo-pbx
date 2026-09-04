@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { buildContactDisplayMap, resolveContactDisplayName } from "@/lib/contact-display";
 import { normalizeToE164 } from "@/lib/phone-normalize";
@@ -31,7 +30,7 @@ const LIMIT = 50;
 export async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const { session } = guard;
+  const { session, db } = guard;
 
   const extension = session.user.extension;
   if (!extension) {
@@ -79,6 +78,6 @@ export async function POST() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
 
-  await db.user.update({ where: { id: guard.session.user.id }, data: { missedCallsSeenAt: new Date() } });
+  await guard.db.user.update({ where: { id: guard.session.user.id }, data: { missedCallsSeenAt: new Date() } });
   return NextResponse.json({ ok: true });
 }

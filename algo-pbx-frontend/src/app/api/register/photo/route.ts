@@ -1,7 +1,6 @@
 import { unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { InvalidPhotoError, photoStorageDir, processAgentPhoto, resolvePhotoPath } from "@/lib/agent-photo";
 
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const form = await request.formData().catch(() => null);
   const file = form?.get("photo");

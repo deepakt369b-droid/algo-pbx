@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
-  const user = await db.user.findUnique({
+  const user = await guard.db.user.findUnique({
     where: { id: guard.session.user.id },
     select: { themePreference: true },
   });
@@ -29,7 +28,7 @@ export async function PATCH(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
-  await db.user.update({
+  await guard.db.user.update({
     where: { id: guard.session.user.id },
     data: { themePreference: parsed.data.themePreference },
   });

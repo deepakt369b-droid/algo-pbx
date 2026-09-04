@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { verifyOtp } from "@/lib/otp/service";
 import { maybeCompleteProfile } from "@/lib/registration";
@@ -12,6 +11,7 @@ const Schema = z.object({ code: z.string().regex(/^\d{6}$/, "Code must be 6 digi
 export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -27,10 +27,16 @@ export async function POST(request: NextRequest) {
   });
 
   await db.auditLog.create({
-    data: { action: "user.phone_verified", actorId: guard.session.user.id, targetId: guard.session.user.id, metadata: { channel: "whatsapp" } },
+    data: {
+      action: "user.phone_verified",
+      actorId: guard.session.user.id,
+      targetId: guard.session.user.id,
+      tenantId: guard.session.user.tenantId,
+      metadata: { channel: "whatsapp" },
+    },
   });
 
-  await maybeCompleteProfile(guard.session.user.id);
+  await maybeCompleteProfile(db, guard.session.user.id);
 
   return NextResponse.json({ ok: true });
 }

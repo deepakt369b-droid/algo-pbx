@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+// Pre-session (phase 2 of login) — same unscoped-by-email lookup pattern as
+// pre-login/route.ts and src/auth.ts's authorize().
+import { unsafeGlobalDb } from "@/lib/db";
 import { verifyOtp } from "@/lib/otp/service";
 import {
   rememberDevice,
@@ -29,7 +31,7 @@ export const POST = withApiErrorHandler(async (request: NextRequest) => {
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
-  const user = await db.user.findUnique({ where: { email: parsed.data.email }, select: { id: true, disabled: true } });
+  const user = await unsafeGlobalDb.user.findUnique({ where: { email: parsed.data.email }, select: { id: true, disabled: true } });
   if (!user || user.disabled) {
     // Generic failure — matches pre-login's enumeration-avoidance shape.
     return NextResponse.json({ error: "Incorrect code." }, { status: 400 });

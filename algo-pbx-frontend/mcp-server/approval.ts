@@ -1,5 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
-import { db } from "../src/lib/db";
+// mcp-server is an operator/infra tool with no session or tenant context of
+// its own (see db-tools.ts's header for the fuller discussion). McpApproval
+// is a platform-global model (src/lib/tenancy/scope-rules.ts's
+// PLATFORM_GLOBAL_MODELS) — no tenantId column exists on it at all — so
+// unsafeGlobalDb is the correct, not just expedient, client for it.
+// recordAudit() below additionally resolves a tenantId by hand (off the
+// minting admin's own User row) before writing to the tenant-scoped
+// AuditLog table, same pattern as src/lib/two-factor.ts's resolveTenantId().
+import { unsafeGlobalDb } from "../src/lib/db";
 
 // Every write tool this server exposes requires a valid, unexpired,
 // unconsumed approval token minted by an admin from the web app
@@ -47,7 +55,7 @@ export async function consumeApproval(token: string | undefined, scope: string):
   if (!token) return { ok: false, error: "This action requires an approvalToken. See the tool description for the preview -> mint -> execute flow." };
 
   const tokenHash = hashToken(token);
-  const approval = await db.mcpApproval.findUnique({ where: { tokenHash } });
+  const approval = await unsafeGlobalDb.mcpApproval.findUnique({ where: { tokenHash } });
 
   if (!approval) return { ok: false, error: "Unknown approval token." };
   if (approval.consumedAt) return { ok: false, error: "This approval token has already been used." };
@@ -59,7 +67,7 @@ export async function consumeApproval(token: string | undefined, scope: string):
   // Consume BEFORE the caller performs the actual write — a single-use
   // token must not be replayable even if the caller's write fails partway
   // through; re-minting is cheap and correct, replay is not.
-  await db.mcpApproval.update({ where: { id: approval.id }, data: { consumedAt: new Date() } });
+  await unsafeGlobalDb.mcpApproval.update({ where: { id: approval.id }, data: { consumedAt: new Date() } });
 
   return { ok: true, mintedByAdminId: approval.mintedByAdminId };
 }
@@ -69,7 +77,9 @@ export async function recordAudit(action: string, mintedByAdminId: string | unde
   // purposes is whichever admin minted the approval token that authorized
   // this write, recovered from the McpApproval row before it's consumed.
   if (!mintedByAdminId) return;
-  await db.auditLog.create({
-    data: { action, actorId: mintedByAdminId, metadata: metadata as object },
+  const admin = await unsafeGlobalDb.user.findUnique({ where: { id: mintedByAdminId }, select: { tenantId: true } });
+  if (!admin) return;
+  await unsafeGlobalDb.auditLog.create({
+    data: { action, actorId: mintedByAdminId, tenantId: admin.tenantId, metadata: metadata as object },
   }).catch(() => undefined);
 }

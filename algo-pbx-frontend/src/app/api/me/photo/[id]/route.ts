@@ -1,7 +1,6 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { resolvePhotoPath } from "@/lib/agent-photo";
 
@@ -24,7 +23,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const user = await db.user.findUnique({ where: { id: params.id }, select: { photoPath: true } });
+  const user = await guard.db.user.findUnique({ where: { id: params.id }, select: { photoPath: true } });
   if (!user?.photoPath) {
     return NextResponse.json({ error: "No photo on file" }, { status: 404 });
   }

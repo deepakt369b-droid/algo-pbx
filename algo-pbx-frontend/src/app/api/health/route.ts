@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 // round-trip, not just "the Node process is alive".
 export async function GET() {
   try {
-    await db.$queryRaw`SELECT 1`;
+    await unsafeGlobalDb.$queryRaw`SELECT 1`;
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : "unknown" }, { status: 503 });

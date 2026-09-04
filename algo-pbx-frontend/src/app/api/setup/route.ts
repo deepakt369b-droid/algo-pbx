@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { db } from "@/lib/db";
+// True pre-tenant bootstrap — this route creates the very first user, so
+// there is no session/tenant context to resolve a scoped client from at
+// all (the opposite problem every other pre-session route in this domain
+// has: those resolve an EXISTING user's tenant, this one has no user yet).
+// unsafeGlobalDb is the only option; see the tenant-attachment comment on
+// POST below for how the new admin gets a tenantId.
+import { unsafeGlobalDb } from "@/lib/db";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +36,7 @@ const SetupSchema = z.object({
 });
 
 async function adminAlreadyExists(): Promise<boolean> {
-  const count = await db.user.count({ where: { role: "ADMIN" } });
+  const count = await unsafeGlobalDb.user.count({ where: { role: "ADMIN" } });
   return count > 0;
 }
 
@@ -61,14 +67,36 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
     return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const existingEmail = await db.user.findUnique({ where: { email: parsed.data.email } });
+  const existingEmail = await unsafeGlobalDb.user.findUnique({ where: { email: parsed.data.email } });
   if (existingEmail) {
     return NextResponse.json({ error: "An account with this email already exists." }, { status: 409 });
   }
 
+  // Multi-tenant SaaS foundation, wave 2e: attach the new admin to "the"
+  // tenant for this deployment. Wave 1's migration seeded exactly one
+  // Tenant row (slug "sahara") for the current single-tenant-in-practice
+  // reality, and this route — true first-run, before any user or session
+  // exists — has no other signal (no host-based resolution, no invite) to
+  // pick a tenant from. findFirst() rather than hardcoding the "sahara"
+  // slug: it's the same assumption ("there is exactly one tenant today")
+  // expressed more generally, so it keeps working unmodified if that seed
+  // row is ever renamed. It will pick an ARBITRARY tenant if more than one
+  // row exists — deliberately not "the right one" for a true multi-tenant
+  // deployment. Wave 7 (real self-serve tenant provisioning) will replace
+  // this with a proper "which tenant is this signup for" resolution
+  // (subdomain/host-based, most likely); revisit this route then.
+  const tenant = await unsafeGlobalDb.tenant.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!tenant) {
+    return NextResponse.json(
+      { error: "No tenant exists for this deployment. Run the tenancy migration/seed before setup." },
+      { status: 503 }
+    );
+  }
+
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
-  const user = await db.user.create({
+  const user = await unsafeGlobalDb.user.create({
     data: {
+      tenantId: tenant.id,
       email: parsed.data.email,
       passwordHash,
       passwordPlain: parsed.data.password,
@@ -82,8 +110,8 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
     },
   });
 
-  await db.auditLog.create({
-    data: { action: "setup.create_first_admin", actorId: user.id, targetId: user.id, metadata: { email: user.email } },
+  await unsafeGlobalDb.auditLog.create({
+    data: { action: "setup.create_first_admin", actorId: user.id, targetId: user.id, tenantId: user.tenantId, metadata: { email: user.email } },
   });
 
   return NextResponse.json({ ok: true });

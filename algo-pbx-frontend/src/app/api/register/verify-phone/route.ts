@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { verifyFirebasePhoneToken } from "@/lib/firebase/admin";
 import { maybeCompleteProfile } from "@/lib/registration";
@@ -31,6 +30,7 @@ const VerifySchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = VerifySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -63,10 +63,16 @@ export async function POST(request: NextRequest) {
   });
 
   await db.auditLog.create({
-    data: { action: "user.phone_verified", actorId: guard.session.user.id, targetId: guard.session.user.id, metadata: { channel: "firebase" } },
+    data: {
+      action: "user.phone_verified",
+      actorId: guard.session.user.id,
+      targetId: guard.session.user.id,
+      tenantId: guard.session.user.tenantId,
+      metadata: { channel: "firebase" },
+    },
   });
 
-  await maybeCompleteProfile(guard.session.user.id);
+  await maybeCompleteProfile(db, guard.session.user.id);
 
   return NextResponse.json({ ok: true });
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+// Pre-session — same unscoped-by-email lookup pattern as src/auth.ts's
+// authorize() (no tenant is known until the user row is found).
+import { unsafeGlobalDb } from "@/lib/db";
 import { sendOtp } from "@/lib/otp/service";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
@@ -31,7 +33,7 @@ export const POST = withApiErrorHandler(async (request: NextRequest) => {
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
-  const user = await db.user.findUnique({ where: { email: parsed.data.email } });
+  const user = await unsafeGlobalDb.user.findUnique({ where: { email: parsed.data.email } });
   if (user && !user.disabled && user.phoneE164 && user.phoneVerifiedAt) {
     // Failure here (rate-limited, no WhatsApp instance connected, etc.)
     // is deliberately swallowed — surfacing it would distinguish "account

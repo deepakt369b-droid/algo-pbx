@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { db } from "@/lib/db";
+// Pre-session — Invite.tokenHash is a real global-unique column
+// (@unique, unaffected by wave 1), same reasoning as TrustedDevice.tokenHash
+// in src/lib/two-factor.ts: no tenant is known until the token is looked up.
+// The AuditLog write in POST supplies tenantId explicitly, resolved from
+// invite.user.tenantId (the invite's own user row).
+import { unsafeGlobalDb } from "@/lib/db";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +36,7 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
   }
 
   const tokenHash = createHash("sha256").update(parsed.data.token).digest("hex");
-  const invite = await db.invite.findUnique({ where: { tokenHash }, include: { user: true } });
+  const invite = await unsafeGlobalDb.invite.findUnique({ where: { tokenHash }, include: { user: true } });
 
   if (!invite || invite.consumedAt || invite.expiresAt.getTime() <= Date.now()) {
     return NextResponse.json({ error: "This invite link is invalid or has expired. Ask an admin to issue a new one." }, { status: 410 });
@@ -39,16 +44,16 @@ export const POST = withApiErrorHandler(async function POST(request: NextRequest
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
 
-  await db.$transaction([
+  await unsafeGlobalDb.$transaction([
     // passwordChangedAt stamped unconditionally, not just for Loop C3's
     // admin-triggered reset path — harmless for a first-ever invite (no
     // prior session exists to kill) and correct for a reset (this IS the
     // token that class of link uses too, see
     // POST /api/admin/users/[id]'s sendReset action).
-    db.user.update({ where: { id: invite.userId }, data: { passwordHash, passwordPlain: parsed.data.password, passwordChangedAt: new Date() } }),
-    db.invite.update({ where: { id: invite.id }, data: { consumedAt: new Date() } }),
-    db.auditLog.create({
-      data: { action: "invite.consume", actorId: invite.userId, targetId: invite.id, metadata: {} },
+    unsafeGlobalDb.user.update({ where: { id: invite.userId }, data: { passwordHash, passwordPlain: parsed.data.password, passwordChangedAt: new Date() } }),
+    unsafeGlobalDb.invite.update({ where: { id: invite.id }, data: { consumedAt: new Date() } }),
+    unsafeGlobalDb.auditLog.create({
+      data: { action: "invite.consume", actorId: invite.userId, targetId: invite.id, tenantId: invite.user.tenantId, metadata: {} },
     }),
   ]);
 
@@ -63,7 +68,7 @@ export const GET = withApiErrorHandler(async function GET(request: NextRequest) 
   if (!token) return NextResponse.json({ error: "Missing token" }, { status: 400 });
 
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  const invite = await db.invite.findUnique({ where: { tokenHash }, include: { user: true } });
+  const invite = await unsafeGlobalDb.invite.findUnique({ where: { tokenHash }, include: { user: true } });
 
   if (!invite || invite.consumedAt || invite.expiresAt.getTime() <= Date.now()) {
     return NextResponse.json({ valid: false }, { status: 410 });
