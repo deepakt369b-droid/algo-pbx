@@ -1,16 +1,13 @@
-# Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE + deployed. S6 WAVs DONE + deployed. CRM/WhatsApp click-through DONE (live-call parts deferred). Deal↔contact linking fix + sidebar label fix DONE + deployed. Dinstar gateway syslog feature DEPLOYED to VPS, gates green, **live traffic still unconfirmed** (SIM ejected mid-diagnosis, see below). Extensions/Dinstar page merge DEPLOYED. Admin-not-a-contact-owner + full country-code picker DEPLOYED. **OpenVPN-primary/Headscale-fallback/connectivity: G1 (infra) DONE + DEPLOYED, CA bootstrapped (encrypted, real passphrase), one demo client cert issued and correctly generated — G2 (the actual tunnel bring-up + cutover) NOT started, paused here for the day.** `main` is 10 commits ahead of `origin/main` — committed, **NOT pushed to GitHub** (operator held push this round; VPS has all 10 via direct file sync, so the VPS and local tree match, GitHub is behind both). Read "OpenVPN/Headscale/connectivity, part 2" below first.
+# Handoff — Multi-tenant SaaS foundation, WAVE 1 DEPLOYED TO PRODUCTION for real (2026-09-04) — schema+migration+RLS+scoped-client+platform-plane+full-route-sweep all built, pushed, and **run against the live prod DB with owner sign-off**: fresh encrypted snapshot, step1+RLS applied, backfill run (996 rows/35 tables, 0 orphans, independently re-verified), step3 constraints promoted+applied, `web`/`cdr-listener`/`gateway-syslog-listener` redeployed, live-verified via browser (real login, real Wallboard data, all 14 contacts). One near-miss caught during the deploy (see below) — no confirmed impact, but read it before running `migrate deploy` one-off against this image again. Everything from the previous "OpenVPN/Headscale/connectivity, part 2" session (10 commits) also got pushed and pulled onto the VPS as part of this same sync — G2 (tunnel bring-up) itself is still not started, unchanged from before. This session began by reconstructing state from git history + `LLM.md` after the prior session's PC lost power mid-write-up, before doing anything else — see "2026-09-04 session — resumed after power loss" below for exactly how that was done.
 
 ## ▶ "claude continue" — the remaining work, in order
 
-Updated 2026-09-03, end of day. Remaining, in order:
+Updated 2026-09-04, end of session. Remaining, in order:
 
-1. ~~**Push the 10 unpushed commits to GitHub**~~ — **DONE 2026-09-04.**
-   Operator gave the go-ahead; `ae7094f..b11cc0c main -> main` pushed
-   successfully. Note: **CLI `git push` works again** — the Windows
-   Application Control policy that blocked `libcurl-4.dll` last session
-   is no longer in effect. GitHub, VPS and local tree are now all in
-   sync at `b11cc0c`.
-2. **G2 — the tunnel bring-up test (next concrete step, everything is
+1. **Multi-tenant wave 1 loose ends**: Playwright acceptance (`e2e/tenancy-acceptance.*.spec.ts`) and the real-call check were never run against the live stack (need a running app + a human for the call) — not blocking, but should happen before wave 2's route-level behavior is trusted beyond "it compiles and the smoke test passed". The pre-migration encrypted snapshot (`/root/tenancy-prod-deploy/` on the VPS) is a rollback point, not yet reviewed for deletion.
+2. **Multi-tenant waves 4-7** — not started, per the plan's own sequencing: billing enforcement, domain/TLS re-scope, telephony namespacing (needs live Asterisk), tenant provisioning (blocked on CA signing flow v2 + G2 tunnel, same blockers as below).
+3. Everything below this line (G2 tunnel bring-up, CA signing flow v2, live-call verification, Dinstar syslog live-traffic) is **carried over unchanged from before** — none of it was touched this session. (Pushing to GitHub is no longer on this list — done, see above; `main`/`origin/main`/VPS are all in sync at `4d04b09`.)
+4. **G2 — the tunnel bring-up test (next concrete step, everything is
    ready for it)**. **PRE-FLIGHT DONE 2026-09-04** — server side verified
    healthy and one real blocker found (see "G2 pre-flight" below); the
    `ufw` fix is the only thing standing between here and the upload, and
@@ -30,14 +27,14 @@ Updated 2026-09-03, end of day. Remaining, in order:
    server config AND the client `.ovpn` — see part 2 for why the client
    side needed a separate fix) but this is the first time it meets the
    real device.
-3. **Only after the tunnel is confirmed up**: G2's remaining steps — run
+5. **Only after the tunnel is confirmed up**: G2's remaining steps — run
    the cutover (`POST /api/admin/gateway-sites/[id]/cutover`, already
    built, re-points `DINSTAR_LAN_IP` + verifies via AMI), real
    inbound+outbound test call over the tunnel, confirm syslog arrives via
    `10.8.0.1` (needs `SYSLOG_BIND_IP_SECONDARY` set on
    `gateway-syslog-listener` first — not done yet, do this as part of G2,
    not before), only then mark Tailscale legacy.
-4. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
+6. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
    the operator for review first** (their explicit instruction — do not
    build unilaterally): encrypted CA-passphrase storage in the
    AppSetting store, an admin-approval-at-signing-time flow (passphrase
@@ -47,12 +44,12 @@ Updated 2026-09-03, end of day. Remaining, in order:
    Until this ships, `bridge-watch.sh`'s unattended signing stays
    disabled by design (interim hard rule, see part 2) — every new client
    cert is issued manually by an admin.
-5. **Live-call verification (deferred by the operator to a later
+7. **Live-call verification (deferred by the operator to a later
    session)**: screen-pop on a real inbound call + the disposition
    prompt (Operator TODO old #3's last bullet), S6 announcement prompt
    heard on a real call (`docs/S6-real-call-test-plan.md`),
    Manager-merge/Phase MM (`LLM.md §30`, never live-call-tested).
-6. **Dinstar gateway syslog — live traffic verification (deferred by the
+8. **Dinstar gateway syslog — live traffic verification (deferred by the
    operator, SIM was ejected mid-diagnosis)**: everything is built and
    deployed (schema, parser, receiver sidecar, ingest route, retention, UI
    panel, alerts), but **zero packets have ever been observed arriving** at
@@ -64,6 +61,98 @@ Updated 2026-09-03, end of day. Remaining, in order:
    traffic is confirmed via either path: widen
    `src/lib/dinstar/syslog-parse.ts`'s taxonomy against the real captured
    line shapes (it was built defensively, without ever having seen one).
+
+---
+
+## 2026-09-04 session — resumed after power loss, multi-tenant WAVE 1 deployed to production
+
+The prior session's PC lost power before its own write-up could happen —
+`handoff.md` was stale (no mention of the multi-tenant work at all) despite
+12 real commits (`ef66ab8`..`4d04b09`) sitting committed and clean on
+`main`. This session started with "check your last log" — reconstructed
+state from `git log`/`git reflog` (clean, nothing lost, 12 commits ahead of
+`origin/main`) and `LLM.md`'s Phase Checklist + Build Log (which the wave
+commits themselves kept current, unlike `handoff.md`), then confirmed with
+the operator which of two candidate "in-progress deploys" was meant (the
+`git push`, or the actual prod tenancy migration) before touching anything.
+
+**Step 1 — pushed.** `git push origin main`, `ae7094f..4d04b09` (this
+included the OpenVPN/Headscale commits from the previous session too, which
+had also never been pushed).
+
+**Step 2 — the prod tenancy migration, run for real, owner sign-off given.**
+
+VPS was 23 commits behind (`ae7094f`) with ~40KB of uncommitted local
+OpenVPN-related drift (the same "scp'd but never committed" pattern as the
+previous session's syslog deploy). Backed up via `git stash -u`
+(`pre-tenancy-pull backup 2026-09-04`, left in place, not dropped), then a
+clean `git pull --ff-only` to `4d04b09` — no conflicts, matching the
+established pattern where the incoming commits already supersede the stash.
+
+1. **Fresh encrypted snapshot** (`pg_dump -F c`, 855KB) taken immediately
+   before anything else — `openssl enc -aes-256-cbc -pbkdf2`, plaintext
+   deleted, `600` perms, kept at `/root/tenancy-prod-deploy/` on the VPS as
+   a rollback point. Not yet reviewed for deletion — flag for later.
+2. **Step 1 (`20260904100000_add_tenancy`) + RLS (`20260904120000_add_rls`)
+   applied.** Built the new `web` image, ran `migrate deploy` against it.
+   **Real near-miss, caught live:** `docker-entrypoint.sh` always runs
+   `migrate deploy` then unconditionally `exec`s `node server.js` —
+   the command passed to `docker compose run` is silently ignored. The
+   migration container kept running as a second full app server, on the
+   **same Docker network alias (`web`)** as the real `algo-web` container,
+   for ~2-3 minutes before this was noticed and the container was killed.
+   Checked Caddy's access logs across that exact window for 5xx responses —
+   **found none**, so no confirmed customer impact — but this was luck, not
+   design: that second server was running against a DB where `tenantId` was
+   not yet backfilled, so any request that read a required-non-null
+   `tenantId` field could have thrown. **For next time**: always pass
+   `--entrypoint ''` (not just an override command) when running one-off
+   commands against this image, or use a non-app-serving target.
+3. **Step 2 (backfill) run for real.** The production `runner`/`web` image
+   is a Next.js standalone bundle — no `scripts/`, no `tsx`. Built a
+   separate one-off image from the Dockerfile's `builder` target instead
+   (full source + a correctly generated Prisma client + `tsx`). **Second
+   real bug, caught live:** the generated client ships both an
+   `openssl-1.1.x` and an `openssl-3.0.x` query engine binary, and this
+   container's own auto-detection picked the wrong one and crashed —
+   worked around with an explicit `PRISMA_QUERY_ENGINE_LIBRARY` env var
+   pointing at the `.x` binary (the `web`/`runner` image never hits this,
+   its `migrate deploy` step uses an unrelated schema-engine binary).
+   Result: **996 rows backfilled across 35 tables in 0.2s, script reports
+   zero orphans.** Independently re-verified — not just trusted — with a
+   direct `SELECT count(*) WHERE "tenantId" IS NULL` against Postgres on
+   the 7 highest-row-count/highest-risk tables (`User`, `CallDetailRecord`,
+   `Recording`, `Contact`, `ChatMessage`, `Activity`, `AppSetting`): all
+   zero.
+4. **Step 3 promoted and applied.** `step3_constrain.sql.template` copied
+   into a new live migration folder (`20260904140000_add_tenancy_constrain`)
+   exactly per its own documented promotion steps; `web` rebuilt to bake it
+   in; applied via an isolated `docker run` (deliberately not
+   `docker compose run`, to avoid repeating near-miss #1) with
+   `--entrypoint ''`. Deploy output named the migration explicitly (a bare
+   "no pending migrations" would have been the failure mode to watch for,
+   per the standing `LLM.md` lesson — didn't happen here). Verified live via
+   `information_schema.columns`/`pg_constraint`: `User.tenantId` is
+   `NOT NULL`, `User_tenantId_fkey` and friends exist.
+5. **App redeployed.** `web`, `cdr-listener`, `gateway-syslog-listener`
+   rebuilt and restarted on the tenancy-aware code — all three came up
+   healthy, `migrate status` shows 26/26 applied, zero errors in startup
+   logs, zero 5xx in Caddy's logs across the whole deploy window.
+6. **Live-verified in a real browser session** (own saved Chrome
+   credentials autofilled the login form — not typed or otherwise handled
+   directly): real login succeeded, `/admin` Wallboard showed real
+   AMI-connected live data (1 agent online), `/admin/contacts` showed all
+   **14** real contacts — the exact count the backfill reported for that
+   table.
+
+**Not done this session:** Playwright acceptance tests and the real-call
+check (`e2e/tenancy-acceptance.*.spec.ts`) — need a running app stack plus,
+for the real call, live Asterisk and a human; multi-tenant waves 4-7
+(billing, domain re-scope, telephony namespacing, provisioning) — not
+started, per the plan's own sequencing, several blocked on G2/CA-signing-v2
+same as before. G2 itself (tunnel bring-up) was **not touched** this
+session — everything in the "G2 pre-flight" section below is unchanged
+from the previous session.
 
 ---
 
