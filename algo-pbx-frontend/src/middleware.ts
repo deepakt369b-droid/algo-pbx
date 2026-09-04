@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import authConfig from "@/auth.config";
+import platformAuthConfig from "@/lib/platform-auth.config";
 
 // THIS FILE MUST LIVE HERE (src/middleware.ts), not at the frontend package
 // root. Root-caused, not empirical: `next build` computes
@@ -20,6 +21,16 @@ import authConfig from "@/auth.config";
 // and bcryptjs (see auth.config.ts's comment / edge-compatibility.mdx).
 const { auth } = NextAuth(authConfig);
 
+// Second, independent Edge-safe instance for the platform plane (D2), from
+// its own provider-less config — never import from "@/lib/platform-auth"
+// here, same reasoning (Prisma/bcryptjs pull, see that file's comment).
+// This is genuinely a SECOND NextAuth() call, not a config swap on the
+// first — the two must resolve completely separate session cookies
+// (platform-auth.config.ts's PLATFORM_SESSION_COOKIE vs. next-auth's
+// tenant-side default), and NextAuth() bakes the cookie name in at
+// construction.
+const { auth: platformAuthEdge } = NextAuth(platformAuthConfig);
+
 // Builds an absolute URL from the REAL incoming request instead of
 // `req.nextUrl.origin` — see this file's header comment above for why:
 // Next.js's compiled Edge runtime can "seal" a request's own `nextUrl` to
@@ -38,7 +49,10 @@ function absoluteUrl(path: string, req: Parameters<Parameters<typeof auth>[0]>[0
   return new URL(path, `${proto}://${host}`);
 }
 
-export default auth((req) => {
+// Unchanged tenant-side logic — do not modify these branches (a separate
+// wave-2a agent may also be touching auth machinery elsewhere; this file's
+// existing tenant behavior is left exactly as it was).
+const tenantMiddleware = auth((req) => {
   const { pathname } = req.nextUrl;
   const session = req.auth;
 
@@ -94,10 +108,60 @@ export default auth((req) => {
   return NextResponse.next();
 });
 
+// Platform-plane branch (wave 3, D2). Point 4 of the wave-3 brief chose to
+// extend this single middleware.ts rather than add a second middleware
+// file — Next.js only ever loads one middleware.ts (see this file's own
+// header comment on why even ITS location is load-bearing), so a second
+// file is not an option; the alternative would have been relying purely on
+// requirePlatformSession()/layout-level checks with zero page-redirect
+// convenience, which is a worse UX for no isolation benefit — the API
+// routes under /api/platform/** already self-guard via
+// requirePlatformSession() regardless (matcher below excludes /api
+// entirely, same as the tenant side), so this redirect is defense-in-depth
+// for page navigations only, exactly like the tenant branch above.
+const platformMiddleware = platformAuthEdge((req) => {
+  const { pathname } = req.nextUrl;
+  const session = req.auth;
+
+  // /platform/login must stay reachable with no session, or a
+  // logged-out operator could never reach the form to sign in.
+  if (pathname === "/platform/login") {
+    return NextResponse.next();
+  }
+
+  if (!session?.user) {
+    const loginUrl = absoluteUrl("/platform/login", req);
+    loginUrl.searchParams.set("callbackUrl", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  return NextResponse.next();
+});
+
+// Single default export dispatching by path prefix to whichever of the two
+// independently-wrapped middleware functions applies. Both
+// tenantMiddleware and platformMiddleware have the identical Next.js
+// middleware signature (auth()'s wrapper preserves it), so this is a plain
+// prefix dispatch, not a merge of the two auth mechanisms — the tenant
+// branch never runs for /platform/* requests and vice versa, keeping the
+// two session/cookie spaces fully separate all the way through this file.
+export default function middleware(...args: Parameters<typeof tenantMiddleware>) {
+  const [req] = args;
+  if (req.nextUrl.pathname.startsWith("/platform")) {
+    return platformMiddleware(...args);
+  }
+  return tenantMiddleware(...args);
+}
+
 export const config = {
   // Auth-only matcher. CSP is now a static header in next.config.mjs (with
   // 'unsafe-inline' so Next.js's RSC hydration inline scripts can run), so
   // /login and /setup no longer need to pass through middleware just for
-  // headers. /api and static assets are still excluded.
+  // headers. /api and static assets are still excluded. /platform is
+  // deliberately NOT excluded here (unlike /login/setup) — the platform
+  // branch above needs to run on every /platform/* page navigation,
+  // including /platform/login itself, so it can make that one path's
+  // "allow with no session" decision itself rather than being kept out of
+  // middleware entirely.
   matcher: ["/((?!api/|api$|_next/static|_next/image|favicon.ico|login|setup).*)"],
 };
