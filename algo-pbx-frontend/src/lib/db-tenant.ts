@@ -94,7 +94,10 @@ export function tenantDb(tenantId: string) {
             //     the standard way to set a GUC from user input safely.
             await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // Prisma's transaction client type doesn't expose delegates by
+            // dynamic string key; this repo's eslint config (next/core-web-
+            // vitals only) doesn't register @typescript-eslint rules, so no
+            // disable directive is needed here — `any` alone is fine.
             const delegate = (tx as any)[delegateName];
             if (!delegate || typeof delegate[operation] !== "function") {
               throw new Error(`tenantDb(): no delegate/operation for ${model}.${operation}`);
