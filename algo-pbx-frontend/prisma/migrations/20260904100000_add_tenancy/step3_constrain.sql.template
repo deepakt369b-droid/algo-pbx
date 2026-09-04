@@ -1,0 +1,228 @@
+-- Multi-tenant SaaS foundation — WAVE 1, STEP 3 of 3 (2026-09-04).
+--
+-- ***** THIS FILE IS NOT A LIVE MIGRATION YET. *****
+-- It is deliberately named "step3_constrain.sql.template", not
+-- "migration.sql", and deliberately sits OUTSIDE its own
+-- prisma/migrations/<timestamp>_.../ folder. `prisma migrate deploy` only
+-- ever executes files literally named "migration.sql" inside a migration
+-- folder, so this file is inert until promoted — on purpose, so it can
+-- never run before the backfill (step 2) has completed. See
+-- migration.sql's header in this same folder for the full three-step
+-- rationale.
+--
+-- PROMOTION STEPS (do this only after rehearse-tenancy-migration.ts reports
+-- PASS — zero orphans on every table — and a human has signed off, per the
+-- plan's "Working agreement": "Wave 1's gate is owner sign-off after
+-- rehearsal evidence"):
+--   1. mkdir prisma/migrations/<new-timestamp>_add_tenancy_constrain
+--   2. cp step3_constrain.sql.template <that dir>/migration.sql
+--   3. Remove this header comment block (or leave it — it's harmless) and
+--      run `prisma migrate deploy` for real, with the deploy output
+--      confirming the new migration name explicitly (a bare "No pending
+--      migrations" is a FAILURE here, not a pass — see LLM.md's repeated
+--      lesson on this).
+--
+-- This step is deliberately the ONLY constraining/destructive half of the
+-- three: it asserts zero orphans FIRST (aborting before touching a single
+-- constraint if that assertion fails), then does SET NOT NULL, adds every
+-- tenantId FK, drops the old single-column unique constraints, creates the
+-- new tenant-composite ones, and creates every tenantId index. All pure DDL
+-- — no data movement — which is what keeps this transaction short even
+-- though it touches ~34 tables.
+
+BEGIN;
+
+-- ---------------------------------------------------------------------
+-- Orphan assertion. Any table with a NULL tenantId here means the step 2
+-- backfill did not complete (or a new row landed with no tenantId in the
+-- window between step 1 and now) — abort before touching any constraint.
+-- A row with no tenant is an orphan nobody can ever see again once
+-- tenantId is enforced, so this MUST run before a single ALTER below.
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE
+  tbl TEXT;
+  orphan_count BIGINT;
+  bad_tables TEXT := '';
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY[
+    'User', 'OtpChallenge', 'TrustedDevice', 'LoginAttempt', 'Invite',
+    'Extension', 'Queue', 'QueueMember', 'CallDetailRecord',
+    'DoNotCallEntry', 'Recording', 'AuditLog', 'CallQualitySample',
+    'EscalationTarget', 'EscalationAttempt', 'WaInstance', 'Contact',
+    'ContactTransferRequest', 'ContactNote', 'ContactTask',
+    'CallDisposition', 'Company', 'PipelineStage', 'Deal', 'DealNote',
+    'Activity', 'Conversation', 'ChatMessage', 'Room', 'SmsAccessRequest',
+    'WebhookSubscription', 'ApiKey', 'GatewayEvent', 'GatewaySite'
+    -- NOTE: "AppSetting" is deliberately excluded from this assertion —
+    -- its tenantId is nullable BY DESIGN (null = platform default) and is
+    -- never SET NOT NULL below.
+  ]
+  LOOP
+    EXECUTE format('SELECT count(*) FROM %I WHERE "tenantId" IS NULL', tbl) INTO orphan_count;
+    IF orphan_count > 0 THEN
+      bad_tables := bad_tables || format('%s (%s orphans); ', tbl, orphan_count);
+    END IF;
+  END LOOP;
+
+  IF bad_tables <> '' THEN
+    RAISE EXCEPTION 'Tenancy migration step 3 aborted — orphan rows (tenantId IS NULL) found: %. Run scripts/migrate-backfill-tenancy.ts again before retrying.', bad_tables;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- SET NOT NULL — every customer-owned table except AppSetting.
+-- ---------------------------------------------------------------------
+ALTER TABLE "User" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "OtpChallenge" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "TrustedDevice" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "LoginAttempt" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Invite" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Extension" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Queue" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "QueueMember" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "CallDetailRecord" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "DoNotCallEntry" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Recording" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "AuditLog" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "CallQualitySample" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "EscalationTarget" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "EscalationAttempt" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "WaInstance" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Contact" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "ContactTransferRequest" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "ContactNote" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "ContactTask" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "CallDisposition" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Company" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "PipelineStage" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Deal" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "DealNote" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Activity" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Conversation" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "ChatMessage" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "Room" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "SmsAccessRequest" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "WebhookSubscription" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "ApiKey" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "GatewayEvent" ALTER COLUMN "tenantId" SET NOT NULL;
+ALTER TABLE "GatewaySite" ALTER COLUMN "tenantId" SET NOT NULL;
+-- "AppSetting"."tenantId" intentionally left nullable — null = platform
+-- default (plan §1/§7).
+
+-- ---------------------------------------------------------------------
+-- Foreign keys — every table above, plus the nullable "AppSetting".
+-- ---------------------------------------------------------------------
+ALTER TABLE "User" ADD CONSTRAINT "User_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "OtpChallenge" ADD CONSTRAINT "OtpChallenge_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "TrustedDevice" ADD CONSTRAINT "TrustedDevice_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "LoginAttempt" ADD CONSTRAINT "LoginAttempt_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Invite" ADD CONSTRAINT "Invite_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Extension" ADD CONSTRAINT "Extension_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Queue" ADD CONSTRAINT "Queue_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "QueueMember" ADD CONSTRAINT "QueueMember_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "CallDetailRecord" ADD CONSTRAINT "CallDetailRecord_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "DoNotCallEntry" ADD CONSTRAINT "DoNotCallEntry_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Recording" ADD CONSTRAINT "Recording_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "CallQualitySample" ADD CONSTRAINT "CallQualitySample_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "EscalationTarget" ADD CONSTRAINT "EscalationTarget_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "EscalationAttempt" ADD CONSTRAINT "EscalationAttempt_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "WaInstance" ADD CONSTRAINT "WaInstance_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Contact" ADD CONSTRAINT "Contact_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ContactTransferRequest" ADD CONSTRAINT "ContactTransferRequest_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ContactNote" ADD CONSTRAINT "ContactNote_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ContactTask" ADD CONSTRAINT "ContactTask_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "CallDisposition" ADD CONSTRAINT "CallDisposition_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Company" ADD CONSTRAINT "Company_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "PipelineStage" ADD CONSTRAINT "PipelineStage_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Deal" ADD CONSTRAINT "Deal_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "DealNote" ADD CONSTRAINT "DealNote_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Activity" ADD CONSTRAINT "Activity_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Conversation" ADD CONSTRAINT "Conversation_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ChatMessage" ADD CONSTRAINT "ChatMessage_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Room" ADD CONSTRAINT "Room_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "SmsAccessRequest" ADD CONSTRAINT "SmsAccessRequest_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "WebhookSubscription" ADD CONSTRAINT "WebhookSubscription_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ApiKey" ADD CONSTRAINT "ApiKey_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "GatewayEvent" ADD CONSTRAINT "GatewayEvent_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "GatewaySite" ADD CONSTRAINT "GatewaySite_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "AppSetting" ADD CONSTRAINT "AppSetting_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- ---------------------------------------------------------------------
+-- Drop old single-column unique constraints, per plan §1's table.
+-- ---------------------------------------------------------------------
+ALTER TABLE "Extension" DROP CONSTRAINT "Extension_number_key";
+ALTER TABLE "Queue" DROP CONSTRAINT "Queue_name_key";
+ALTER TABLE "DoNotCallEntry" DROP CONSTRAINT "DoNotCallEntry_numberE164_key";
+ALTER TABLE "WaInstance" DROP CONSTRAINT "WaInstance_label_key";
+ALTER TABLE "WaInstance" DROP CONSTRAINT "WaInstance_simPort_key";
+ALTER TABLE "Contact" DROP CONSTRAINT "Contact_numberE164_key";
+ALTER TABLE "Room" DROP CONSTRAINT "Room_name_key";
+ALTER TABLE "Activity" DROP CONSTRAINT "Activity_type_refId_key";
+ALTER TABLE "AppSetting" DROP CONSTRAINT "AppSetting_key_key";
+-- "GatewaySite_name_key" is NOT dropped — GatewaySite.name stays globally
+-- unique (it's the OpenVPN cert CN / ccd filename, plan §1/§4).
+-- "User_email_key" and "User_phoneE164_key" are NOT dropped — deliberate,
+-- see plan's "email uniqueness decision" (Requirement A continuity).
+
+-- ---------------------------------------------------------------------
+-- Create the new tenant-composite unique constraints.
+-- ---------------------------------------------------------------------
+CREATE UNIQUE INDEX "Extension_tenantId_number_key" ON "Extension"("tenantId", "number");
+CREATE UNIQUE INDEX "Queue_tenantId_name_key" ON "Queue"("tenantId", "name");
+CREATE UNIQUE INDEX "DoNotCallEntry_tenantId_numberE164_key" ON "DoNotCallEntry"("tenantId", "numberE164");
+CREATE UNIQUE INDEX "WaInstance_tenantId_label_key" ON "WaInstance"("tenantId", "label");
+CREATE UNIQUE INDEX "WaInstance_tenantId_simPort_key" ON "WaInstance"("tenantId", "simPort");
+CREATE UNIQUE INDEX "Contact_tenantId_numberE164_key" ON "Contact"("tenantId", "numberE164");
+CREATE UNIQUE INDEX "Room_tenantId_name_key" ON "Room"("tenantId", "name");
+CREATE UNIQUE INDEX "Activity_tenantId_type_refId_key" ON "Activity"("tenantId", "type", "refId");
+CREATE UNIQUE INDEX "AppSetting_tenantId_key_key" ON "AppSetting"("tenantId", "key");
+
+-- ---------------------------------------------------------------------
+-- tenantId indexes — every table (including AppSetting).
+-- ---------------------------------------------------------------------
+CREATE INDEX "User_tenantId_idx" ON "User"("tenantId");
+CREATE INDEX "OtpChallenge_tenantId_idx" ON "OtpChallenge"("tenantId");
+CREATE INDEX "TrustedDevice_tenantId_idx" ON "TrustedDevice"("tenantId");
+CREATE INDEX "LoginAttempt_tenantId_idx" ON "LoginAttempt"("tenantId");
+CREATE INDEX "Invite_tenantId_idx" ON "Invite"("tenantId");
+CREATE INDEX "Extension_tenantId_idx" ON "Extension"("tenantId");
+CREATE INDEX "Queue_tenantId_idx" ON "Queue"("tenantId");
+CREATE INDEX "QueueMember_tenantId_idx" ON "QueueMember"("tenantId");
+CREATE INDEX "CallDetailRecord_tenantId_idx" ON "CallDetailRecord"("tenantId");
+CREATE INDEX "DoNotCallEntry_tenantId_idx" ON "DoNotCallEntry"("tenantId");
+CREATE INDEX "Recording_tenantId_idx" ON "Recording"("tenantId");
+CREATE INDEX "AuditLog_tenantId_idx" ON "AuditLog"("tenantId");
+CREATE INDEX "CallQualitySample_tenantId_idx" ON "CallQualitySample"("tenantId");
+CREATE INDEX "EscalationTarget_tenantId_idx" ON "EscalationTarget"("tenantId");
+CREATE INDEX "EscalationAttempt_tenantId_idx" ON "EscalationAttempt"("tenantId");
+CREATE INDEX "WaInstance_tenantId_idx" ON "WaInstance"("tenantId");
+CREATE INDEX "Contact_tenantId_idx" ON "Contact"("tenantId");
+CREATE INDEX "ContactTransferRequest_tenantId_idx" ON "ContactTransferRequest"("tenantId");
+CREATE INDEX "ContactNote_tenantId_idx" ON "ContactNote"("tenantId");
+CREATE INDEX "ContactTask_tenantId_idx" ON "ContactTask"("tenantId");
+CREATE INDEX "CallDisposition_tenantId_idx" ON "CallDisposition"("tenantId");
+CREATE INDEX "Company_tenantId_idx" ON "Company"("tenantId");
+CREATE INDEX "PipelineStage_tenantId_idx" ON "PipelineStage"("tenantId");
+CREATE INDEX "Deal_tenantId_idx" ON "Deal"("tenantId");
+CREATE INDEX "DealNote_tenantId_idx" ON "DealNote"("tenantId");
+CREATE INDEX "Activity_tenantId_idx" ON "Activity"("tenantId");
+CREATE INDEX "Conversation_tenantId_idx" ON "Conversation"("tenantId");
+CREATE INDEX "ChatMessage_tenantId_idx" ON "ChatMessage"("tenantId");
+CREATE INDEX "Room_tenantId_idx" ON "Room"("tenantId");
+CREATE INDEX "SmsAccessRequest_tenantId_idx" ON "SmsAccessRequest"("tenantId");
+CREATE INDEX "WebhookSubscription_tenantId_idx" ON "WebhookSubscription"("tenantId");
+CREATE INDEX "ApiKey_tenantId_idx" ON "ApiKey"("tenantId");
+CREATE INDEX "AppSetting_tenantId_idx" ON "AppSetting"("tenantId");
+CREATE INDEX "GatewayEvent_tenantId_idx" ON "GatewayEvent"("tenantId");
+CREATE INDEX "GatewaySite_tenantId_idx" ON "GatewaySite"("tenantId");
+
+COMMIT;
+
+-- If the rehearsal shows this transaction still running long against a
+-- production-sized table, the documented fallback (plan §1) is
+-- `CREATE UNIQUE INDEX CONCURRENTLY` outside the transaction for the
+-- composite uniques, then attaching them with
+-- `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE USING INDEX ...` — decide that
+-- from the rehearsal's measured duration, not in advance.

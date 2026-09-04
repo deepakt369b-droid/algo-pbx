@@ -44,8 +44,168 @@ enum Role {
   ADMIN
 }
 
+// =========================================
+// MULTI-TENANT SAAS FOUNDATION — WAVE 1 (2026-09-04)
+// D1: one pooled stack, namespaced. `Tenant` is the top-level customer
+// record; every customer-owned model below gets a `tenantId`. Our current
+// single deployment becomes tenant #1 (slug "sahara") via the migration's
+// step 1 insert — see prisma/migrations/<ts>_add_tenancy/migration.sql.
+// D2: `PlatformUser` is a SEPARATE table with NO tenantId, by construction —
+// a tenant-scoped Prisma query can never return one. Reserved-slug list and
+// slug-format validation live in src/lib/tenant/slug.ts (validation code,
+// not the schema — see plan §1 amendment), not enforced here.
+// =========================================
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  OFFBOARDED
+}
+
+enum BillingStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+}
+
+enum PlatformRole {
+  PLATFORM_OWNER
+  PLATFORM_SUPPORT
+}
+
+model Tenant {
+  id     String       @id @default(cuid())
+  // DNS-safe, lowercase, unique — validated at creation (src/lib/tenant/slug.ts,
+  // including the reserved-word list), immutable after. Allocates
+  // <slug>.algopbx.com under the wildcard cert (plan §6).
+  slug   String       @unique
+  name   String
+  status TenantStatus @default(TRIAL)
+
+  // --- Billing: manual-first, owner-overridable (plan §5 / Requirement B) ---
+  plan            String        @default("standard")
+  seats           Int           @default(5)
+  billingStatus   BillingStatus @default(TRIAL)
+  paidUntil       DateTime?
+  // Set when a gateway/processor is added later; null = manual invoicing.
+  billingRef      String?
+  billingProvider String?
+
+  // --- Provisioning (plan §4) ---
+  // Allocated /24 index: tenant n owns 10.8.n.0/24. Unique, never reused
+  // even after offboarding, so a stale gateway can never land in a live
+  // tenant's subnet.
+  tunnelSubnetIndex Int? @unique
+
+  // --- Back-relations: every customer-owned model in this schema ---
+  users                   User[]
+  extensions              Extension[]
+  queues                  Queue[]
+  queueMembers            QueueMember[]
+  callDetailRecords       CallDetailRecord[]
+  recordings              Recording[]
+  auditLogs               AuditLog[]
+  callQualitySamples      CallQualitySample[]
+  doNotCallEntries        DoNotCallEntry[]
+  invites                 Invite[]
+  otpChallenges           OtpChallenge[]
+  trustedDevices          TrustedDevice[]
+  loginAttempts           LoginAttempt[]
+  escalationTargets       EscalationTarget[]
+  escalationAttempts      EscalationAttempt[]
+  waInstances             WaInstance[]
+  contacts                Contact[]
+  contactTransferRequests ContactTransferRequest[]
+  contactNotes            ContactNote[]
+  contactTasks            ContactTask[]
+  callDispositions        CallDisposition[]
+  companies               Company[]
+  deals                   Deal[]
+  dealNotes               DealNote[]
+  activities              Activity[]
+  conversations           Conversation[]
+  chatMessages            ChatMessage[]
+  smsAccessRequests       SmsAccessRequest[]
+  rooms                   Room[]
+  webhookSubscriptions    WebhookSubscription[]
+  apiKeys                 ApiKey[]
+  gatewaySites            GatewaySite[]
+  gatewayEvents           GatewayEvent[]
+  pipelineStages          PipelineStage[]
+  appSettings             AppSetting[]
+  supportGrants           SupportGrant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([billingStatus, paidUntil])
+}
+
+// D2: no tenantId, by construction. A tenant-scoped query cannot return one.
+model PlatformUser {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  role         PlatformRole @default(PLATFORM_SUPPORT)
+  // 2FA is mandatory, not optional — a row with totpSecret null may not
+  // complete login (enforced in the /platform authorize path, not just UI).
+  totpSecret      String?
+  totpConfirmedAt DateTime?
+  disabled        Boolean        @default(false)
+  grants          SupportGrant[]
+  createdAt       DateTime       @default(now())
+}
+
+// Time-boxed, reasoned, dual-logged support access. Absence of a live row
+// here means a PLATFORM_SUPPORT user gets nothing from a tenant scope.
+model SupportGrant {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id])
+  platformUserId String
+  platformUser   PlatformUser @relation(fields: [platformUserId], references: [id])
+  reason         String // mandatory, free text, shown to the tenant
+  grantedAt      DateTime     @default(now())
+  expiresAt      DateTime // hard stop; no open-ended grants
+  revokedAt      DateTime?
+
+  @@index([tenantId, expiresAt])
+  @@index([platformUserId])
+}
+
+// Platform-plane audit. Deliberately NOT the same table as the tenant
+// AuditLog: that one's actorId is a required FK to User, and a platform
+// actor is not a User. See plan §6.
+model PlatformAuditLog {
+  id             String   @id @default(cuid())
+  action         String // "tenant.provision" | "billing.mark_paid" | ...
+  platformUserId String?
+  tenantId       String? // which tenant this action was about
+  // MANDATORY for every destructive/consequential platform action — not
+  // billing overrides alone: suspend, offboard, dialplan cut, plan/seat
+  // change, and support-grant creation all require one. Enforced at the
+  // API layer (rejects empty/whitespace), not just in the form.
+  reason    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([action])
+}
+
 model User {
   id                             String                   @id @default(cuid())
+  // Tenant is derived from this row, NOT from the request host — see
+  // schema-level comment on Tenant above and the host-vs-user mismatch rule
+  // (plan §1). email/phoneE164 stay GLOBALLY unique, deliberately: one
+  // person cannot belong to two tenants (Requirement A continuity — see
+  // plan's "email uniqueness decision").
+  tenantId                       String
+  tenant                         Tenant                   @relation(fields: [tenantId], references: [id])
   email                          String                   @unique
   // Nullable now: an admin-created user starts with NO password at all
   // (Workstream D) — Invite.tokenHash is the only way to set one, once,
@@ -165,6 +325,7 @@ model User {
 
   @@index([disabled])
   @@index([profileCompletedAt])
+  @@index([tenantId])
 }
 
 enum OtpPurpose {
@@ -199,6 +360,8 @@ enum OtpChannel {
 // count.
 model OtpChallenge {
   id         String     @id @default(cuid())
+  tenantId   String
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
   user       User       @relation(fields: [userId], references: [id])
   userId     String
   phoneE164  String
@@ -214,6 +377,7 @@ model OtpChallenge {
 
   @@index([userId, purpose, createdAt])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 // Remembers a browser/device that has already cleared login 2FA, so an
@@ -224,6 +388,8 @@ model OtpChallenge {
 // pattern used everywhere else in this schema.
 model TrustedDevice {
   id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   user       User     @relation(fields: [userId], references: [id])
   userId     String
   tokenHash  String   @unique
@@ -237,6 +403,7 @@ model TrustedDevice {
 
   @@index([userId])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 // Login rate-limiting / lockout state (Workstream C — there was previously
@@ -247,6 +414,8 @@ model TrustedDevice {
 // Cleared on successful login; see src/lib/rate-limit.ts.
 model LoginAttempt {
   id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
   email       String
   ip          String
   attempts    Int       @default(0)
@@ -257,6 +426,7 @@ model LoginAttempt {
 
   @@unique([email, ip])
   @@index([lockedUntil])
+  @@index([tenantId])
 }
 
 // Single-use, short-expiry agent onboarding tokens (Workstream D). Replaces
@@ -267,6 +437,8 @@ model LoginAttempt {
 // comment on why that's a requirement, not an oversight.
 model Invite {
   id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
   user        User      @relation(fields: [userId], references: [id])
   userId      String    @unique
   // SHA-256 of the actual token — the token itself is only ever in the
@@ -280,11 +452,14 @@ model Invite {
   createdAt   DateTime  @default(now())
 
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 model Extension {
   id             String         @id @default(cuid())
-  number         String         @unique // e.g. "1001" — matches the PJSIP endpoint id generated into pjsip_dynamic.conf
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  number         String // e.g. "1001" — matches the PJSIP endpoint id generated into pjsip_dynamic.conf. Was globally @unique; now tenant-composite (plan §1).
   kind           String         @default("webrtc") // "webrtc" | "hardware"
   user           User?          @relation(fields: [userId], references: [id])
   userId         String?        @unique
@@ -313,28 +488,41 @@ model Extension {
   dialPermission DialPermission @default(LOCAL)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
 }
 
 model Queue {
   id        String        @id @default(cuid())
-  name      String        @unique // e.g. "support_queue" — matches extensions.conf
+  tenantId  String
+  tenant    Tenant        @relation(fields: [tenantId], references: [id])
+  name      String // e.g. "support_queue" — matches extensions.conf. Was globally @unique; now tenant-composite (plan §1).
   strategy  String        @default("ringall") // "ringall" | "leastrecent" | "roundrobin"
   members   QueueMember[]
   createdAt DateTime      @default(now())
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 model QueueMember {
   id        String @id @default(cuid())
+  tenantId  String
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
   queue     Queue  @relation(fields: [queueId], references: [id])
   queueId   String
   extension String
   penalty   Int    @default(0)
 
   @@unique([queueId, extension])
+  @@index([tenantId])
 }
 
 model CallDetailRecord {
   id               String      @id @default(cuid())
+  tenantId         String
+  tenant           Tenant      @relation(fields: [tenantId], references: [id])
   uniqueId         String      @unique // Asterisk's linkedid/uniqueid for the call
   callerNumber     String
   // Normalized E.164 form of callerNumber (P2, 2026-08-31), backfilled and
@@ -363,6 +551,7 @@ model CallDetailRecord {
   @@index([startedAt])
   @@index([agentExtension])
   @@index([callerNumberE164])
+  @@index([tenantId])
 }
 
 // Do Not Call compliance blocklist (Phase C). Enforcement is defense-in-
@@ -380,12 +569,17 @@ model CallDetailRecord {
 //      src/lib/phone-normalize.ts, so it does a cruder direct-string match).
 model DoNotCallEntry {
   id         String   @id @default(cuid())
-  numberE164 String   @unique // normalized via src/lib/phone-normalize.ts before storage
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  numberE164 String // normalized via src/lib/phone-normalize.ts before storage. Was globally @unique; now tenant-composite (plan §1).
   reason     String?
   source     String   @default("manual") // "manual" | "bulk_import"
   addedById  String
   addedBy    User     @relation(fields: [addedById], references: [id])
   createdAt  DateTime @default(now())
+
+  @@unique([tenantId, numberE164])
+  @@index([tenantId])
 }
 
 // Recording retention with asymmetric agent/admin deletion (Phase D).
@@ -408,6 +602,8 @@ model DoNotCallEntry {
 // from a list.
 model Recording {
   id                String           @id @default(cuid())
+  tenantId          String
+  tenant            Tenant           @relation(fields: [tenantId], references: [id])
   cdrId             String
   cdr               CallDetailRecord @relation(fields: [cdrId], references: [id])
   filePath          String // relative to RECORDINGS_DIR, e.g. "<uniqueId>.wav"
@@ -422,6 +618,7 @@ model Recording {
   createdAt         DateTime         @default(now())
 
   @@index([cdrId])
+  @@index([tenantId])
 }
 
 // Audit trail — originally scoped to recording lifecycle actions only, now
@@ -434,6 +631,8 @@ model Recording {
 // need a migration.
 model AuditLog {
   id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
   action    String // e.g. "recording.hide" | "recording.hard_delete" | "intervention.barge" | "sms_access.approve"
   actorId   String
   actor     User     @relation(fields: [actorId], references: [id])
@@ -447,6 +646,7 @@ model AuditLog {
   @@index([actorId])
   @@index([createdAt])
   @@index([action])
+  @@index([tenantId])
 }
 
 // Periodic client-side WebRTC quality samples (Workstream B) — see
@@ -458,6 +658,8 @@ model AuditLog {
 // should still be retained for diagnosis rather than being rejected.
 model CallQualitySample {
   id                  String   @id @default(cuid())
+  tenantId            String
+  tenant              Tenant   @relation(fields: [tenantId], references: [id])
   callId              String // SIP Call-ID / uniqueId correlation key, not an FK — see comment above
   extension           String? // the agent extension this sample was captured on, for MCP/troubleshooting queries
   jitterMs            Float?
@@ -481,6 +683,7 @@ model CallQualitySample {
 
   @@index([callId])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // =========================================
@@ -501,6 +704,8 @@ enum EscalationOutcome {
 
 model EscalationTarget {
   id          String              @id @default(cuid())
+  tenantId    String
+  tenant      Tenant              @relation(fields: [tenantId], references: [id])
   name        String
   // At least one of extension/phoneE164 is required (enforced in the API
   // route, not the schema — Prisma has no CHECK-constraint DSL) since a
@@ -513,10 +718,14 @@ model EscalationTarget {
   updatedAt   DateTime            @updatedAt
   createdById String?
   attempts    EscalationAttempt[]
+
+  @@index([tenantId])
 }
 
 model EscalationAttempt {
   id         String            @id @default(cuid())
+  tenantId   String
+  tenant     Tenant            @relation(fields: [tenantId], references: [id])
   agentId    String
   agent      User              @relation(fields: [agentId], references: [id])
   // Nullable + SET NULL on delete (not RESTRICT): deleting a manager from
@@ -539,6 +748,7 @@ model EscalationAttempt {
   @@index([agentId])
   @@index([targetId])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // =========================================
@@ -587,8 +797,15 @@ enum WaInstanceStatus {
 // requirement that only an admin can log an agent's WhatsApp session out.
 model WaInstance {
   id        String              @id @default(cuid())
-  label     String              @unique // e.g. "SIM 1 — +971 5X XXX XXXX"
-  simPort   Int                 @unique // 1-4, the Dinstar UC2000 port this identity was paired via OTP on
+  tenantId  String
+  tenant    Tenant              @relation(fields: [tenantId], references: [id])
+  label     String // e.g. "SIM 1 — +971 5X XXX XXXX". Was globally @unique; now tenant-composite (plan §1).
+  // 1-4, the Dinstar UC2000 port this identity was paired via OTP on. Was
+  // globally @unique; now tenant-composite. NOTE (plan §1): this is only
+  // correct because each tenant gets their OWN Dinstar gateway — two
+  // tenants sharing one gateway would break this; call it out in the
+  // provisioning UI.
+  simPort   Int
   phoneE164 String? // populated once pairing completes
   provider  MessageProviderKind @default(OPENWA)
   status    WaInstanceStatus    @default(DISCONNECTED)
@@ -631,11 +848,18 @@ model WaInstance {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   conversations   Conversation[]
+
+  @@unique([tenantId, label])
+  @@unique([tenantId, simPort])
+  @@index([tenantId])
 }
 
 // Idempotency ledger for OpenWA's inbound webhook deliveries
 // (X-OpenWA-Idempotency-Key) — OpenWA retries a delivery that doesn't get a
 // 2xx, so a delivery seen before must not be re-ingested as a new message.
+// PLATFORM-GLOBAL — deliberately NOT tenant-scoped (plan §1/§7): this is a
+// dedup ledger keyed on the sidecar's own idempotency key, independent of
+// which tenant a delivery eventually resolves to.
 model InboundWebhookDelivery {
   id             String   @id @default(cuid())
   idempotencyKey String   @unique
@@ -654,7 +878,9 @@ model InboundWebhookDelivery {
 // prefix it before calling normalizeToE164().
 model Contact {
   id                String                   @id @default(cuid())
-  numberE164        String                   @unique
+  tenantId          String
+  tenant            Tenant                   @relation(fields: [tenantId], references: [id])
+  numberE164        String // Was globally @unique; now tenant-composite (plan §1).
   displayName       String?
   // CRM fields (P2, 2026-08-31) — additive to the pre-existing bare
   // {id, numberE164, displayName} shape. `dncBlocked` is deliberately NOT
@@ -688,8 +914,10 @@ model Contact {
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
 
+  @@unique([tenantId, numberE164])
   @@index([companyId])
   @@index([ownerId])
+  @@index([tenantId])
 }
 
 enum ContactTransferRequestStatus {
@@ -709,6 +937,8 @@ enum ContactTransferRequestStatus {
 // read correctly once that's happened.
 model ContactTransferRequest {
   id             String                       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant                       @relation(fields: [tenantId], references: [id])
   contactId      String
   contact        Contact                      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   requestedById  String
@@ -725,6 +955,7 @@ model ContactTransferRequest {
   @@index([contactId])
   @@index([requestedById])
   @@index([currentOwnerId])
+  @@index([tenantId])
 }
 
 // P2 CRM data layer (2026-08-31) — agents create/edit these from the
@@ -732,6 +963,8 @@ model ContactTransferRequest {
 // it (see /admin/contacts). Every row carries who entered it.
 model ContactNote {
   id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
   contactId String
   contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
   authorId  String
@@ -740,10 +973,13 @@ model ContactNote {
   createdAt DateTime @default(now())
 
   @@index([contactId])
+  @@index([tenantId])
 }
 
 model ContactTask {
   id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
   contactId   String
   contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   assigneeId  String
@@ -760,6 +996,7 @@ model ContactTask {
   @@index([contactId])
   @@index([assigneeId])
   @@index([dealId])
+  @@index([tenantId])
 }
 
 enum CallDispositionOutcome {
@@ -775,6 +1012,8 @@ enum CallDispositionOutcome {
 // disposition without the blocklist entry actually landing.
 model CallDisposition {
   id          String                 @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id])
   contactId   String
   contact     Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
   cdrUniqueId String?
@@ -785,6 +1024,7 @@ model CallDisposition {
   createdAt   DateTime               @default(now())
 
   @@index([contactId])
+  @@index([tenantId])
 }
 
 // ===========================================================================
@@ -795,6 +1035,8 @@ model CallDisposition {
 
 model Company {
   id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
   name      String
   domain    String?
   phone     String?
@@ -808,12 +1050,17 @@ model Company {
 
   @@index([ownerId])
   @@index([name])
+  @@index([tenantId])
 }
 
 // DB-driven so the operator can re-order / rename stages without a deploy.
 // Seeded in the migration: Lead, Qualified, Proposal, Negotiation, Won, Lost.
+// Per-tenant (plan §1): operator-editable, so each tenant gets its own
+// seeded stage set rather than sharing one global pipeline.
 model PipelineStage {
   id        String  @id @default(cuid())
+  tenantId  String
+  tenant    Tenant  @relation(fields: [tenantId], references: [id])
   name      String
   sortOrder Int
   isWon     Boolean @default(false)
@@ -822,10 +1069,13 @@ model PipelineStage {
   deals     Deal[]
 
   @@index([sortOrder])
+  @@index([tenantId])
 }
 
 model Deal {
   id              String        @id @default(cuid())
+  tenantId        String
+  tenant          Tenant        @relation(fields: [tenantId], references: [id])
   name            String
   companyId       String?
   company         Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
@@ -847,10 +1097,13 @@ model Deal {
   @@index([stageId])
   @@index([ownerId])
   @@index([companyId])
+  @@index([tenantId])
 }
 
 // Deal <-> Contact is many-to-many (atomic-crm's shape) — one deal can
-// involve several people at a company.
+// involve several people at a company. No tenantId here (not in wave 1's
+// customer-owned model list): both dealId and contactId already resolve to
+// a tenant-scoped row, so this pure join table rides on those.
 model DealContact {
   dealId    String
   deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
@@ -864,6 +1117,8 @@ model DealContact {
 
 model DealNote {
   id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
   dealId    String
   deal      Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
   authorId  String
@@ -872,6 +1127,7 @@ model DealNote {
   createdAt DateTime @default(now())
 
   @@index([dealId])
+  @@index([tenantId])
 }
 
 enum ActivityType {
@@ -892,6 +1148,8 @@ enum ActivityType {
 // backfill + live writes are both idempotent via @@unique([type, refId]).
 model Activity {
   id         String       @id @default(cuid())
+  tenantId   String
+  tenant     Tenant       @relation(fields: [tenantId], references: [id])
   type       ActivityType
   contactId  String?
   contact    Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -904,9 +1162,12 @@ model Activity {
   refId      String?
   createdAt  DateTime     @default(now())
 
-  @@unique([type, refId])
+  // Was @@unique([type, refId]); now tenant-composite (plan §1) since refId
+  // is a bare correlation key, not an FK, and is only unique per tenant.
+  @@unique([tenantId, type, refId])
   @@index([contactId, occurredAt])
   @@index([dealId, occurredAt])
+  @@index([tenantId])
 }
 
 // A conversation is scoped to (contact, channel) — a contact can have both
@@ -919,6 +1180,8 @@ model Activity {
 // itself.
 model Conversation {
   id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
   contact         Contact        @relation(fields: [contactId], references: [id])
   contactId       String
   channel         MessageChannel
@@ -939,6 +1202,7 @@ model Conversation {
   @@unique([contactId, channel, waInstanceId])
   @@index([assignedAgentId])
   @@index([lastMessageAt])
+  @@index([tenantId])
 }
 
 // Named ChatMessage, not Message — "message" is already heavily
@@ -947,6 +1211,8 @@ model Conversation {
 // collision rather than fighting it with import aliases everywhere.
 model ChatMessage {
   id                String             @id @default(cuid())
+  tenantId          String
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
   conversation      Conversation       @relation(fields: [conversationId], references: [id])
   conversationId    String
   direction         MessageDirection
@@ -983,6 +1249,7 @@ model ChatMessage {
   @@index([conversationId, createdAt])
   @@index([providerMessageId])
   @@index([waMessageId])
+  @@index([tenantId])
 }
 
 // Rooms (Workstream E, client requirement: "just a UI view, no data model
@@ -992,13 +1259,21 @@ model ChatMessage {
 // component state would lose it on every page reload. memberUserIds is a
 // plain JSON array of User.id, not a join table — a room is a saved
 // filter, not a relation other models need to query through.
+// tenantId added in the multi-tenant wave (plan §1) — a room's member list
+// is agents, and agents are tenant-scoped, so the room name only needs to
+// stay unique within a tenant.
 model Room {
   id            String   @id @default(cuid())
-  name          String   @unique
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  name          String // Was globally @unique; now tenant-composite.
   memberUserIds Json // string[] of User.id
   createdById   String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 enum SmsAccessRequestStatus {
@@ -1015,6 +1290,8 @@ enum SmsAccessRequestStatus {
 // and when, independent of this table's own current-state row.
 model SmsAccessRequest {
   id            String                 @id @default(cuid())
+  tenantId      String
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id])
   message       ChatMessage            @relation(fields: [messageId], references: [id])
   messageId     String
   requestedBy   User                   @relation("SmsAccessRequestedBy", fields: [requestedById], references: [id])
@@ -1028,6 +1305,7 @@ model SmsAccessRequest {
 
   @@index([status])
   @@index([requestedById])
+  @@index([tenantId])
 }
 
 // =========================================
@@ -1057,6 +1335,10 @@ model SmsAccessRequest {
 // Only the SHA-256 of the token is stored, exactly like Invite.tokenHash:
 // the raw token exists only in the mint response and the tool call that
 // consumes it, never in the DB, never in a log line.
+//
+// PLATFORM-GLOBAL — deliberately NOT tenant-scoped (plan §1/§7): this is our
+// own infra tooling (mcp-server/), minted by a platform operator, not a
+// tenant-facing feature.
 model McpApproval {
   id              String    @id @default(cuid())
   tokenHash       String    @unique
@@ -1084,6 +1366,8 @@ model McpApproval {
 // this is the substrate such an adapter would sit on after the trial run.
 model WebhookSubscription {
   id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
   url         String
   // Per-subscription HMAC key. Null means "use CRM_WEBHOOK_SECRET" — the
   // single shared deployment secret. Per-subscription keys are preferable
@@ -1100,6 +1384,7 @@ model WebhookSubscription {
 
   @@index([active])
   @@index([createdById])
+  @@index([tenantId])
 }
 
 // Bearer credentials for the machine-to-machine CRM API under /api/crm/*.
@@ -1108,6 +1393,8 @@ model WebhookSubscription {
 // Invite and Extension.sipSecret — only the hash is stored.
 model ApiKey {
   id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
   keyHash     String    @unique
   label       String
   createdById String
@@ -1119,6 +1406,7 @@ model ApiKey {
 
   @@index([revokedAt])
   @@index([createdById])
+  @@index([tenantId])
 }
 
 // =========================================
@@ -1157,14 +1445,23 @@ model ApiKey {
 // pbx_configs/generated/caddy.env and the `cert-sync` service (see
 // docker-compose.yml) recreates the `caddy` container so the change
 // actually takes effect, rather than silently only updating this table.
+// NULLABLE tenantId (plan §1/§7): null = platform default, a row = a
+// tenant's override. Resolution order (src/lib/settings/service.ts, wave 2+)
+// becomes tenant row -> platform row (tenantId null) -> process.env ->
+// registry default. Was globally `key @unique`; now tenant-composite so the
+// same key can hold both a platform default and per-tenant overrides.
 model AppSetting {
   id             String   @id @default(cuid())
-  key            String   @unique
+  tenantId       String?
+  tenant         Tenant?  @relation(fields: [tenantId], references: [id])
+  key            String
   valueEncrypted String
   updatedAt      DateTime @updatedAt
   updatedById    String?
 
+  @@unique([tenantId, key])
   @@index([updatedAt])
+  @@index([tenantId])
 }
 
 // Plain-boolean runtime kill switches the Asterisk dialplan reads DIRECTLY
@@ -1177,6 +1474,11 @@ model AppSetting {
 // pre-toggle "always record" behaviour). Route code uses $queryRaw/$executeRaw
 // against this table; the model exists here so `prisma migrate diff` stays
 // clean for future waves. (S6, 2026-09-01.)
+//
+// PLATFORM-GLOBAL — deliberately NOT tenant-scoped in wave 1 (plan §1/§7,
+// explicit instruction). The gap-analysis note that this PK should become
+// ([tenantId, key]) is wave 6 work (telephony namespacing), not wave 1 —
+// left unchanged here on purpose.
 model PbxRuntimeFlag {
   key         String   @id
   enabled     Boolean
@@ -1215,6 +1517,8 @@ enum GatewayCategory {
 
 model GatewayEvent {
   id         String          @id @default(cuid())
+  tenantId   String
+  tenant     Tenant          @relation(fields: [tenantId], references: [id])
   receivedAt DateTime        @default(now())
   deviceTime DateTime?
   siteId     String?
@@ -1231,6 +1535,7 @@ model GatewayEvent {
   @@index([category, receivedAt])
   @@index([eventType, receivedAt])
   @@index([siteId, receivedAt])
+  @@index([tenantId])
 }
 
 // OpenVPN-primary / Headscale-fallback / Tailscale-legacy gateway
@@ -1264,6 +1569,12 @@ enum SiteConnectivityStatus {
 
 model GatewaySite {
   id               String                 @id @default(cuid())
+  tenantId         String
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id])
+  // Stays GLOBALLY unique (plan §1/§4, deliberate) — this is the OpenVPN
+  // cert CN and the ccd/ filename; must be globally collision-free across
+  // every tenant's gateway, not just within one tenant. Provisioning names
+  // it `cust-<slug>-gw-1`.
   name             String                 @unique
   gatewayLanIp     String
   tunnelIp         String?
@@ -1277,4 +1588,5 @@ model GatewaySite {
   updatedAt        DateTime               @updatedAt
 
   @@index([status])
+  @@index([tenantId])
 }
