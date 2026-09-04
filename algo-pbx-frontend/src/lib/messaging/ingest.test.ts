@@ -1,23 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { findOrCreateConversation } from "./ingest";
+import type { TenantClient } from "@/lib/db-tenant";
 
 // findOrCreateConversation() (and, transitively, ingestInboundEvent()) is
 // the one place the compound-unique-with-nullable-column footgun documented
 // in this file's own comment must be tested: Postgres treats
 // waInstanceId: null as always-distinct, so a naive `upsert` on
 // (contactId, channel, waInstanceId) would silently duplicate rows instead
-// of erroring. Mock only the two Conversation methods this module calls.
+// of erroring.
+//
+// Wave 2a multi-tenant migration: findOrCreateConversation() now takes a
+// `db: TenantClient` as its first argument instead of importing a
+// module-level singleton (see ingest.ts's header comment) — so this test
+// builds a minimal fake client (just the `conversation.findFirst`/`create`
+// delegate methods this module actually calls) and passes it in directly,
+// rather than mocking "@/lib/db" (which no longer exports what it used to).
 const findFirst = vi.fn();
 const create = vi.fn();
-vi.mock("@/lib/db", () => ({
-  db: {
-    conversation: {
-      findFirst: (...args: unknown[]) => findFirst(...args),
-      create: (...args: unknown[]) => create(...args),
-    },
+const fakeDb = {
+  conversation: {
+    findFirst: (...args: unknown[]) => findFirst(...args),
+    create: (...args: unknown[]) => create(...args),
   },
-}));
-
-const { findOrCreateConversation } = await import("./ingest");
+} as unknown as TenantClient;
 
 beforeEach(() => {
   findFirst.mockReset();
@@ -29,7 +34,7 @@ describe("findOrCreateConversation", () => {
     findFirst.mockResolvedValue(null);
     create.mockResolvedValue({ id: "conv-1", contactId: "c1", channel: "SMS", waInstanceId: null });
 
-    const result = await findOrCreateConversation("c1", "SMS", null);
+    const result = await findOrCreateConversation(fakeDb, "c1", "SMS", null);
 
     expect(findFirst).toHaveBeenCalledWith({ where: { contactId: "c1", channel: "SMS", waInstanceId: null } });
     expect(create).toHaveBeenCalledOnce();
@@ -40,7 +45,7 @@ describe("findOrCreateConversation", () => {
   it("reuses an existing conversation instead of creating a duplicate", async () => {
     findFirst.mockResolvedValue({ id: "conv-existing", contactId: "c1", channel: "WHATSAPP", waInstanceId: "wa-1" });
 
-    const result = await findOrCreateConversation("c1", "WHATSAPP", "wa-1");
+    const result = await findOrCreateConversation(fakeDb, "c1", "WHATSAPP", "wa-1");
 
     expect(create).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -53,7 +58,7 @@ describe("findOrCreateConversation", () => {
     findFirst.mockResolvedValue(null);
     create.mockResolvedValue({ id: "conv-2", contactId: "c1", channel: "SMS", waInstanceId: null });
 
-    await findOrCreateConversation("c1", "SMS", null, { assignedAgentId: "agent-1" });
+    await findOrCreateConversation(fakeDb, "c1", "SMS", null, { assignedAgentId: "agent-1" });
 
     expect(create.mock.calls[0][0]).toEqual({
       data: { contactId: "c1", channel: "SMS", waInstanceId: null, assignedAgentId: "agent-1" },
@@ -71,8 +76,8 @@ describe("findOrCreateConversation", () => {
       .mockResolvedValueOnce({ id: "conv-a", contactId: "contact-a", channel: "SMS", waInstanceId: null })
       .mockResolvedValueOnce({ id: "conv-b", contactId: "contact-b", channel: "SMS", waInstanceId: null });
 
-    const a = await findOrCreateConversation("contact-a", "SMS", null);
-    const b = await findOrCreateConversation("contact-b", "SMS", null);
+    const a = await findOrCreateConversation(fakeDb, "contact-a", "SMS", null);
+    const b = await findOrCreateConversation(fakeDb, "contact-b", "SMS", null);
 
     expect(a.conversation.id).toBe("conv-a");
     expect(b.conversation.id).toBe("conv-b");
@@ -84,8 +89,8 @@ describe("findOrCreateConversation", () => {
     const existing = { id: "conv-reused", contactId: "c1", channel: "WHATSAPP", waInstanceId: "wa-1" };
     findFirst.mockResolvedValue(existing);
 
-    const first = await findOrCreateConversation("c1", "WHATSAPP", "wa-1", { assignedAgentId: "agent-1" });
-    const second = await findOrCreateConversation("c1", "WHATSAPP", "wa-1", { assignedAgentId: "agent-2" });
+    const first = await findOrCreateConversation(fakeDb, "c1", "WHATSAPP", "wa-1", { assignedAgentId: "agent-1" });
+    const second = await findOrCreateConversation(fakeDb, "c1", "WHATSAPP", "wa-1", { assignedAgentId: "agent-2" });
 
     expect(create).not.toHaveBeenCalled();
     expect(first.conversation.id).toBe("conv-reused");

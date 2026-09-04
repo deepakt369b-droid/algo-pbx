@@ -1,6 +1,19 @@
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import type { TenantClient } from "@/lib/db-tenant";
 import { getSetting, setSetting } from "@/lib/settings/service";
 import { provisionDinstarConfig, type DinstarProvisionResult } from "@/lib/dinstar-provision";
+
+// Wave 2a multi-tenant migration: cutoverToSite() takes a REQUIRED
+// tenant-scoped `db: TenantClient` (src/lib/db-tenant.ts) instead of
+// importing a module-level singleton — dependency injection per plan §2.
+// Its caller (POST /api/admin/gateway-sites/[id]/cutover) already has one
+// from requireAdminSession(). DINSTAR_LAN_IP is still read/written as a
+// single platform-global AppSetting (getSetting/setSetting called with no
+// tenantId) — deliberately unchanged: per the plan's §8 gap analysis this
+// setting is meant to move onto GatewaySite.tunnelIp as a per-tenant field,
+// but that's a later wave's job, not this one's; today there is exactly one
+// real tenant in production, so the global setting still reflects the
+// correct, single trunk destination (Requirement A parity).
 
 // The cutover MECHANISM (OpenVPN/Headscale/connectivity task, Node G) — what
 // a human-supervised G2 session invokes once a site's tunnel is confirmed up
@@ -47,7 +60,7 @@ export interface CutoverResult {
  * this function hasn't actually verified; the connectivity poller (Node F)
  * determines status independently on its own next run. This function's job
  * is the config push, not the connectivity proof. */
-export async function cutoverToSite(site: CutoverSiteInput, actorId: string): Promise<CutoverResult> {
+export async function cutoverToSite(db: TenantClient, site: CutoverSiteInput, actorId: string): Promise<CutoverResult> {
   if (!site.tunnelIp) {
     return {
       ok: false,
@@ -85,6 +98,10 @@ export async function cutoverToSite(site: CutoverSiteInput, actorId: string): Pr
     });
   }
 
+  // No `tenantId` in this literal — the `TenantClient` extension
+  // force-injects it at runtime regardless of what's passed (see
+  // crm/activity.ts's comment on the same pattern); the double-cast below
+  // satisfies the compiler about that runtime guarantee.
   await db.auditLog.create({
     data: {
       action: "site.cutover",
@@ -103,7 +120,7 @@ export async function cutoverToSite(site: CutoverSiteInput, actorId: string): Pr
         syslogRemoteServerNote:
           "Not handled by this function — re-point the gateway's own Diagnostic -> Syslog Remote Server setting manually as a separate G2 step, then confirm via the dual-homed listener.",
       },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return {

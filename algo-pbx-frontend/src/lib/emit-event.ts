@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 import { sendWebhook } from "@/lib/webhooks";
 
 // emitEvent("call.ended", {...}) — looks up every active WebhookSubscription
@@ -12,7 +12,14 @@ import { sendWebhook } from "@/lib/webhooks";
 // call this for "message.received"/"message.sent" — this export is the
 // clean, reusable surface for that; this file does not add those call
 // sites itself.
-export async function emitEvent(event: string, payload: object): Promise<void> {
+//
+// Wave 2a multi-tenant migration: WebhookSubscription is tenant-scoped
+// (src/lib/tenancy/scope-rules.ts). Takes a REQUIRED tenant-scoped
+// `db: TenantClient` (src/lib/db-tenant.ts) instead of importing a
+// module-level singleton — dependency injection per plan §2. Every caller
+// (api/cdr/route.ts, messaging/ingest.ts) already has one from its own
+// guard.
+export async function emitEvent(db: TenantClient, event: string, payload: object): Promise<void> {
   try {
     const subscriptions = await db.webhookSubscription.findMany({
       where: { active: true, events: { has: event } },

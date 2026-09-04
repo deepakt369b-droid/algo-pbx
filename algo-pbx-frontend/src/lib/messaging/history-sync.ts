@@ -1,8 +1,13 @@
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 import * as openwa from "./openwa-client";
 import { mapOpenWaMessage } from "./openwa-provider";
 import { persistNormalizedMessage } from "./ingest";
 import { e164ToWaId } from "./wa-id";
+
+// Wave 2a multi-tenant migration: both exports take a REQUIRED tenant-scoped
+// `db: TenantClient` (src/lib/db-tenant.ts) as their first argument instead
+// of importing a module-level singleton — dependency injection per plan §2,
+// threaded through to persistNormalizedMessage() (also DI'd, same wave).
 
 // The OpenWA webhook only pushes NEW messages. Opening a thread triggers a
 // rate-limited backlog pull so the agent sees the real history (and any
@@ -37,6 +42,7 @@ const FIRST_SYNC_TEXT_LIMIT = 400;
  * `force` skips the cooldown (used by the one-time admin backfill route).
  */
 export async function syncConversationHistory(
+  db: TenantClient,
   conversationId: string,
   opts: { limit?: number; deep?: boolean; force?: boolean } = {}
 ): Promise<{ synced: boolean; written: number; reason?: string }> {
@@ -98,7 +104,7 @@ export async function syncConversationHistory(
     for (const raw of rows) {
       const ev = mapOpenWaMessage(raw, sessionId);
       if (!ev) continue;
-      const id = await persistNormalizedMessage(ev, "WHATSAPP", conversation.waInstanceId, {
+      const id = await persistNormalizedMessage(db, ev, "WHATSAPP", conversation.waInstanceId, {
         bumpUnread: false,
         emit: false,
       });
@@ -124,7 +130,7 @@ const AVATAR_TTL_MS = 6 * 60 * 60 * 1000; // re-check a contact's picture every 
  * when we have none or it's stale. Returns the raw pps.whatsapp.net URL (the
  * caller proxies it — that URL is cross-origin and expires) or null.
  */
-export async function resolveContactAvatarUrl(contactId: string): Promise<string | null> {
+export async function resolveContactAvatarUrl(db: TenantClient, contactId: string): Promise<string | null> {
   const contact = await db.contact.findUnique({
     where: { id: contactId },
     select: { id: true, numberE164: true, waAvatarUrl: true, waAvatarCheckedAt: true },

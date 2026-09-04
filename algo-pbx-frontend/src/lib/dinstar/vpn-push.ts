@@ -14,7 +14,14 @@
 // verification step the plan requires ("form-200 is not proof").
 import { loginToDevice, postMultipart, getPage } from "./device-client";
 import { getSetting } from "@/lib/settings/service";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import type { TenantClient } from "@/lib/db-tenant";
+
+// Wave 2a multi-tenant migration: pushVpnConfig() takes a REQUIRED
+// tenant-scoped `db: TenantClient` (src/lib/db-tenant.ts) instead of
+// importing a module-level singleton — dependency injection per plan §2.
+// Its caller (POST /api/admin/gateway-sites/[id]/push-vpn-config) already
+// has one from requireAdminSession().
 
 export interface VpnPushResult {
   loggedIn: boolean;
@@ -42,18 +49,23 @@ export function isOpenVpnEnabledInHtml(html: string): boolean {
 }
 
 async function auditPush(
+  db: TenantClient,
   actorId: string,
   siteId: string,
   host: string,
   result: VpnPushResult
 ): Promise<void> {
+  // No `tenantId` in this literal — the `TenantClient` extension
+  // force-injects it at runtime regardless of what's passed (see
+  // crm/activity.ts's comment on the same pattern); the double-cast below
+  // satisfies the compiler about that runtime guarantee.
   await db.auditLog.create({
     data: {
       action: "site.vpn_config_pushed",
       actorId,
       targetId: siteId,
       metadata: { host, ...result },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 }
 
@@ -66,6 +78,7 @@ async function auditPush(
  * this client config needs no separate inline auth layer — only cert-based
  * client auth. Never trusts the POST's 200/redirect alone. */
 export async function pushVpnConfig(
+  db: TenantClient,
   siteId: string,
   host: string,
   ovpnFile: Buffer,
@@ -85,14 +98,14 @@ export async function pushVpnConfig(
   ]);
   if (!username || !password) {
     result.error = "DINSTAR_WEBUI_USERNAME/PASSWORD are not configured — set them in /admin/settings first.";
-    await auditPush(actorId, siteId, host, result);
+    await auditPush(db, actorId, siteId, host, result);
     return result;
   }
 
   const login = await loginToDevice(host, username, password);
   if (!login.ok || !login.cookie) {
     result.error = login.error ?? "Login to the gateway's admin UI failed.";
-    await auditPush(actorId, siteId, host, result);
+    await auditPush(db, actorId, siteId, host, result);
     return result;
   }
   result.loggedIn = true;
@@ -106,7 +119,7 @@ export async function pushVpnConfig(
   );
   if (!push.ok) {
     result.error = push.error ?? `Config push failed (status ${push.status}).`;
-    await auditPush(actorId, siteId, host, result);
+    await auditPush(db, actorId, siteId, host, result);
     return result;
   }
   result.pushed = true;
@@ -121,6 +134,6 @@ export async function pushVpnConfig(
       "Config was pushed but the re-read page does not show OpenVPN as enabled — check the gateway's own Download Log button (Network Configuration -> VPN Parameter) for why.";
   }
 
-  await auditPush(actorId, siteId, host, result);
+  await auditPush(db, actorId, siteId, host, result);
   return result;
 }

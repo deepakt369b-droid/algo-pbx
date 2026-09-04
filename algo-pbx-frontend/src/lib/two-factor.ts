@@ -1,5 +1,24 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
+
+// Wave 2a multi-tenant migration: TrustedDevice is tenant-scoped
+// (src/lib/tenancy/scope-rules.ts). isTrustedDevice()/rememberDevice() are
+// called from the pre-session two-phase login flow
+// (api/auth-2fa/pre-login, api/auth-2fa/verify — there is no session yet at
+// that point, by construction: this IS the code that decides whether one
+// gets issued) — a legitimate `unsafeGlobalDb` exception per plan §2, not a
+// DI conversion. `tokenHash` stays a real global-unique column
+// (TrustedDevice.tokenHash @unique, unchanged by wave 1), so
+// isTrustedDevice()'s lookup needs no tenantId to be correct or safe; it
+// separately re-checks `device.userId === userId` exactly as before.
+// rememberDevice() writes a new row and must supply `tenantId` explicitly
+// (required column, no `TenantClient` in play here) — resolved from
+// `userId`, the same pattern src/lib/otp/service.ts uses.
+async function resolveTenantId(userId: string): Promise<string> {
+  const user = await unsafeGlobalDb.user.findUnique({ where: { id: userId }, select: { tenantId: true } });
+  if (!user) throw new Error(`two-factor: no such user ${userId}`);
+  return user.tenantId;
+}
 
 // Login 2FA plumbing (Workstream 6 — new-device/new-IP challenge, 30-day
 // trusted device). NextAuth's Credentials `authorize()` is single-shot:
@@ -67,17 +86,19 @@ export function generateTrustedDeviceToken(): string {
 export async function isTrustedDevice(token: string | undefined, userId: string): Promise<boolean> {
   if (!token) return false;
   const tokenHash = hashTrustedDeviceToken(token);
-  const device = await db.trustedDevice.findUnique({ where: { tokenHash } });
+  const device = await unsafeGlobalDb.trustedDevice.findUnique({ where: { tokenHash } });
   if (!device || device.userId !== userId) return false;
   if (device.expiresAt.getTime() <= Date.now()) return false;
-  await db.trustedDevice.update({ where: { id: device.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
+  await unsafeGlobalDb.trustedDevice.update({ where: { id: device.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
   return true;
 }
 
 export async function rememberDevice(userId: string, label: string, ip: string): Promise<string> {
   const token = generateTrustedDeviceToken();
-  await db.trustedDevice.create({
+  const tenantId = await resolveTenantId(userId);
+  await unsafeGlobalDb.trustedDevice.create({
     data: {
+      tenantId,
       userId,
       tokenHash: hashTrustedDeviceToken(token),
       label,

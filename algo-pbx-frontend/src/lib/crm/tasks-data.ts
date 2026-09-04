@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 
 export type TaskFilter = "open" | "today" | "overdue" | "completed" | "all";
 
@@ -14,14 +14,20 @@ export type CrmTaskDto = {
   deal: { id: string; name: string } | null;
 };
 
-// Shared by the admin and agent task pages. `assigneeScope` null = staff
-// (every task); a userId = that agent's own tasks only.
-export async function loadTasks(opts: {
-  filter: TaskFilter;
-  assigneeScope: string | null;
-  contactId?: string | null;
-  dealId?: string | null;
-}): Promise<CrmTaskDto[]> {
+// Wave 2a multi-tenant migration: takes a REQUIRED tenant-scoped
+// `db: TenantClient` (src/lib/db-tenant.ts) instead of importing a
+// module-level singleton — dependency injection per plan §2. Shared by the
+// admin and agent task pages. `assigneeScope` null = staff (every task); a
+// userId = that agent's own tasks only.
+export async function loadTasks(
+  db: TenantClient,
+  opts: {
+    filter: TaskFilter;
+    assigneeScope: string | null;
+    contactId?: string | null;
+    dealId?: string | null;
+  }
+): Promise<CrmTaskDto[]> {
   const now = new Date();
   const endOfToday = new Date(now);
   endOfToday.setHours(23, 59, 59, 999);

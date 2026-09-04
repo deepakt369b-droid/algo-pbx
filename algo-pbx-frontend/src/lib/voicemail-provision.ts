@@ -1,7 +1,12 @@
 import { writeFile } from "node:fs/promises";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 import { getAmiClient } from "@/lib/ami-client";
 import { renderVoicemailConf, type VoicemailEntry } from "@/lib/voicemail-config";
+
+// Wave 2a multi-tenant migration: same legitimate `unsafeGlobalDb` exception
+// as src/lib/pjsip-provision.ts, same reasoning — one shared Asterisk
+// instance and one voicemail_dynamic.conf file until wave 6 namespaces
+// endpoint ids. See that file's header comment.
 
 // Orchestration around the pure, tested renderVoicemailConf
 // (voicemail-config.ts), mirroring src/lib/pjsip-provision.ts's shape
@@ -10,7 +15,7 @@ import { renderVoicemailConf, type VoicemailEntry } from "@/lib/voicemail-config
 const CONF_PATH = process.env.VOICEMAIL_DYNAMIC_CONF_PATH || "/voicemail_dynamic.conf";
 
 export async function regenerateVoicemailConfigAndReload(): Promise<void> {
-  const extensions = await db.extension.findMany({
+  const extensions = await unsafeGlobalDb.extension.findMany({
     where: { voicemailPin: { not: null } },
     include: { user: { select: { name: true, email: true } } },
   });

@@ -1,7 +1,21 @@
 import { writeFile } from "node:fs/promises";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 import { getAmiClient } from "@/lib/ami-client";
 import { renderPjsipConf, type ExtensionForPjsip } from "@/lib/pjsip-config";
+
+// Wave 2a multi-tenant migration: Extension is tenant-scoped
+// (src/lib/tenancy/scope-rules.ts), but this function deliberately still
+// reads across ALL tenants via `unsafeGlobalDb` — a legitimate, reviewed
+// exception, not an oversight. D1 (plan §1 locked decisions) is "one pooled
+// stack": there is exactly ONE shared Asterisk instance and ONE
+// pjsip_dynamic.conf file until wave 6 namespaces PJSIP endpoint ids
+// (`t<n>-1001`). Scoping this read to a single tenant would silently drop
+// every OTHER tenant's extensions out of the config file Asterisk actually
+// loads — the opposite of what tenant isolation is for. Today there is
+// exactly one real tenant in production, so this is a no-op change in
+// practice; it becomes load-bearing once wave 6 lands, which is also where
+// this function gains a tenant/namespace argument. Not attempted here per
+// this task's explicit brief.
 
 // Orchestration around the pure, tested renderPjsipConf (pjsip-config.ts):
 // reads every provisioned Extension, renders pjsip_dynamic.conf, writes it
@@ -17,7 +31,7 @@ import { renderPjsipConf, type ExtensionForPjsip } from "@/lib/pjsip-config";
 const CONF_PATH = process.env.PJSIP_DYNAMIC_CONF_PATH || "/pjsip_dynamic.conf";
 
 export async function regeneratePjsipConfigAndReload(): Promise<void> {
-  const extensions = await db.extension.findMany();
+  const extensions = await unsafeGlobalDb.extension.findMany();
 
   const forPjsip: ExtensionForPjsip[] = extensions
     .filter((e) => e.sipSecret && (e.kind === "webrtc" || e.kind === "hardware"))

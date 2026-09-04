@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 import type { User } from "@prisma/client";
 
 // Shared "is this agent's registration actually complete" check and the
@@ -22,8 +22,14 @@ export function isProfileComplete(user: Pick<User, "name" | "address" | "phoneE1
 /** Re-checks completeness for `userId` and sets profileCompletedAt if it
  * just became true and wasn't already set. Idempotent — safe to call
  * from multiple routes without risk of double-writing or clobbering an
- * already-set timestamp. */
-export async function maybeCompleteProfile(userId: string): Promise<void> {
+ * already-set timestamp.
+ *
+ * Wave 2a multi-tenant migration: takes a REQUIRED tenant-scoped
+ * `db: TenantClient` (src/lib/db-tenant.ts) instead of importing a
+ * module-level singleton — dependency injection per plan §2. Every caller
+ * (register/verify-phone, register/verify-fallback-otp,
+ * admin/users/[id]) already has one from its own guard. */
+export async function maybeCompleteProfile(db: TenantClient, userId: string): Promise<void> {
   const user = await db.user.findUnique({
     where: { id: userId },
     select: { name: true, address: true, phoneE164: true, phoneVerifiedAt: true, profileCompletedAt: true },

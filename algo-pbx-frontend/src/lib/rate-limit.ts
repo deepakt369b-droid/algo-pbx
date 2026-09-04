@@ -13,7 +13,37 @@
 // pragmatic middle ground, not a substitute for a real WAF/edge rate
 // limiter in front of the app if traffic volume ever justifies one.
 
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
+
+// Wave 2a multi-tenant migration: LoginAttempt is tenant-scoped
+// (src/lib/tenancy/scope-rules.ts) but its `@@unique([email, ip])`
+// constraint was deliberately left as-is by wave 1 (not made
+// tenant-composite) — email stays globally unique per plan §1, so
+// (email, ip) alone already identifies at most one real account's lockout
+// bucket. This module is called from src/auth.ts's authorize() callback and
+// from api/auth-2fa/pre-login BEFORE any session/tenant is known — the rate
+// limit is exactly what runs first, ahead of the user lookup that would
+// tell us a tenant. A legitimate `unsafeGlobalDb` exception per plan §2
+// ("code that runs before a tenant is known"), not a DI conversion — the
+// call signatures below are unchanged so src/auth.ts (out of scope for this
+// wave) keeps compiling against them.
+//
+// `LoginAttempt.tenantId` is NOT NULL, so a `create` (inside the upsert in
+// bumpBucket()) needs a real tenantId. `resolveTenantId()` looks the
+// (globally-unique) email up directly; when no such user exists — a bogus
+// email being brute-forced — there is genuinely no tenant to attribute the
+// row to, so bumpBucket() falls back to the in-memory
+// `checkSimpleRateLimit()` already in this file for that one edge case
+// (documented at its call site below) rather than crashing or fabricating a
+// tenantId.
+async function resolveTenantId(email: string, userId?: string): Promise<string | null> {
+  if (userId) {
+    const byId = await unsafeGlobalDb.user.findUnique({ where: { id: userId }, select: { tenantId: true } });
+    if (byId) return byId.tenantId;
+  }
+  const byEmail = await unsafeGlobalDb.user.findUnique({ where: { email }, select: { tenantId: true } });
+  return byEmail?.tenantId ?? null;
+}
 
 // Loop B1: the app is only ever reached through Caddy (docker-compose binds
 // `web` to 127.0.0.1 and the firewall REJECTs :3000 from outside — see
@@ -53,7 +83,9 @@ export interface RateLimitResult {
 }
 
 async function checkBucket(email: string, ip: string): Promise<RateLimitResult> {
-  const row = await db.loginAttempt.findUnique({ where: { email_ip: { email, ip } } });
+  // Read-only, and (email, ip) alone is already a valid unique lookup (see
+  // header comment) — no tenantId needed for correctness here.
+  const row = await unsafeGlobalDb.loginAttempt.findUnique({ where: { email_ip: { email, ip } } });
   if (!row) return { allowed: true };
   if (row.lockedUntil && row.lockedUntil > new Date()) {
     return { allowed: false, lockedUntil: row.lockedUntil };
@@ -72,13 +104,25 @@ export async function checkLoginRateLimit(email: string, ip: string): Promise<Ra
 }
 
 async function bumpBucket(email: string, ip: string, max: number, lockoutMs: number, userId?: string): Promise<void> {
-  const existing = await db.loginAttempt.findUnique({ where: { email_ip: { email, ip } } });
+  const existing = await unsafeGlobalDb.loginAttempt.findUnique({ where: { email_ip: { email, ip } } });
   const stale = existing && Date.now() - existing.updatedAt.getTime() > WINDOW_RESET_MS;
   const nextAttempts = existing && !stale ? existing.attempts + 1 : 1;
   const lockedUntil = nextAttempts >= max ? new Date(Date.now() + lockoutMs) : null;
-  await db.loginAttempt.upsert({
+
+  const tenantId = existing?.tenantId ?? (await resolveTenantId(email, userId));
+  if (!tenantId) {
+    // No known tenant for this identifier — LoginAttempt.tenantId is a
+    // required FK, so a persisted row is impossible here (a bogus email
+    // being brute-forced, with no existing row to inherit a tenantId from
+    // either). Fall back to the in-memory generic limiter so repeated
+    // attempts are still throttled, just not via the tenant-scoped table.
+    checkSimpleRateLimit(`login-fallback:${email}:${ip}`, max, lockoutMs);
+    return;
+  }
+
+  await unsafeGlobalDb.loginAttempt.upsert({
     where: { email_ip: { email, ip } },
-    create: { email, ip, attempts: nextAttempts, lockedUntil, userId },
+    create: { tenantId, email, ip, attempts: nextAttempts, lockedUntil, userId },
     update: { attempts: nextAttempts, lockedUntil, userId },
   });
 }
@@ -91,7 +135,7 @@ export async function recordLoginFailure(email: string, ip: string, userId?: str
 }
 
 export async function clearLoginAttempts(email: string, ip: string): Promise<void> {
-  await db.loginAttempt.deleteMany({ where: { email, ip: { in: [ip, AGGREGATE_IP_SENTINEL] } } });
+  await unsafeGlobalDb.loginAttempt.deleteMany({ where: { email, ip: { in: [ip, AGGREGATE_IP_SENTINEL] } } });
 }
 
 // Generic per-key limiter for non-login write endpoints (e.g. admin invite

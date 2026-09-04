@@ -1,7 +1,27 @@
 import { randomInt, createHash } from "node:crypto";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
 import { getProvider } from "@/lib/messaging/registry";
 import { getSetting } from "@/lib/settings/service";
+
+// Wave 2a multi-tenant migration: OtpChallenge and WaInstance are both
+// tenant-scoped (src/lib/tenancy/scope-rules.ts). This module is a
+// legitimate `unsafeGlobalDb` exception rather than a DI conversion —
+// sendOtp()/verifyOtp() are called from BOTH session-guarded flows
+// (register/send-fallback-otp) AND genuinely pre-session ones
+// (api/auth-2fa/pre-login, api/auth/forgot-password — a user resetting a
+// forgotten password cannot have a session by definition). A single
+// consistent scoping strategy across the whole file, keyed off the
+// `userId` every call site already has, is simpler and safer than two code
+// paths. `resolveTenantId()` below resolves it explicitly from `userId` and
+// every tenant-scoped query passes it into the query args by hand — per
+// plan §2's "genuinely pre-tenant-resolution" exception category — rather
+// than relying on any automatic scoping (there is none once
+// `unsafeGlobalDb` is used directly).
+async function resolveTenantId(userId: string): Promise<string> {
+  const user = await unsafeGlobalDb.user.findUnique({ where: { id: userId }, select: { tenantId: true } });
+  if (!user) throw new Error(`otp/service: no such user ${userId}`);
+  return user.tenantId;
+}
 
 // Server-side OTP service, channel-routed. Firebase Phone Auth
 // (src/lib/firebase/admin.ts) is a THIRD path entirely — client-driven,
@@ -58,18 +78,21 @@ export interface OtpSendResult {
  * instance with a bound session is used. Throws if none exists — a clear,
  * named failure rather than silently picking an arbitrary disconnected
  * instance. */
-async function resolveOpenWaSessionId(): Promise<string> {
+async function resolveOpenWaSessionId(tenantId: string): Promise<string> {
   const configuredInstanceId = await getSetting("OTP_WA_INSTANCE_ID");
   if (configuredInstanceId) {
-    const configured = await db.waInstance.findUnique({ where: { id: configuredInstanceId } });
-    if (!configured?.openwaSessionId) {
+    const configured = await unsafeGlobalDb.waInstance.findUnique({ where: { id: configuredInstanceId } });
+    // Guard against a stale/cross-tenant OTP_WA_INSTANCE_ID setting pointing
+    // at another tenant's instance — treat it the same as "not found" rather
+    // than ever sending an OTP through another tenant's WhatsApp session.
+    if (!configured || configured.tenantId !== tenantId || !configured.openwaSessionId) {
       throw new Error("OTP_WA_INSTANCE_ID is set but that instance has no active OpenWA session. Re-pair it in /admin/whatsapp.");
     }
     return configured.openwaSessionId;
   }
 
-  const instance = await db.waInstance.findFirst({
-    where: { provider: "OPENWA", status: "CONNECTED", openwaSessionId: { not: null } },
+  const instance = await unsafeGlobalDb.waInstance.findFirst({
+    where: { tenantId, provider: "OPENWA", status: "CONNECTED", openwaSessionId: { not: null } },
     orderBy: { simPort: "asc" },
   });
   if (!instance?.openwaSessionId) {
@@ -89,9 +112,11 @@ export async function sendOtp(params: {
   phoneE164: string;
   purpose: "PHONE_VERIFICATION" | "LOGIN_2FA" | "PASSWORD_RESET";
 }): Promise<OtpSendResult> {
+  const tenantId = await resolveTenantId(params.userId);
+
   const windowStart = new Date(Date.now() - SEND_WINDOW_MS);
-  const recentCount = await db.otpChallenge.count({
-    where: { userId: params.userId, purpose: params.purpose, createdAt: { gte: windowStart } },
+  const recentCount = await unsafeGlobalDb.otpChallenge.count({
+    where: { tenantId, userId: params.userId, purpose: params.purpose, createdAt: { gte: windowStart } },
   });
   if (recentCount >= MAX_SENDS_PER_HOUR) {
     return { ok: false, error: "Too many verification codes requested. Try again later." };
@@ -111,8 +136,9 @@ export async function sendOtp(params: {
     return { ok: false, error: "OTP_CHANNEL is set to FIREBASE, which this server-side flow does not handle." };
   }
 
-  const challenge = await db.otpChallenge.create({
+  const challenge = await unsafeGlobalDb.otpChallenge.create({
     data: {
+      tenantId,
       userId: params.userId,
       phoneE164: params.phoneE164,
       codeHash,
@@ -126,7 +152,7 @@ export async function sendOtp(params: {
   if (channel === "OPENWA") {
     let openwaSessionId: string;
     try {
-      openwaSessionId = await resolveOpenWaSessionId();
+      openwaSessionId = await resolveOpenWaSessionId(tenantId);
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "No OTP-capable WhatsApp instance available." };
     }
@@ -180,8 +206,9 @@ export async function verifyOtp(params: {
   purpose: "PHONE_VERIFICATION" | "LOGIN_2FA" | "PASSWORD_RESET";
   code: string;
 }): Promise<OtpVerifyResult> {
-  const challenge = await db.otpChallenge.findFirst({
-    where: { userId: params.userId, purpose: params.purpose, consumedAt: null },
+  const tenantId = await resolveTenantId(params.userId);
+  const challenge = await unsafeGlobalDb.otpChallenge.findFirst({
+    where: { tenantId, userId: params.userId, purpose: params.purpose, consumedAt: null },
     orderBy: { createdAt: "desc" },
   });
 
@@ -193,10 +220,10 @@ export async function verifyOtp(params: {
 
   const providedHash = hashCode(params.code.trim());
   if (providedHash !== challenge.codeHash) {
-    await db.otpChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
+    await unsafeGlobalDb.otpChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
     return { ok: false, error: "Incorrect code." };
   }
 
-  await db.otpChallenge.update({ where: { id: challenge.id }, data: { consumedAt: new Date() } });
+  await unsafeGlobalDb.otpChallenge.update({ where: { id: challenge.id }, data: { consumedAt: new Date() } });
   return { ok: true };
 }

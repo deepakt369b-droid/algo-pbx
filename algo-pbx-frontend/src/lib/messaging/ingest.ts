@@ -1,9 +1,17 @@
-import { db } from "@/lib/db";
+import type { TenantClient } from "@/lib/db-tenant";
 import { emitEvent } from "@/lib/emit-event";
 import { isSensitiveSms } from "./sensitive-detect";
 import { recordActivity, truncateBody } from "@/lib/crm/activity";
 import type { Channel, NormalizedInboundEvent } from "./types";
 import type { Conversation, Prisma } from "@prisma/client";
+
+// Wave 2a multi-tenant migration: every export here takes a REQUIRED
+// tenant-scoped `db: TenantClient` (src/lib/db-tenant.ts) as its first
+// argument instead of importing a module-level singleton — dependency
+// injection per plan §2, threaded through to emitEvent()/recordActivity()
+// (both also DI'd, same wave). Every caller (the OpenWA webhook route, the
+// SMS poll route, messaging/history-sync.ts) already has one from its own
+// guard.
 
 // Prisma 5's extendedWhereUnique (GA, no preview flag needed) allows null
 // directly in a compound-unique `where` — but Postgres itself treats NULL
@@ -23,6 +31,7 @@ import type { Conversation, Prisma } from "@prisma/client";
 // (e.g. lastMessageAt/unreadCount for an inbound message, assignedAgentId
 // for an agent-started one) — never applied to an existing row.
 export async function findOrCreateConversation(
+  db: TenantClient,
   contactId: string,
   channel: Channel,
   waInstanceId: string | null,
@@ -33,8 +42,12 @@ export async function findOrCreateConversation(
   });
   if (existing) return { conversation: existing, created: false };
 
+  // No `tenantId` in this literal — the `TenantClient` extension
+  // force-injects it at runtime regardless of what's passed (see
+  // crm/activity.ts's comment on the same pattern); the double-cast below
+  // satisfies the compiler about that runtime guarantee.
   const conversation = await db.conversation.create({
-    data: { contactId, channel, waInstanceId, ...createData },
+    data: { contactId, channel, waInstanceId, ...createData } as unknown as Prisma.ConversationUncheckedCreateInput,
   });
   return { conversation, created: true };
 }
@@ -77,6 +90,7 @@ function mediaSummary(kind: string | null | undefined, body: string | null): str
  * attributable to a contact.
  */
 export async function persistNormalizedMessage(
+  db: TenantClient,
   event: NormalizedInboundEvent,
   channel: Channel,
   waInstanceId: string | null,
@@ -120,14 +134,36 @@ export async function persistNormalizedMessage(
     }
   }
 
-  const contact = await db.contact.upsert({
-    where: { numberE164: event.fromE164 },
-    update: {},
-    create: {
-      numberE164: event.fromE164,
-      displayName: event.contactName ?? undefined,
-    },
-  });
+  // Contact.numberE164 was globally @unique; it's tenant-composite now
+  // (`@@unique([tenantId, numberE164])`, plan §1), so a plain `upsert`
+  // keyed on `numberE164` alone no longer identifies a unique row, and
+  // `TenantClient` (src/lib/db-tenant.ts) deliberately does not expose the
+  // raw tenantId this function would need to build the
+  // `tenantId_numberE164` compound-key literal itself. findFirst (which the
+  // extension tenant-filters automatically) + create/update instead —
+  // same pattern as crm/activity.ts's recordActivity().
+  const existingContact = await db.contact.findFirst({ where: { numberE164: event.fromE164 } });
+  let contact = existingContact;
+  if (!contact) {
+    try {
+      contact = await db.contact.create({
+        // No `tenantId` — force-injected at runtime, see comment above.
+        data: {
+          numberE164: event.fromE164,
+          displayName: event.contactName ?? undefined,
+        } as unknown as Prisma.ContactUncheckedCreateInput,
+      });
+    } catch (err) {
+      // Lost the create race against a concurrent inbound message for the
+      // same number (findFirst -> create is no longer atomic now that the
+      // upsert's compound key isn't buildable here — see comment above).
+      // The other writer's row is what we want; re-fetch it.
+      if (err instanceof Error && err.message.includes("Unique constraint")) {
+        contact = await db.contact.findFirst({ where: { numberE164: event.fromE164 } });
+      }
+      if (!contact) throw err;
+    }
+  }
   // Adopt the provider's name only when we still have none (an outgoing
   // message's chatName is the account owner, so mapOpenWaMessage only sets
   // contactName for incoming — no extra guard needed here).
@@ -138,7 +174,7 @@ export async function persistNormalizedMessage(
   }
 
   const when = event.timestamp ?? new Date();
-  const { conversation: found, created } = await findOrCreateConversation(contact.id, channel, waInstanceId, {
+  const { conversation: found, created } = await findOrCreateConversation(db, contact.id, channel, waInstanceId, {
     lastMessageAt: when,
     unreadCount: outbound || !opts.bumpUnread ? 0 : 1,
   });
@@ -156,6 +192,7 @@ export async function persistNormalizedMessage(
 
   const sensitive = channel === "SMS" && !event.mediaKind && event.body ? isSensitiveSms(event.body) : false;
 
+  // No `tenantId` — force-injected at runtime, see comment above.
   const message = await db.chatMessage.create({
     data: {
       conversationId: conversation.id,
@@ -170,7 +207,7 @@ export async function persistNormalizedMessage(
       deliveryStatus: event.deliveryStatus ?? (outbound ? "sent" : "delivered"),
       sensitive,
       createdAt: when,
-    },
+    } as unknown as Prisma.ChatMessageUncheckedCreateInput,
   });
 
   // The proxy path needs the row id, known only after insert.
@@ -180,22 +217,25 @@ export async function persistNormalizedMessage(
       .catch(() => undefined);
   }
 
-  await recordActivity({
-    type: channel === "SMS" ? "SMS" : "WHATSAPP",
-    summary: `${outbound ? "Sent" : "Received"}: ${
-      sensitive
-        ? "(sensitive message)"
-        : event.mediaKind
-          ? mediaSummary(event.mediaKind, event.body)
-          : truncateBody(event.body, "(message)")
-    }`,
-    refId: message.id,
-    occurredAt: message.createdAt,
-    contactId: contact.id,
-  });
+  await recordActivity(
+    {
+      type: channel === "SMS" ? "SMS" : "WHATSAPP",
+      summary: `${outbound ? "Sent" : "Received"}: ${
+        sensitive
+          ? "(sensitive message)"
+          : event.mediaKind
+            ? mediaSummary(event.mediaKind, event.body)
+            : truncateBody(event.body, "(message)")
+      }`,
+      refId: message.id,
+      occurredAt: message.createdAt,
+      contactId: contact.id,
+    },
+    db,
+  );
 
   if (opts.emit && !outbound) {
-    void emitEvent("message.received", {
+    void emitEvent(db, "message.received", {
       conversationId: conversation.id,
       channel,
       fromE164: event.fromE164,
@@ -211,9 +251,10 @@ export async function persistNormalizedMessage(
 // route calls this. Thin wrapper over persistNormalizedMessage with the
 // live-inbound flags on.
 export async function ingestInboundEvent(
+  db: TenantClient,
   event: NormalizedInboundEvent,
   channel: Channel,
   waInstanceId: string | null
 ): Promise<void> {
-  await persistNormalizedMessage(event, channel, waInstanceId, { bumpUnread: true, emit: true });
+  await persistNormalizedMessage(db, event, channel, waInstanceId, { bumpUnread: true, emit: true });
 }
