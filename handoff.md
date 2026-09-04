@@ -1,44 +1,311 @@
-# Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE + deployed. S6 WAVs DONE + deployed. CRM/WhatsApp click-through DONE (live-call parts deferred). Deal↔contact linking fix + sidebar label fix DONE + deployed. Dinstar gateway syslog feature DEPLOYED to VPS, gates green, **live traffic still unconfirmed** (SIM ejected mid-diagnosis, see below). Extensions/Dinstar page merge DEPLOYED. Admin-not-a-contact-owner + full country-code picker DEPLOYED. **OpenVPN-primary/Headscale-fallback/connectivity feature BUILT + gated green, NOT yet deployed** — see "OpenVPN/Headscale/connectivity" session below; the live cutover is an explicit human-supervised gate (G2), not run yet. `main` is pushed to `origin/main` as of this session (H4 resolved — operator approved).
+# Handoff — Apple-black redesign DONE + deployed. WhatsApp fix + admin Rooms fix DONE + deployed. S6 WAVs DONE + deployed. CRM/WhatsApp click-through DONE (live-call parts deferred). Deal↔contact linking fix + sidebar label fix DONE + deployed. Dinstar gateway syslog feature DEPLOYED to VPS, gates green, **live traffic still unconfirmed** (SIM ejected mid-diagnosis, see below). Extensions/Dinstar page merge DEPLOYED. Admin-not-a-contact-owner + full country-code picker DEPLOYED. **OpenVPN-primary/Headscale-fallback/connectivity: G1 (infra) DONE + DEPLOYED, CA bootstrapped (encrypted, real passphrase), one demo client cert issued and correctly generated — G2 (the actual tunnel bring-up + cutover) NOT started, paused here for the day.** `main` is 10 commits ahead of `origin/main` — committed, **NOT pushed to GitHub** (operator held push this round; VPS has all 10 via direct file sync, so the VPS and local tree match, GitHub is behind both). Read "OpenVPN/Headscale/connectivity, part 2" below first.
 
 ## ▶ "claude continue" — the remaining work, in order
 
-Updated 2026-09-03 (OpenVPN/Headscale session). Remaining:
+Updated 2026-09-03, end of day. Remaining, in order:
 
-1. **Live-call verification (deferred by the operator to a later session)**:
-   screen-pop on a real inbound call + the disposition prompt (Operator TODO
-   old #3's last bullet), S6 announcement prompt heard on a real call
-   (`docs/S6-real-call-test-plan.md`), Manager-merge/Phase MM
-   (`LLM.md §30`, never live-call-tested).
-2. **G1 — deploy the OpenVPN/Headscale/connectivity infra** (low-risk,
-   reversible, does NOT touch the live call path): rebuild `web`, build the
-   new `openvpn-server`/`openvpn-bridge`/`headscale` services, run the new
-   `GatewaySite` migration, run `pbx_configs/openvpn/init-pki.sh` once. See
-   "OpenVPN/Headscale/connectivity" session below for the exact checklist.
-   Needs operator go-ahead — awaiting it.
-3. **G2 — the live, human-supervised cutover** (only after G1): generate +
-   push the gateway's OpenVPN client cert, confirm the tunnel handshakes
-   (the Dinstar's embedded OpenVPN client is old firmware — cipher/auth
-   mismatch is the expected first failure mode, not a crisis, see below),
-   re-point the SIP trunk, place a real inbound+outbound test call over the
-   tunnel, confirm syslog arrives via the new path, only then deprecate
-   Tailscale. Full checklist in the plan file (see below) and in `LLM.md`.
-4. **Dinstar gateway syslog — live traffic verification (deferred by the
+1. ~~**Push the 10 unpushed commits to GitHub**~~ — **DONE 2026-09-04.**
+   Operator gave the go-ahead; `ae7094f..b11cc0c main -> main` pushed
+   successfully. Note: **CLI `git push` works again** — the Windows
+   Application Control policy that blocked `libcurl-4.dll` last session
+   is no longer in effect. GitHub, VPS and local tree are now all in
+   sync at `b11cc0c`.
+2. **G2 — the tunnel bring-up test (next concrete step, everything is
+   ready for it)**. **PRE-FLIGHT DONE 2026-09-04** — server side verified
+   healthy and one real blocker found (see "G2 pre-flight" below); the
+   `ufw` fix is the only thing standing between here and the upload, and
+   it needs the operator to run it. Then: download `cust-demo-gw-1.ovpn`
+   from the VPS
+   (`/opt/algo-pbx/pbx_configs/openvpn/clients/cust-demo-gw-1.ovpn`, real
+   private key material, root-only), push it to the real Dinstar gateway
+   (Network Configuration → VPN Parameter → upload → check "OpenVPN
+   Enable" → Save — the gateway's own "Download Log" button on that same
+   page is the first diagnostic if the handshake fails), confirm a real
+   handshake in `docker logs algo-openvpn-server` / `openvpn-status.log`,
+   confirm `10.8.0.10` answers ping from the VPS. **Expect this to need
+   live iteration** — the gateway's embedded OpenVPN client is old
+   firmware with no visible cipher/auth negotiation options; the server
+   config already targets legacy compatibility (confirmed correct,
+   AES-256-CBC/SHA256/tls-version-min 1.0, verified present in both the
+   server config AND the client `.ovpn` — see part 2 for why the client
+   side needed a separate fix) but this is the first time it meets the
+   real device.
+3. **Only after the tunnel is confirmed up**: G2's remaining steps — run
+   the cutover (`POST /api/admin/gateway-sites/[id]/cutover`, already
+   built, re-points `DINSTAR_LAN_IP` + verifies via AMI), real
+   inbound+outbound test call over the tunnel, confirm syslog arrives via
+   `10.8.0.1` (needs `SYSLOG_BIND_IP_SECONDARY` set on
+   `gateway-syslog-listener` first — not done yet, do this as part of G2,
+   not before), only then mark Tailscale legacy.
+4. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
+   the operator for review first** (their explicit instruction — do not
+   build unilaterally): encrypted CA-passphrase storage in the
+   AppSetting store, an admin-approval-at-signing-time flow (passphrase
+   entered in the admin UI, held in memory only), per-customer cert
+   issuance + a revocation UI calling `bridge-watch.sh`'s existing
+   `handle_revoke`, CRL regeneration, encrypted-PKI backup handling.
+   Until this ships, `bridge-watch.sh`'s unattended signing stays
+   disabled by design (interim hard rule, see part 2) — every new client
+   cert is issued manually by an admin.
+5. **Live-call verification (deferred by the operator to a later
+   session)**: screen-pop on a real inbound call + the disposition
+   prompt (Operator TODO old #3's last bullet), S6 announcement prompt
+   heard on a real call (`docs/S6-real-call-test-plan.md`),
+   Manager-merge/Phase MM (`LLM.md §30`, never live-call-tested).
+6. **Dinstar gateway syslog — live traffic verification (deferred by the
    operator, SIM was ejected mid-diagnosis)**: everything is built and
    deployed (schema, parser, receiver sidecar, ingest route, retention, UI
    panel, alerts), but **zero packets have ever been observed arriving** at
-   the VPS despite the gateway's Diagnostic → Syslog config saving and
-   persisting through a full reboot. Next session, once the operator has
-   re-inserted a SIM:
-   place a real call / trigger a real GSM event, confirm a `GatewayEvent`
-   row lands, confirm the alert banner + email fire for a critical type,
-   and widen `src/lib/dinstar/syslog-parse.ts`'s taxonomy against the real
-   captured line shapes (it was built defensively, without ever having
-   seen one — see that file's own header). **Deploy itself is done**: `web`
-   + `gateway-syslog-listener` rebuilt/started, `20260903180000_add_gateway_event`
-   confirmed applied by name (not "no pending"), `GatewayEvent` table
-   verified live via direct schema query, listener confirmed bound to the
-   VPS's Tailscale IP only (`ss -ulnp`), firewall rule active — see
-   "OpenVPN/Headscale/connectivity" session below for the deploy record.
+   the VPS over the Tailscale path despite the gateway's Diagnostic →
+   Syslog config saving and persisting through a full reboot. This may
+   turn out moot once OpenVPN dual-homing (step 3 above) gives syslog a
+   second, more likely-to-work path — worth re-checking there before
+   spending more time chasing it over Tailscale specifically. Once
+   traffic is confirmed via either path: widen
+   `src/lib/dinstar/syslog-parse.ts`'s taxonomy against the real captured
+   line shapes (it was built defensively, without ever having seen one).
+
+---
+
+## G2 pre-flight (2026-09-04) — server side verified, one real blocker found
+
+Checked everything reachable from this side before the operator touches the
+gateway, so a failed handshake can't be misread.
+
+**Verified healthy:**
+- `algo-openvpn-server`, `algo-openvpn-bridge`, `algo-headscale`,
+  `algo-gateway-syslog-listener` all up.
+- `tun0` exists on the VPS with `10.8.0.1 peer 10.8.0.2`; server log ends
+  in `Initialization Sequence Completed`, listening `0.0.0.0:1194/udp`.
+- **`cipher AES-256-CBC` / `auth SHA256` confirmed present on BOTH sides**
+  (server `openvpn.conf` and the client `.ovpn`) — the fix from `b11cc0c`
+  held. Server also has `tls-version-min 1.0` for the old firmware.
+- `ccd/cust-demo-gw-1` contains `ifconfig-push 10.8.0.10 255.255.255.0`,
+  so the `10.8.0.10` the checklist expects is really wired up.
+- `openvpn-status.log` shows an empty CLIENT_LIST — correct, nothing has
+  ever connected.
+
+**BLOCKER FOUND — `ufw` has no rule for 1194/udp on the VPS.**
+`openvpn-server` runs `network_mode: host`, so there is **no Docker port
+publish and no `DOCKER-USER` bypass** — ufw's default-deny INPUT applies to
+it directly. The gateway's handshake would have been dropped at the
+firewall with **zero server-side log output**, which is the most
+misleading possible failure mode (it looks identical to a cipher
+mismatch). `scripts/setup-firewall.sh` line 96 already has the correct
+rule — the script was simply never re-run after the OpenVPN work landed.
+
+Applying it was blocked by the permission classifier (production,
+outward-facing). **Operator must run, on the VPS:**
+```
+ufw allow 1194/udp comment 'OpenVPN server - Dinstar gateway primary link'
+ufw allow from 10.8.0.0/24 to any port 514 proto udp comment 'Dinstar gateway syslog - OpenVPN tunnel path'
+ufw allow from 10.8.0.0/24 to any port 5514 proto udp comment 'Dinstar gateway syslog - OpenVPN tunnel path'
+```
+Do NOT run `setup-firewall.sh` wholesale instead — it opens with
+`ufw --force reset`, and the live box has diverged from it deliberately
+(see below).
+
+Also still open, and a plausible second cause if the handshake fails with
+the ufw rule in place: **Hostinger's own control-panel firewall** is
+separate from ufw and may need 1194/udp too (already flagged in
+`setup-firewall.sh`'s own comment, never verified).
+
+**Retracted hypothesis:** the missing-syslog-traffic mystery (checklist
+item 6) is *not* firewall-related — rule 15 (`5514/udp from
+100.64.0.0/10`) is present and correct on the live box. That cause is
+still unknown.
+
+**Script/live drift worth knowing** (not changed, live is tighter):
+`setup-firewall.sh` has a blanket `ufw allow in on tailscale0`; the live
+box instead has the much narrower `5060/udp on tailscale0 from
+192.168.11.0/24`, plus three separate AMI rules (`172.17/18/19.0.0/16`)
+where the script has one `172.16.0.0/12`. The live box is hand-maintained
+and ahead of the script here — reconcile deliberately, don't let the
+script overwrite it.
+
+**`SYSLOG_BIND_IP_SECONDARY` deliberately still unset** — confirmed this
+is correct, not an oversight: `gateway-syslog-listener.ts` would try to
+bind `10.8.0.1` before the tunnel exists. It belongs in G2 step 3, after
+the handshake, exactly as the checklist says.
+
+---
+
+## OpenVPN/Headscale/connectivity, part 2 — G1 deployed, CA bootstrapped,
+## demo cert issued, real bugs found+fixed at nearly every step (2026-09-03)
+
+Direct continuation of "part 4"'s OpenVPN/Headscale build below (that
+section covers the build itself, commit `ae7094f`). This section covers
+everything since: the actual G1 deploy, the CA bootstrap, and the first
+client cert — none of which went cleanly on the first try, each catch
+live and fixed, not assumed.
+
+**10 commits, all committed, NONE pushed to GitHub this round** (operator
+held push explicitly): `c2fe808` `c57332d` `194a35d` `760a4fd` `d8a95f0`
+`1954024` `c6aca34` `b77521c` `1a07fcd` `b11cc0c`. The VPS has all of them
+via direct file sync (scp), so VPS/local match each other; GitHub (`ae7094f`)
+is behind both. **Ask the operator fresh next session before pushing** —
+do not assume the hold carried over or was implicitly lifted.
+
+**CLI `git push` is still blocked locally** by the same Windows
+Application Control policy from earlier in the session — every commit
+this session was pushed (when pushed at all) via the operator's own
+GitHub Desktop, or deployed straight to the VPS via `scp` while
+unpushed. `git commit`/local reads work fine via PowerShell; only the
+network (`libcurl-4.dll`) path is blocked.
+
+**G1 deploy — real bugs found and fixed, in the order hit:**
+
+1. **`c2fe808` — Headscale's Dockerfile was fundamentally broken.**
+   `docker compose build headscale` failed outright: the official
+   `headscale/headscale:0.23.0` image is a `ko`-built distroless image
+   with **no shell and no package manager at all** (confirmed live:
+   `/bin/sh`, `apk`, even `ls` all fail with "no such file or
+   directory"). The original design (install `gettext`, bake in an
+   envsubst-at-startup entrypoint script) could never have worked against
+   this base image. Fixed by switching to the pattern this repo already
+   uses for exactly this problem (`render-caddy-env.sh`): substitute
+   `VM_PUBLIC_DOMAIN` on the **host** via new
+   `scripts/render-headscale-config.sh`, bind-mount the resulting static
+   `config.yaml` read-only into the **stock** image — no custom
+   Dockerfile. Also fixed the healthcheck (same shell problem) to a `CMD`
+   array form invoking the `headscale` binary directly (`nodes list` over
+   its own Unix socket).
+2. **`194a35d`** — first real start attempt: headscale refused with
+   `noise.private_key_path` required (a 0.23-schema field the template
+   didn't have). Added both required private-key-path fields, pointed at
+   the persisted `headscale_data` volume.
+3. **`760a4fd` → `d8a95f0`** — second attempt: `no IPv4/IPv6 prefix
+   configured`. First fix, `10.100.0.0/16`, deliberately avoided the real
+   Tailscale CGNAT range already in use on this VPS — but headscale
+   itself then warned that's an **"unsupported configuration"** (it wants
+   a prefix inside `100.64.0.0/10` specifically). Reverted to
+   `100.100.0.0/16`, which IS inside that range and doesn't overlap the
+   actual real-Tailscale peers this deployment has (VPS `100.64.32.x`,
+   dev PC `100.96.38.x`) — headscale's own software warning was the
+   stronger signal here, not general collision-avoidance instinct.
+   **Headscale is now genuinely healthy**, confirmed via
+   `docker exec algo-headscale headscale nodes list` succeeding (empty
+   list, correct — no nodes registered yet).
+4. **Mid-deploy, `web` went down**: the connectivity poller's subpath
+   mount of `openvpn-status.log` (from the still-empty `openvpn_data`
+   volume) doesn't exist until `openvpn-server` has actually run once —
+   `web` failed to (re)start with a real production-down window.
+   Immediately fixed with a placeholder file
+   (`docker run --rm -v algo-pbx_openvpn_data:/etc/openvpn alpine touch
+   ...`) so `web` could come back up right away; `web` confirmed healthy
+   again within a couple minutes, migration confirmed applied by name.
+5. **`c57332d` — interim hard rule (operator decision)**: the OpenVPN CA
+   is passphrase-protected (compliance requirement — the CA is the root
+   of per-customer tenant isolation, not a nicety; `nopass` was
+   explicitly rejected). That means `bridge-watch.sh`'s unattended
+   `easyrsa build-client-full ... nopass` call would hang on easyrsa's
+   own interactive CA-passphrase prompt with no TTY and no route to the
+   passphrase — disabled outright (not "made to somehow reach the
+   passphrase") pending a separate "CA signing flow v2" task (queued, NOT
+   started, needs a plan brought to the operator first — their explicit
+   instruction). Every new client cert is issued manually by an admin
+   until then. Idempotent re-emission of an already-issued cert is
+   untouched (`ovpn_getclient` alone, no CA key access needed).
+
+**CA bootstrap:**
+
+- First attempt: `docker compose run --rm openvpn-server
+  /scripts/init-pki.sh` failed with **`permission denied`** —
+  `init-pki.sh`/`bridge-watch.sh` were committed without the executable
+  bit (created on Windows, which doesn't track it) — `1954024` fixed the
+  tracked git mode (`100644` → `100755`) for both.
+- Second attempt: the operator forgot the passphrase mid-way — checked
+  live, **nothing had actually been created yet** (`ovpn_initpki` never
+  ran), so nothing was lost, just retried clean.
+- Third attempt: **succeeded**, but caught `init-pki.sh`'s
+  `ovpn_genconfig` invocation was substantially wrong (`c6aca34`,
+  confirmed live, not assumed — this is exactly the verification the
+  file's own header said was still needed):
+  - `-c AES-256-CBC -a SHA256` used the **wrong flags** — per the real
+    image's `ovpn_genconfig --help`, `-c` is a boolean
+    "client-to-client" switch, not a cipher flag; there is no plain
+    cipher CLI flag at all. The generated `openvpn.conf` had **neither a
+    `cipher` nor an `auth` directive** — the entire legacy-compatibility
+    point of this feature would have silently not applied. Fixed by
+    appending `cipher`/`auth` directly, same as `tls-version-min`
+    already was.
+  - No `-s SERVER_SUBNET` was passed, so the **default** subnet was used
+    — which is `192.168.255.0/24`, **not** `10.8.0.0/24`. This script's
+    own header used to claim `10.8.0.0/24` was "OpenVPN's own default" —
+    that was never actually verified and was wrong. Every other piece of
+    this feature (firewall rules, the `GatewaySite` plan, Headscale's own
+    config comment) assumes `10.8.0.0/24`, so it's now passed explicitly
+    via `-s 10.8.0.0/24`.
+  - Added `-d -b -D` (disable default-route/DNS pushes — this tunnel
+    exists to reach one embedded gateway, not become its default
+    internet route or reconfigure its DNS) and stripped a stray
+    `route 192.168.254.0/24` push (genconfig emits it regardless of
+    flags, points at nothing real anywhere in this deployment) plus a
+    duplicate default `status` directive.
+  - The CA itself + server cert signed successfully with the real
+    passphrase; only the trailing `gen-crl` step failed once from a
+    mistyped passphrase at that specific prompt — harmless, `crl-verify`
+    isn't even referenced in `openvpn.conf`, so it doesn't block
+    anything; can be regenerated whenever actually needed for a
+    revocation.
+- **`b77521c`, `1a07fcd`** — starting the corrected server still
+  crash-looped twice more, each time on an `openvpn.conf` directive that
+  doesn't exist in the server's **actual installed binary, OpenVPN 2.4.9**
+  (confirmed via `docker logs`/`openvpn --version` — itself old, not just
+  the Dinstar's client): `data-ciphers-fallback` (added in 2.5, removed)
+  and `status-cadence` (added in 2.6, removed — `status-version 2` alone
+  is sufficient and has existed since much earlier).
+- **Server started clean**: `Initialization Sequence Completed`, `tun0`
+  at `10.8.0.1`, listening UDP `1194`, `openvpn-status.log` confirmed
+  being written in the correct status-version-2 format the connectivity
+  poller expects. `openvpn-bridge` confirmed watching correctly too.
+- **Encryption-at-rest proven** per the operator's own requirement:
+  `openssl rsa -in pki/private/ca.key -check -noout` run against the live
+  key **fails** ("bad decrypt", "unable to load Private Key") without a
+  passphrase — exactly the proof asked for.
+
+**Demo client cert (`cust-demo-gw-1`, per-customer CN convention
+`cust-<id>-gw-<n>` applied from this first cert on):**
+
+- `easyrsa build-client-full` refused a second attempt
+  ("Request file already exists") since the key/req from a failed first
+  attempt were still present — switched to the more surgical
+  `easyrsa sign-req client cust-demo-gw-1` (reuses the existing
+  key/request, only re-does the signing step). One more mistyped-passphrase
+  failure at that prompt (bad decrypt, same as the CRL step earlier — the
+  CA key itself was never in question, only that specific entry), then
+  succeeded.
+- `ovpn_getclient cust-demo-gw-1 nopass` — wrong argument (`nopass` isn't
+  valid there, that's `build-client-full`'s argument); corrected to
+  `ovpn_getclient cust-demo-gw-1 combined`.
+- **Second real bug in the same family**: the generated client `.ovpn`
+  was **also** silently missing `cipher`/`auth` — `ovpn_getclient` reads
+  `$OVPN_CIPHER`/`$OVPN_AUTH` from the persisted `ovpn_env.sh`, not from
+  the server's own `openvpn.conf`, and those had never been set (the
+  earlier fix only patched `openvpn.conf` directly, bypassing
+  `ovpn_env.sh` entirely). `b11cc0c` fixes `init-pki.sh` to also patch
+  `ovpn_env.sh` (`OVPN_CIPHER`, `OVPN_AUTH`, and clearing the same stray
+  `OVPN_ROUTES` default) so every **future** client generation — manual
+  or, eventually, automated under v2 — gets this correctly without
+  needing this exact live patch again. Confirmed live: re-generated
+  `.ovpn` now genuinely contains `cipher AES-256-CBC` / `auth SHA256`,
+  no `redirect-gateway` (correctly absent, `OVPN_DEFROUTE=0` was already
+  right).
+- Final file: `/opt/algo-pbx/pbx_configs/openvpn/clients/cust-demo-gw-1.ovpn`
+  on the VPS, `600` permissions, real private key material — not
+  committed to git (gitignored per the existing `pbx_configs/openvpn/`
+  convention), not yet pushed to the real Dinstar gateway.
+
+**Explicitly NOT done, stopped here for the day:**
+- The actual OpenVPN tunnel bring-up test against the real Dinstar
+  gateway (push the `.ovpn`, confirm a real handshake) — next session's
+  first concrete step, see the "claude continue" checklist above.
+- `SYSLOG_BIND_IP_SECONDARY` not set yet (correctly — no tunnel exists
+  yet for it to bind to).
+- The cutover itself, the real inbound/outbound test call, marking
+  Tailscale legacy.
+- "CA signing flow v2" — queued only, per the operator's explicit "bring
+  me a plan before building it."
 
 ---
 

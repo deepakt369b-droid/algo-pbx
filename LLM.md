@@ -236,9 +236,12 @@ Mirrors the 4 phases in the master prompt (`ALGO_PBX_MASTER_DOC.md` §1). Check 
   - [ ] `syslog-parse.ts`'s taxonomy re-validated/widened against real captured gateway output (built defensively without ever seeing one)
 - [ ] **OpenVPN-primary / Headscale-fallback / connectivity feature (2026-09-03 — see Build Log, supersedes the syslog task's Tailscale-only descoping)**
   - [x] `GatewaySite` model + migration, OpenVPN server + bridge (no Docker socket/no PKI in Postgres design), Headscale server + Caddy subdomain, multipart config-push capability with genuine HTML read-back verification, `/admin/connectivity` page + wizard + runbook, 60s connectivity poller + alert extension, syslog listener dual-homing, cutover mechanism. Independent V1 security review found 3 real issues (stale-sentinel cleanup silently no-op'd against a read-only mount; one route missing defense-in-depth filename re-validation; cutover claimed success/set transport even when trunk-reprovisioning verification failed) — all fixed, gates re-run clean. All four gates green: typecheck, 435 tests, lint, build.
-  - [ ] G1 — deploy the infra (openvpn-server/openvpn-bridge/headscale, new migration) — reversible, does not touch the live call path. Awaiting operator go-ahead.
-  - [ ] Manual: Cloudflare A record for `vpn.<domain>` (no existing DNS-upsert mechanism to extend — found, not fabricated) and running `pbx_configs/openvpn/init-pki.sh` once.
-  - [ ] G2 — the live, human-supervised cutover (generate+push cert, confirm tunnel handshake — expect cipher/auth iteration against the gateway's old embedded OpenVPN client as the first likely snag, not a crisis — re-point the trunk, real inbound+outbound test call, confirm syslog over the new path, only then deprecate Tailscale).
+  - [x] G1 — infra deployed and healthy (`web`, `gateway-syslog-listener`, `headscale`, `openvpn-server`, `openvpn-bridge`). Not clean on the first try — 6 real bugs found live and fixed (Headscale's stock image is shell-less, a missing required config field, an IP-prefix collision then an over-correction, wrong `ovpn_genconfig` flags that silently dropped the whole legacy-cipher setup, wrong default subnet, two directives that don't exist in the server's actual OpenVPN 2.4.9 binary) — see `handoff.md`'s "OpenVPN/Headscale/connectivity, part 2" for the full blow-by-blow. 10 commits, all local+VPS (via direct scp sync). **Pushed to GitHub 2026-09-04** (`ae7094f..b11cc0c`) once the operator gave the go-ahead — GitHub/VPS/local now all in sync. CLI `git push` works again; the Windows Application Control block on `libcurl-4.dll` is gone.
+  - [x] CA bootstrapped with a real (operator-chosen, never logged) passphrase — operator explicitly rejected `nopass` (CA is the root of per-customer tenant isolation, a compliance requirement). Encryption-at-rest proven live (`openssl rsa -check` fails without the passphrase). Interim hard rule in effect: `bridge-watch.sh`'s unattended signing is disabled — every new cert issued manually until "CA signing flow v2" (queued, not started, needs a plan brought to the operator first).
+  - [x] First client cert issued (`cust-demo-gw-1`, per-customer CN convention `cust-<id>-gw-<n>` applied from here on) — caught a second, separate bug in the same family: the generated `.ovpn` was also silently missing `cipher`/`auth` (`ovpn_getclient` reads a different env file than the one the server-side fix touched) — found and fixed live, `init-pki.sh` updated so future generations don't need the same manual patch.
+  - [ ] Manual: Cloudflare A record for `vpn.<domain>` (no existing DNS-upsert mechanism to extend — found, not fabricated).
+  - [x] G2 pre-flight (2026-09-04) — server side verified end-to-end from the VPS: all four containers up, `tun0` = `10.8.0.1 peer 10.8.0.2`, `Initialization Sequence Completed`, `cipher AES-256-CBC`/`auth SHA256` confirmed present in BOTH the server config and the client `.ovpn` (the `b11cc0c` fix held), `ccd/cust-demo-gw-1` really does push `10.8.0.10`, status log empty as expected. **One real blocker found: `ufw` has no 1194/udp rule.** `openvpn-server` is `network_mode: host`, so there is no Docker publish and no `DOCKER-USER` bypass — the handshake would have been dropped at the firewall with zero server-side logging, indistinguishable from a cipher mismatch. `scripts/setup-firewall.sh:96` already has the rule; the script was never re-run after the OpenVPN work. Operator must apply it (3 commands, in `handoff.md`'s "G2 pre-flight"); do NOT re-run the script wholesale — it opens with `ufw --force reset` and the live box has deliberately diverged (tighter SIP + AMI scoping). Also retracted: the missing-syslog mystery is NOT firewall-related, the `5514/udp from 100.64.0.0/10` rule is present and correct.
+  - [ ] G2 — the tunnel bring-up test is the next concrete step: push `cust-demo-gw-1.ovpn` to the real gateway, confirm a real handshake (expect cipher/auth iteration against the gateway's old embedded OpenVPN client as the first likely snag, not a crisis — its own "Download Log" button is the first diagnostic). Then: run the cutover, real inbound+outbound test call, `SYSLOG_BIND_IP_SECONDARY` + confirm syslog over the new path, only then deprecate Tailscale.
   - [ ] Unreviewed VPS-side `git stash` from the syslog deploy (~40 commits of old uncommitted local drift, backed up two ways, never dropped) — flag for review before it's ever dropped.
 
 ## 5. Build Log
@@ -4004,3 +4007,63 @@ No code committed to git this session (same standing instruction).
   syslog task's live diagnosis. Full detail in `handoff.md`'s "OpenVPN/
   Headscale/connectivity" session; plan at
   `~/.claude/plans/currently-we-need-a-nifty-lightning.md`.
+- 2026-09-03 — **OpenVPN/Headscale G1 deployed + CA bootstrapped (part 2).**
+  Committed the merged feature (`ae7094f`) and pushed G1 to the VPS; not
+  clean on the first live try — 6 real bugs found and fixed only by
+  actually running the containers, none of them caught by the gates
+  (typecheck/tests/lint/build can't see a shell-less base image, a wrong
+  CLI flag, or an OpenVPN directive that doesn't exist in the installed
+  binary version): (1) `headscale/headscale:0.23.0` is a `ko`-built
+  distroless image with no shell at all — the custom `Dockerfile.headscale`
+  (`apk add gettext`) couldn't work, deleted it and switched to a host-side
+  `render-headscale-config.sh` + static bind-mount, mirroring
+  `render-caddy-env.sh`'s existing pattern; (2) Headscale wouldn't start —
+  missing required `noise.private_key_path`, added alongside
+  `private_key_path`; (3) IP-prefix churn — first tried `100.100.0.0/16`
+  (correct), I second-guessed it as a Tailscale-range collision and
+  "corrected" to `10.100.0.0/16`, Headscale itself rejected that as
+  unsupported, reverted to `100.100.0.0/16` (its own preference is the
+  stronger signal than generic collision instinct — doesn't overlap the
+  real Tailscale peers anyway); (4) `init-pki.sh`/`bridge-watch.sh`
+  committed without the executable bit (Windows doesn't track it) — fixed
+  via `git update-index --chmod=+x`; (5) **the big one** — `ovpn_genconfig
+  -c AES-256-CBC -a SHA256` was flat wrong: `-c` is actually a boolean
+  client-to-client flag, not a cipher flag, so the generated
+  `openvpn.conf` had neither `cipher` nor `auth` at all, silently defeating
+  the entire legacy-client-compatibility point of this feature; also no
+  `-s` was passed so the subnet was kylemanna's default
+  (`192.168.255.0/24`) instead of the `10.8.0.0/24` every other piece of
+  this feature assumes. Fixed by passing `-s 10.8.0.0/24 -d -b -D` and
+  appending `cipher`/`auth`/`tls-version-min` directly to the config
+  instead of trusting genconfig flags a second time; (6) two directives
+  that don't exist on the server's actual installed OpenVPN 2.4.9 binary
+  crash-looped the container in turn — `data-ciphers-fallback` (2.5+) and
+  `status-cadence` (2.6+) — both removed, `status`/`status-version 2`
+  alone is sufficient. Server then came up clean (`tun0` at `10.8.0.1`,
+  UDP 1194 listening). **CA bootstrap**: operator explicitly rejected
+  `nopass` — the CA is the root of per-customer tenant isolation, a
+  compliance requirement, not just a nicety — so the CA key is
+  passphrase-protected, typed interactively by the operator, never
+  written to any file/env/log by me. Encryption-at-rest proven live
+  (`openssl rsa -in pki/private/ca.key -check -noout` fails without the
+  passphrase). **Interim hard rule** added to `bridge-watch.sh`:
+  unattended cert issuance is disabled outright (not worked around) —
+  every new cert is issued by an admin typing the CA passphrase manually
+  — until a separately-planned "CA signing flow v2" task (not started,
+  must be brought to the operator for review before any building begins).
+  First cert issued (`cust-demo-gw-1`, establishing the `cust-<id>-gw-<n>`
+  per-customer CN convention) surfaced a 7th, related bug: the generated
+  `.ovpn` was also silently missing `cipher`/`auth` — `ovpn_getclient`
+  reads `ovpn_env.sh`, a different file than the one the server-side fix
+  touched. Patched `ovpn_env.sh` directly and folded the fix into
+  `init-pki.sh` so future deploys don't need the same manual patch;
+  confirmed via grep the generated `.ovpn` now carries
+  `cipher AES-256-CBC`/`auth SHA256` with no `redirect-gateway`. All
+  services confirmed healthy on the VPS (`web`, `gateway-syslog-listener`,
+  `headscale`, `openvpn-server`, `openvpn-bridge`). 10 local commits
+  (`c2fe808`..`b11cc0c`), deployed to the VPS directly; **not yet pushed
+  to GitHub** (CLI `git push` intermittently blocked by a Windows
+  Application Control policy on `libcurl-4.dll` all session — ask fresh
+  next session). Next: G2 — push `cust-demo-gw-1.ovpn` to the real
+  gateway and confirm a real tunnel handshake. Full blow-by-blow in
+  `handoff.md`'s "OpenVPN/Headscale/connectivity, part 2" section.
