@@ -151,16 +151,31 @@ ALTER TABLE "AppSetting" ADD CONSTRAINT "AppSetting_tenantId_fkey" FOREIGN KEY (
 
 -- ---------------------------------------------------------------------
 -- Drop old single-column unique constraints, per plan §1's table.
+--
+-- REHEARSAL FINDING (2026-09-04, staging DB restored from a real prod
+-- snapshot): `ALTER TABLE ... DROP CONSTRAINT` failed for every one of
+-- these with "constraint does not exist" — confirmed via
+-- `pg_constraint`/`pg_indexes` that Prisma's `@unique` on these columns
+-- was materialized as a plain UNIQUE INDEX, never a table-level UNIQUE
+-- CONSTRAINT (zero rows in pg_constraint with contype='u' for Extension,
+-- despite "Extension_number_key" existing in pg_indexes). Same naming
+-- convention already visible in this repo's own
+-- 20260903190000_add_gateway_site migration, which correctly used
+-- `CREATE UNIQUE INDEX`, never `ADD CONSTRAINT UNIQUE`. Fixed to
+-- `DROP INDEX`, which the transaction's own atomicity caught safely: the
+-- whole step 3 rolled back on the first failure, staging DB was left
+-- exactly as step 2 (backfill) left it, zero partial damage. This is
+-- rehearsal doing its job, not a design flaw.
 -- ---------------------------------------------------------------------
-ALTER TABLE "Extension" DROP CONSTRAINT "Extension_number_key";
-ALTER TABLE "Queue" DROP CONSTRAINT "Queue_name_key";
-ALTER TABLE "DoNotCallEntry" DROP CONSTRAINT "DoNotCallEntry_numberE164_key";
-ALTER TABLE "WaInstance" DROP CONSTRAINT "WaInstance_label_key";
-ALTER TABLE "WaInstance" DROP CONSTRAINT "WaInstance_simPort_key";
-ALTER TABLE "Contact" DROP CONSTRAINT "Contact_numberE164_key";
-ALTER TABLE "Room" DROP CONSTRAINT "Room_name_key";
-ALTER TABLE "Activity" DROP CONSTRAINT "Activity_type_refId_key";
-ALTER TABLE "AppSetting" DROP CONSTRAINT "AppSetting_key_key";
+DROP INDEX "Extension_number_key";
+DROP INDEX "Queue_name_key";
+DROP INDEX "DoNotCallEntry_numberE164_key";
+DROP INDEX "WaInstance_label_key";
+DROP INDEX "WaInstance_simPort_key";
+DROP INDEX "Contact_numberE164_key";
+DROP INDEX "Room_name_key";
+DROP INDEX "Activity_type_refId_key";
+DROP INDEX "AppSetting_key_key";
 -- "GatewaySite_name_key" is NOT dropped — GatewaySite.name stays globally
 -- unique (it's the OpenVPN cert CN / ccd filename, plan §1/§4).
 -- "User_email_key" and "User_phoneE164_key" are NOT dropped — deliberate,
