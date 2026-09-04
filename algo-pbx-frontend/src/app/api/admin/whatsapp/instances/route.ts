@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { createSession, registerSessionWebhook, sessionNameFor, startSession } from "@/lib/messaging/openwa-client";
 import { getSetting } from "@/lib/settings/service";
@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const instances = await db.waInstance.findMany({
     orderBy: { simPort: "asc" },
@@ -46,17 +47,24 @@ function errorMessage(err: unknown): string {
 export async function POST(request: NextRequest) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const existingOnPort = await db.waInstance.findUnique({ where: { simPort: parsed.data.simPort } });
+  // findFirst, not findUnique — simPort alone is no longer a unique key by
+  // itself (it's `@@unique([tenantId, simPort])` now, plan §1); within this
+  // tenant's own scoped client it's effectively unique.
+  const existingOnPort = await db.waInstance.findFirst({ where: { simPort: parsed.data.simPort } });
   if (existingOnPort) {
     return NextResponse.json({ error: `SIM port ${parsed.data.simPort} already has an instance.` }, { status: 409 });
   }
 
+  // No `tenantId` in either literal below — force-injected at runtime by
+  // the TenantClient extension (see src/lib/crm/activity.ts's comment on
+  // the same pattern).
   let instance = await db.waInstance.create({
     data: {
       label: parsed.data.label,
@@ -67,7 +75,7 @@ export async function POST(request: NextRequest) {
       // to connect at all.
       status: parsed.data.provider === "NONE" ? "DISCONNECTED" : "PAIRING",
       pairedByAdminId: guard.session.user.id,
-    },
+    } as unknown as Prisma.WaInstanceUncheckedCreateInput,
   });
 
   await db.auditLog.create({
@@ -76,7 +84,7 @@ export async function POST(request: NextRequest) {
       actorId: guard.session.user.id,
       targetId: instance.id,
       metadata: { label: instance.label, simPort: instance.simPort, provider: instance.provider },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   // OpenWA needs a real session created (and started) before the admin UI

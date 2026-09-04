@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { getAmiClient } from "@/lib/ami-client";
 import { requireApiKey } from "@/lib/api-key-auth";
 import { checkSimpleRateLimit } from "@/lib/rate-limit";
@@ -23,6 +22,7 @@ const ClickToCallSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireApiKey(request);
   if ("response" in guard) return guard.response;
+  const { db } = guard;
   if (!checkSimpleRateLimit(`crm:${guard.apiKey.id}`, 30, 60_000)) {
     return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
@@ -38,7 +38,10 @@ export async function POST(request: NextRequest) {
   // originate into. Falls back to the most restrictive tier
   // (from-agent-local) if the extension isn't found, matching
   // Extension.dialPermission's own DB default — fail closed, not open.
-  const record = await db.extension.findUnique({ where: { number: extension }, select: { dialPermission: true } });
+  // findFirst, not findUnique — `number` alone is no longer a unique key by
+  // itself (it's `@@unique([tenantId, number])` now, plan §1); within this
+  // API key's own tenant-scoped client it's effectively unique.
+  const record = await db.extension.findFirst({ where: { number: extension }, select: { dialPermission: true } });
   const context = `from-agent-${(record?.dialPermission ?? "LOCAL").toLowerCase()}`;
 
   const ami = getAmiClient();

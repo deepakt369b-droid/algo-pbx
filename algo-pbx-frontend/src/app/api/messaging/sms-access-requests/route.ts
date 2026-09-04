@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessConversation, type Role } from "@/lib/messaging/conversation-access";
 
@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = RequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -50,8 +51,11 @@ export async function POST(request: NextRequest) {
   });
   if (existingPending) return NextResponse.json({ request: existingPending });
 
+  // No `tenantId` in either literal below — force-injected at runtime by
+  // the TenantClient extension (see src/lib/crm/activity.ts's comment on
+  // the same pattern).
   const created = await db.smsAccessRequest.create({
-    data: { messageId: message.id, requestedById: userId, status: "PENDING" },
+    data: { messageId: message.id, requestedById: userId, status: "PENDING" } as unknown as Prisma.SmsAccessRequestUncheckedCreateInput,
   });
 
   await db.auditLog.create({
@@ -60,7 +64,7 @@ export async function POST(request: NextRequest) {
       actorId: userId,
       targetId: message.id,
       metadata: { conversationId: message.conversationId },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ request: created }, { status: 201 });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { canSendOnConversation, type Role } from "@/lib/messaging/conversation-access";
 import { OpenWaProvider } from "@/lib/messaging/openwa-provider";
@@ -27,6 +27,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -60,6 +61,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     mimeType: parsed.data.mimeType,
   });
 
+  // No `tenantId` — force-injected at runtime by the TenantClient
+  // extension (see src/lib/crm/activity.ts's comment on the same pattern).
   const message = await db.chatMessage.create({
     data: {
       conversationId: conversation.id,
@@ -74,7 +77,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       waMessageId: result.providerMessageId,
       deliveryStatus: result.status,
       sensitive: false,
-    },
+    } as unknown as Prisma.ChatMessageUncheckedCreateInput,
   });
   await db.chatMessage
     .update({ where: { id: message.id }, data: { mediaUrl: `/api/messaging/media/${message.id}` } })
@@ -95,18 +98,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       .catch(() => undefined);
   }
 
-  await recordActivity({
-    type: "WHATSAPP",
-    summary: "Sent: 🎤 Voice message",
-    refId: message.id,
-    occurredAt: message.createdAt,
-    contactId: conversation.contactId,
-    actorId: userId,
-  });
+  await recordActivity(
+    {
+      type: "WHATSAPP",
+      summary: "Sent: 🎤 Voice message",
+      refId: message.id,
+      occurredAt: message.createdAt,
+      contactId: conversation.contactId,
+      actorId: userId,
+    },
+    db,
+  );
 
   if (result.status === "failed") {
     return NextResponse.json({ error: result.error ?? "Send failed", message }, { status: 502 });
   }
-  void emitEvent("message.sent", { conversationId: conversation.id, channel: "WHATSAPP" });
+  void emitEvent(db, "message.sent", { conversationId: conversation.id, channel: "WHATSAPP" });
   return NextResponse.json({ ok: true, messageId: message.id });
 }

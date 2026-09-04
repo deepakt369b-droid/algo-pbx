@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const q = new URL(request.url).searchParams.get("q")?.trim() || "";
   const companies = await db.company.findMany({
@@ -44,10 +45,13 @@ const CreateSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
   }
+  // No `tenantId` — force-injected at runtime by the TenantClient
+  // extension (see src/lib/crm/activity.ts's comment on the same pattern).
   const company = await db.company.create({
     data: {
       name: parsed.data.name,
@@ -55,7 +59,7 @@ export async function POST(request: NextRequest) {
       phone: parsed.data.phone ?? null,
       address: parsed.data.address ?? null,
       ownerId: guard.session.user.id,
-    },
+    } as unknown as Prisma.CompanyUncheckedCreateInput,
   });
   return NextResponse.json({ company }, { status: 201 });
 }

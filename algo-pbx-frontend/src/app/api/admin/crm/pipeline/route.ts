@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
-  return NextResponse.json(await loadPipeline(null));
+  return NextResponse.json(await loadPipeline(guard.db, null));
 }
 
 export async function POST(request: NextRequest) {
@@ -21,6 +21,6 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
   }
-  const deal = await createDeal(parsed.data, guard.session.user.id);
+  const deal = await createDeal(guard.db, parsed.data, guard.session.user.id);
   return NextResponse.json({ deal: { ...deal, value: Number(deal.value) } }, { status: 201 });
 }

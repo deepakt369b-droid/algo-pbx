@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { loadTasks, type TaskFilter } from "@/lib/crm/tasks-data";
 
@@ -14,7 +13,7 @@ export async function GET(request: NextRequest) {
 
   const sp = new URL(request.url).searchParams;
   const filter = (sp.get("filter") ?? "open") as TaskFilter;
-  const tasks = await loadTasks({
+  const tasks = await loadTasks(guard.db, {
     filter: FILTERS.includes(filter) ? filter : "open",
     assigneeScope: null,
     contactId: sp.get("contactId"),
@@ -28,6 +27,7 @@ const PatchSchema = z.object({ taskId: z.string(), completed: z.boolean() });
 export async function PATCH(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });

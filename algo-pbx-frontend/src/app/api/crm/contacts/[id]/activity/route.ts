@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireApiKey } from "@/lib/api-key-auth";
 import { checkSimpleRateLimit } from "@/lib/rate-limit";
 import { normalizeToE164 } from "@/lib/phone-normalize";
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireApiKey(request);
   if ("response" in guard) return guard.response;
+  const { db } = guard;
   if (!checkSimpleRateLimit(`crm:${guard.apiKey.id}`, 120, 60_000)) {
     return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }

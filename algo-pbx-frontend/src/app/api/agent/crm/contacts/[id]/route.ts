@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
 
@@ -17,6 +16,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const contact = await db.contact.findUnique({
     where: { id: params.id },
@@ -47,8 +47,11 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   // real-world event, populated live by recordActivity and backfilled by
   // POST /api/admin/maintenance/backfill-activity) instead of merging CDRs
   // and ChatMessages on the fly. Ordered occurredAt desc, capped at 100.
+  // findFirst, not findUnique — numberE164 alone is no longer a unique key
+  // by itself (it's `@@unique([tenantId, numberE164])` now, plan §1);
+  // within this tenant's own scoped client it's effectively unique.
   const [dncEntry, activities] = await Promise.all([
-    db.doNotCallEntry.findUnique({ where: { numberE164: contact.numberE164 } }),
+    db.doNotCallEntry.findFirst({ where: { numberE164: contact.numberE164 } }),
     db.activity.findMany({
       where: { contactId: contact.id },
       orderBy: { occurredAt: "desc" },
@@ -94,6 +97,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

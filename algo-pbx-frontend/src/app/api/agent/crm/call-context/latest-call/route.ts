@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +17,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const extension = guard.session.user.extension;
   if (!extension) return NextResponse.json({ call: null });

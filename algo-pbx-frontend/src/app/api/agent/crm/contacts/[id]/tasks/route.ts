@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
 import { recordActivity } from "@/lib/crm/activity";
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -38,23 +39,28 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     );
   }
 
+  // No `tenantId` — force-injected at runtime by the TenantClient
+  // extension (see src/lib/crm/activity.ts's comment on the same pattern).
   const task = await db.contactTask.create({
     data: {
       contactId: contact.id,
       assigneeId: parsed.data.assigneeId ?? guard.session.user.id,
       title: parsed.data.title,
       dueAt: parsed.data.dueAt,
-    },
+    } as unknown as Prisma.ContactTaskUncheckedCreateInput,
     include: { assignee: { select: { id: true, name: true } } },
   });
 
-  await recordActivity({
-    type: "TASK",
-    summary: `Task: ${parsed.data.title.slice(0, 140)}`,
-    refId: task.id,
-    contactId: contact.id,
-    actorId: guard.session.user.id,
-  });
+  await recordActivity(
+    {
+      type: "TASK",
+      summary: `Task: ${parsed.data.title.slice(0, 140)}`,
+      refId: task.id,
+      contactId: contact.id,
+      actorId: guard.session.user.id,
+    },
+    db,
+  );
 
   return NextResponse.json({ task }, { status: 201 });
 }
@@ -72,6 +78,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

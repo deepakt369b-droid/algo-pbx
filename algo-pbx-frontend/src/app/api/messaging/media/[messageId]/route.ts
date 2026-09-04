@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessConversation, type Role } from "@/lib/messaging/conversation-access";
 import * as openwa from "@/lib/messaging/openwa-client";
@@ -18,6 +17,7 @@ export async function GET(_request: NextRequest, { params }: { params: { message
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const message = await db.chatMessage.findUnique({
     where: { id: params.messageId },

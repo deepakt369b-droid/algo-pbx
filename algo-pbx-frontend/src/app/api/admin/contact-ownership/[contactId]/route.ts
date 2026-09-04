@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +16,7 @@ const PatchSchema = z.object({ ownerId: z.string().nullable() });
 export async function PATCH(request: NextRequest, { params }: { params: { contactId: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { session, db } = guard;
 
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -31,13 +32,16 @@ export async function PATCH(request: NextRequest, { params }: { params: { contac
 
   const contact = await db.contact.update({ where: { id: params.contactId }, data: { ownerId: parsed.data.ownerId } });
 
+  // No `tenantId` here — the TenantClient extension force-injects it at
+  // runtime (see src/lib/crm/activity.ts's comment on the same pattern);
+  // the double-cast tells the compiler to trust that runtime guarantee.
   await db.auditLog.create({
     data: {
       action: "contact.owner_reassign",
       actorId: guard.session.user.id,
       targetId: contact.id,
       metadata: { fromOwnerId: existing.ownerId, toOwnerId: parsed.data.ownerId },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ contact });

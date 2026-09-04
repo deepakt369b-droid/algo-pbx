@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
 import { recordActivity } from "@/lib/crm/activity";
@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -44,6 +45,8 @@ export async function POST(request: NextRequest) {
   }
 
   const disposition = await db.$transaction(async (tx) => {
+    // No `tenantId` — force-injected at runtime by the TenantClient
+    // extension (see src/lib/crm/activity.ts's comment on the same pattern).
     const created = await tx.callDisposition.create({
       data: {
         contactId: contact.id,
@@ -51,36 +54,46 @@ export async function POST(request: NextRequest) {
         outcome: parsed.data.outcome,
         note: parsed.data.note,
         agentId: guard.session.user.id,
-      },
+      } as unknown as Prisma.CallDispositionUncheckedCreateInput,
       include: { agent: { select: { id: true, name: true } } },
     });
 
     if (parsed.data.outcome === "DNC") {
-      // Same shape as the DNC bulk-import path (source distinguishes how
-      // an entry got there) — upsert since a number can already be on the
-      // list; recording the disposition must not fail because of that.
-      await tx.doNotCallEntry.upsert({
-        where: { numberE164: contact.numberE164 },
-        create: {
-          numberE164: contact.numberE164,
-          reason: parsed.data.note ?? "Marked DNC from a call disposition",
-          source: "manual",
-          addedById: guard.session.user.id,
-        },
-        update: {},
-      });
+      // Was a plain upsert keyed on numberE164 alone — no longer possible,
+      // that field is tenant-composite now (`@@unique([tenantId,
+      // numberE164])`, plan §1) and TenantClient deliberately doesn't
+      // expose the raw tenantId this function would need to build that
+      // compound-key literal itself. findFirst (tenant-filtered
+      // automatically) + create/update instead — same pattern as
+      // src/lib/crm/activity.ts's recordActivity(). A number can already be
+      // on the list; recording the disposition must not fail because of
+      // that.
+      const existingEntry = await tx.doNotCallEntry.findFirst({ where: { numberE164: contact.numberE164 } });
+      if (!existingEntry) {
+        await tx.doNotCallEntry.create({
+          data: {
+            numberE164: contact.numberE164,
+            reason: parsed.data.note ?? "Marked DNC from a call disposition",
+            source: "manual",
+            addedById: guard.session.user.id,
+          } as unknown as Prisma.DoNotCallEntryUncheckedCreateInput,
+        });
+      }
     }
 
     return created;
   });
 
-  await recordActivity({
-    type: "NOTE",
-    summary: `Disposition: ${parsed.data.outcome}${parsed.data.note ? ` — ${parsed.data.note.slice(0, 120)}` : ""}`,
-    refId: disposition.id,
-    contactId: contact.id,
-    actorId: guard.session.user.id,
-  });
+  await recordActivity(
+    {
+      type: "NOTE",
+      summary: `Disposition: ${parsed.data.outcome}${parsed.data.note ? ` — ${parsed.data.note.slice(0, 120)}` : ""}`,
+      refId: disposition.id,
+      contactId: contact.id,
+      actorId: guard.session.user.id,
+    },
+    db,
+  );
 
   return NextResponse.json({ disposition }, { status: 201 });
 }

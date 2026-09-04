@@ -13,7 +13,7 @@ export async function GET() {
   if ("response" in guard) return guard.response;
   const { role, id } = guard.session.user;
   const scope = role === "AGENT" ? id : null;
-  return NextResponse.json(await loadPipeline(scope));
+  return NextResponse.json(await loadPipeline(guard.db, scope));
 }
 
 export async function POST(request: NextRequest) {
@@ -29,6 +29,6 @@ export async function POST(request: NextRequest) {
     guard.session.user.role === "AGENT"
       ? { ...parsed.data, ownerId: guard.session.user.id }
       : parsed.data;
-  const deal = await createDeal(data, guard.session.user.id);
+  const deal = await createDeal(guard.db, data, guard.session.user.id);
   return NextResponse.json({ deal: { ...deal, value: Number(deal.value) } }, { status: 201 });
 }

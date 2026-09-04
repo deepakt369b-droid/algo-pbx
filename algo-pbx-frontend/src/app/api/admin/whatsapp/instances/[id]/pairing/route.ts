@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getSession, getQr } from "@/lib/messaging/openwa-client";
 import { toWaInstanceStatus } from "@/lib/messaging/openwa-types";
@@ -20,6 +19,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const instance = await db.waInstance.findUnique({ where: { id: params.id } });
   if (!instance) return NextResponse.json({ error: "Not found" }, { status: 404 });

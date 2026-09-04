@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { CountryCode } from "libphonenumber-js";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
@@ -37,6 +36,7 @@ function humanizeZodError(error: z.ZodError): string {
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = UpdateContactSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -92,6 +92,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const conversationCount = await db.conversation.count({ where: { contactId: params.id } });
   if (conversationCount > 0) {

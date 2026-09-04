@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { CountryCode } from "libphonenumber-js";
 import { getCountries } from "libphonenumber-js";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireStaffSession } from "@/lib/auth-guard";
 import {
   buildContactImportPreview,
@@ -44,6 +44,7 @@ function humanizeZodError(error: z.ZodError): string {
 export async function POST(req: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
@@ -130,12 +131,16 @@ export async function POST(req: NextRequest) {
   let imported = 0;
   for (let i = 0; i < preview.valid.length; i += INSERT_BATCH_SIZE) {
     const chunk = preview.valid.slice(i, i + INSERT_BATCH_SIZE);
+    // No `tenantId` in each row — force-injected per-row at runtime by the
+    // TenantClient extension's createMany handling (see
+    // src/lib/tenancy/scope-rules.ts's injectCreateData); the double-cast
+    // tells the compiler to trust that runtime guarantee.
     const result = await db.contact.createMany({
       data: chunk.map((v) => ({
         numberE164: v.e164,
         displayName: v.name,
         ownerId: ownerId || undefined,
-      })),
+      })) as unknown as Prisma.ContactCreateManyInput[],
       skipDuplicates: true,
     });
     imported += result.count;
@@ -153,7 +158,7 @@ export async function POST(req: NextRequest) {
         defaultCountry,
         ownerId: ownerId || null,
       },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({

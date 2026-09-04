@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { getAmiClient } from "@/lib/ami-client";
 import { redactMessagesForSession } from "@/lib/messaging/conversation-access";
@@ -17,6 +16,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const room = await db.room.findUnique({ where: { id: params.id } });
   if (!room) return NextResponse.json({ error: "Not found" }, { status: 404 });

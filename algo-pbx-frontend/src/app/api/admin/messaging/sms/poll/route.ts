@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { unsafeGlobalDb } from "@/lib/db";
+import { tenantDb } from "@/lib/db-tenant";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getProvider } from "@/lib/messaging/registry";
 import { ingestInboundEvent } from "@/lib/messaging/ingest";
@@ -38,17 +39,34 @@ export async function POST(request: NextRequest) {
   try {
     const events = await provider.pollInbound("all");
     let ingested = 0;
+    let skipped = 0;
     for (const event of events) {
       // instanceRef here is the 1-indexed SIM port ("1".."4") reported by
       // DinstarSmsProvider.parseInbound — resolve to the WaInstance row
-      // paired on that port, if one exists.
+      // paired on that port, if one exists. This lookup is deliberately
+      // unscoped (unsafeGlobalDb): the single physical Dinstar gateway is
+      // shared infrastructure with no tenant context of its own — the
+      // WaInstance row paired to a given SIM port is the ONLY source of
+      // which tenant this SMS belongs to, so it must be resolved before a
+      // tenant-scoped client can even be built. This mirrors the openwa
+      // webhook's tenant-resolution design (see that route) exactly.
+      // findFirst, not findUnique — simPort alone is no longer a unique key
+      // by itself (it's `@@unique([tenantId, simPort])` now, plan §1), and
+      // there is by definition no tenantId to scope by yet at this point.
       const waInstance = event.instanceRef
-        ? await db.waInstance.findUnique({ where: { simPort: Number(event.instanceRef) } })
+        ? await unsafeGlobalDb.waInstance.findFirst({ where: { simPort: Number(event.instanceRef) } })
         : null;
-      await ingestInboundEvent(event, "SMS", waInstance?.id ?? null);
+      if (!waInstance) {
+        // No paired WaInstance for this SIM port means no tenant can be
+        // attributed — skip rather than guess (e.g. the admin session's own
+        // tenant, which may not be the port's actual owner).
+        skipped += 1;
+        continue;
+      }
+      await ingestInboundEvent(tenantDb(waInstance.tenantId), event, "SMS", waInstance.id);
       ingested += 1;
     }
-    return NextResponse.json({ ok: true, ingested });
+    return NextResponse.json({ ok: true, ingested, skipped });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Poll failed" }, { status: 502 });
   }

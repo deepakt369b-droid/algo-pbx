@@ -20,7 +20,7 @@ export async function GET(_request: NextRequest, { params }: { params: { contact
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
 
-  const url = await resolveContactAvatarUrl(params.contactId).catch(() => null);
+  const url = await resolveContactAvatarUrl(guard.db, params.contactId).catch(() => null);
   const blank = (maxAge: number) =>
     new NextResponse(new Uint8Array(BLANK_PNG), {
       status: 200,

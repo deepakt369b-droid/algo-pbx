@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
 import { recordActivity, truncateBody } from "@/lib/crm/activity";
@@ -19,6 +19,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -35,18 +36,23 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     );
   }
 
+  // No `tenantId` — force-injected at runtime by the TenantClient
+  // extension (see src/lib/crm/activity.ts's comment on the same pattern).
   const note = await db.contactNote.create({
-    data: { contactId: contact.id, authorId: guard.session.user.id, body: parsed.data.body },
+    data: { contactId: contact.id, authorId: guard.session.user.id, body: parsed.data.body } as unknown as Prisma.ContactNoteUncheckedCreateInput,
     include: { author: { select: { id: true, name: true } } },
   });
 
-  await recordActivity({
-    type: "NOTE",
-    summary: `Note: ${truncateBody(parsed.data.body)}`,
-    refId: note.id,
-    contactId: contact.id,
-    actorId: guard.session.user.id,
-  });
+  await recordActivity(
+    {
+      type: "NOTE",
+      summary: `Note: ${truncateBody(parsed.data.body)}`,
+      refId: note.id,
+      contactId: contact.id,
+      actorId: guard.session.user.id,
+    },
+    db,
+  );
 
   return NextResponse.json({ note }, { status: 201 });
 }

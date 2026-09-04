@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,7 @@ function humanizeZodError(error: z.ZodError): string {
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = MergeSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -88,13 +89,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       },
     });
 
+    // No `tenantId` — force-injected at runtime by the TenantClient
+    // extension (see src/lib/crm/activity.ts's comment on the same pattern).
     await tx.auditLog.create({
       data: {
         action: "contact.merge",
         actorId: guard.session.user.id,
         targetId: winnerId,
         metadata: { winnerId, loserId, winnerNumber: winner.numberE164, loserNumber: loser.numberE164, droppedConversations },
-      },
+      } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
   });
 

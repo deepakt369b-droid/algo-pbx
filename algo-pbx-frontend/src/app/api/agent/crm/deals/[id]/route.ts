@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteDeal } from "@/lib/crm/deal-ownership";
 import { patchDeal, DealPatchSchema } from "@/lib/crm/deals";
@@ -13,6 +12,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = DealPatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -35,6 +35,6 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ error: "Agents cannot reassign deal ownership." }, { status: 403 });
   }
 
-  const deal = await patchDeal(params.id, parsed.data, userId);
+  const deal = await patchDeal(db, params.id, parsed.data, userId);
   return NextResponse.json({ deal: deal ? { ...deal, value: Number(deal.value) } : null });
 }

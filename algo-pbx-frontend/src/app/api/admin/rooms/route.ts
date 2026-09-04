@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +18,7 @@ const CreateRoomSchema = z.object({
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const rooms = await db.room.findMany({ orderBy: { name: "asc" } });
   return NextResponse.json({ rooms });
@@ -27,6 +27,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = CreateRoomSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -39,8 +40,10 @@ export async function POST(request: NextRequest) {
   const name = parsed.data.name.replace(/\s+/g, " ");
 
   try {
+    // No `tenantId` — force-injected at runtime by the TenantClient
+    // extension (see src/lib/crm/activity.ts's comment on the same pattern).
     const room = await db.room.create({
-      data: { name, memberUserIds: parsed.data.memberUserIds, createdById: guard.session.user.id },
+      data: { name, memberUserIds: parsed.data.memberUserIds, createdById: guard.session.user.id } as unknown as Prisma.RoomUncheckedCreateInput,
     });
     return NextResponse.json({ room }, { status: 201 });
   } catch (err) {

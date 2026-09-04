@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q")?.trim() || "";
@@ -71,6 +72,7 @@ const CreateSchema = z.object({
 export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -82,11 +84,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not a valid phone number" }, { status: 400 });
   }
 
-  const existing = await db.contact.findUnique({ where: { numberE164 } });
+  // findFirst, not findUnique — numberE164 alone is no longer a unique key
+  // by itself (it's `@@unique([tenantId, numberE164])` now, plan §1);
+  // within this tenant's own scoped client it's effectively unique.
+  const existing = await db.contact.findFirst({ where: { numberE164 } });
   if (existing) {
     return NextResponse.json({ error: "A contact with this number already exists.", contact: existing }, { status: 409 });
   }
 
+  // No `tenantId` — force-injected at runtime by the TenantClient
+  // extension (see src/lib/crm/activity.ts's comment on the same pattern).
   const contact = await db.contact.create({
     data: {
       numberE164,
@@ -95,7 +102,7 @@ export async function POST(request: NextRequest) {
       company: parsed.data.company,
       tags: parsed.data.tags ?? [],
       ownerId: guard.session.user.id,
-    },
+    } as unknown as Prisma.ContactUncheckedCreateInput,
   });
 
   return NextResponse.json({ contact }, { status: 201 });

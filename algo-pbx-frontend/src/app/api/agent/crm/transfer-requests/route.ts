@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -44,12 +45,15 @@ export async function POST(request: NextRequest) {
   });
   if (existingPending) return NextResponse.json({ request: existingPending });
 
+  // No `tenantId` in either literal below — force-injected at runtime by
+  // the TenantClient extension (see src/lib/crm/activity.ts's comment on
+  // the same pattern).
   const created = await db.contactTransferRequest.create({
     data: {
       contactId: contact.id,
       requestedById: userId,
       currentOwnerId: contact.ownerId,
-    },
+    } as unknown as Prisma.ContactTransferRequestUncheckedCreateInput,
     include: {
       requestedBy: { select: { id: true, name: true } },
       currentOwner: { select: { id: true, name: true } },
@@ -63,7 +67,7 @@ export async function POST(request: NextRequest) {
       actorId: userId,
       targetId: contact.id,
       metadata: { requestId: created.id, currentOwnerId: contact.ownerId },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ request: created }, { status: 201 });
@@ -78,6 +82,7 @@ export async function GET(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const { searchParams } = new URL(request.url);
   const scope = searchParams.get("scope") === "incoming" ? "incoming" : "mine";

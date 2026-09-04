@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { getProvider } from "@/lib/messaging/registry";
 import { deleteSession, forceKillSession, startSession, stopSession } from "@/lib/messaging/openwa-client";
@@ -31,6 +31,7 @@ function errorMessage(err: unknown): string {
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const instance = await db.waInstance.findUnique({ where: { id: params.id } });
   if (!instance) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -45,7 +46,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     }
     const updated = await db.waInstance.update({ where: { id: instance.id }, data: { assignedUserId: parsed.data.userId } });
     await db.auditLog.create({
-      data: { action: "wa_instance.assign", actorId: guard.session.user.id, targetId: instance.id, metadata: { userId: parsed.data.userId } },
+      data: { action: "wa_instance.assign", actorId: guard.session.user.id, targetId: instance.id, metadata: { userId: parsed.data.userId } } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
     return NextResponse.json({ instance: updated });
   }
@@ -53,7 +54,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (parsed.data.action === "unassign") {
     const updated = await db.waInstance.update({ where: { id: instance.id }, data: { assignedUserId: null } });
     await db.auditLog.create({
-      data: { action: "wa_instance.unassign", actorId: guard.session.user.id, targetId: instance.id, metadata: {} },
+      data: { action: "wa_instance.unassign", actorId: guard.session.user.id, targetId: instance.id, metadata: {} } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
     return NextResponse.json({ instance: updated });
   }
@@ -76,7 +77,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       data: { status: "LOGGED_OUT", lastError: null, lastQrCode: null, lastQrAt: null, pairingCode: null, pairingCodeAt: null },
     });
     await db.auditLog.create({
-      data: { action: "wa_instance.logout", actorId: guard.session.user.id, targetId: instance.id, metadata: {} },
+      data: { action: "wa_instance.logout", actorId: guard.session.user.id, targetId: instance.id, metadata: {} } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
     return NextResponse.json({ instance: updated });
   }
@@ -95,7 +96,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       data: { status: "DISCONNECTED", lastError: "Force-killed by admin." },
     });
     await db.auditLog.create({
-      data: { action: "wa_instance.force_kill", actorId: guard.session.user.id, targetId: instance.id, metadata: {} },
+      data: { action: "wa_instance.force_kill", actorId: guard.session.user.id, targetId: instance.id, metadata: {} } as unknown as Prisma.AuditLogUncheckedCreateInput,
     });
     return NextResponse.json({ instance: updated });
   }
@@ -122,7 +123,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         },
       });
       await db.auditLog.create({
-        data: { action: "wa_instance.repair", actorId: guard.session.user.id, targetId: instance.id, metadata: {} },
+        data: { action: "wa_instance.repair", actorId: guard.session.user.id, targetId: instance.id, metadata: {} } as unknown as Prisma.AuditLogUncheckedCreateInput,
       });
       return NextResponse.json({ instance: updated, pairing });
     } catch (err) {
@@ -149,6 +150,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const instance = await db.waInstance.findUnique({ where: { id: params.id } });
   if (!instance) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -173,14 +175,14 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
           actorId: guard.session.user.id,
           targetId: instance.id,
           metadata: { openwaSessionId: instance.openwaSessionId, error: errorMessage(err) },
-        },
+        } as unknown as Prisma.AuditLogUncheckedCreateInput,
       });
     }
   }
 
   await db.waInstance.delete({ where: { id: instance.id } });
   await db.auditLog.create({
-    data: { action: "wa_instance.remove", actorId: guard.session.user.id, targetId: instance.id, metadata: { label: instance.label, force } },
+    data: { action: "wa_instance.remove", actorId: guard.session.user.id, targetId: instance.id, metadata: { label: instance.label, force } } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ ok: true });

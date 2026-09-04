@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireAdminSession } from "@/lib/auth-guard";
 import { requestPairingCode } from "@/lib/messaging/openwa-client";
 import { ProviderHttpError } from "@/lib/messaging/http";
@@ -19,6 +18,7 @@ const Schema = z.object({
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const instance = await db.waInstance.findUnique({ where: { id: params.id } });
   if (!instance) return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { CountryCode } from "libphonenumber-js";
-import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 
@@ -26,6 +25,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const { searchParams } = request.nextUrl;
   const q = searchParams.get("q");
@@ -88,6 +88,7 @@ function humanizeZodError(error: z.ZodError): string {
 export async function POST(request: NextRequest) {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
+  const { db } = guard;
 
   const parsed = CreateContactSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -100,12 +101,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `"${parsed.data.number}" doesn't look like a valid phone number.` }, { status: 400 });
   }
 
-  // The @unique constraint on numberE164 is the authoritative check (a
-  // concurrent request could still race past this lookup) — this is just
-  // what turns that into a message pointing at the existing contact
-  // instead of a raw 500 or a duplicate row, per #4's requirement. The
-  // catch below covers the race the lookup misses.
-  const existing = await db.contact.findUnique({ where: { numberE164 } });
+  // The @@unique([tenantId, numberE164]) constraint is the authoritative
+  // check (a concurrent request could still race past this lookup) — this
+  // is just what turns that into a message pointing at the existing
+  // contact instead of a raw 500 or a duplicate row, per #4's requirement.
+  // The catch below covers the race the lookup misses. findFirst, not
+  // findUnique — numberE164 alone is no longer a unique key by itself (it's
+  // tenant-composite now), but within one tenant's scoped client it's
+  // effectively unique.
+  const existing = await db.contact.findFirst({ where: { numberE164 } });
   if (existing) {
     return NextResponse.json(
       { error: "A contact with this number already exists.", existingContact: existing },
@@ -115,6 +119,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const contact = await db.$transaction(async (tx) => {
+      // No `tenantId` in either literal below — force-injected at runtime
+      // by the TenantClient extension (see src/lib/crm/activity.ts's
+      // comment on the same pattern).
       const created = await tx.contact.create({
         data: {
           numberE164,
@@ -124,11 +131,11 @@ export async function POST(request: NextRequest) {
           companyId: parsed.data.companyId || undefined,
           tags: parsed.data.tags ?? [],
           ownerId: parsed.data.ownerId || undefined,
-        },
+        } as unknown as Prisma.ContactUncheckedCreateInput,
       });
       if (parsed.data.initialNote) {
         await tx.contactNote.create({
-          data: { contactId: created.id, authorId: guard.session.user.id, body: parsed.data.initialNote },
+          data: { contactId: created.id, authorId: guard.session.user.id, body: parsed.data.initialNote } as unknown as Prisma.ContactNoteUncheckedCreateInput,
         });
       }
       return created;

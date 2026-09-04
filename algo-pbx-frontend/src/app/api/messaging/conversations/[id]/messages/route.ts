@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import {
   canAccessConversation,
@@ -24,6 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   // Pagination for "scroll up to load earlier" (WhatsApp-Web style). No
   // `before` = the most recent page; `before=<iso>` = the page just older
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   // minute (it downloads media bytes for hundreds of old messages) and each
   // 5s poll picks up whatever has landed so far.
   if (conversation.channel === "WHATSAPP" && !before) {
-    void syncConversationHistory(conversation.id).catch(() => undefined);
+    void syncConversationHistory(db, conversation.id).catch(() => undefined);
   }
 
   const [page, myRequests] = await Promise.all([
@@ -111,6 +112,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = SendSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -164,6 +166,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const provider = getProvider(providerKind);
   const result = await provider.sendText({ instanceId, toE164: conversation.contact.numberE164, text: parsed.data.text });
 
+  // No `tenantId` — force-injected at runtime by the TenantClient
+  // extension (see src/lib/crm/activity.ts's comment on the same pattern).
   const message = await db.chatMessage.create({
     data: {
       conversationId: conversation.id,
@@ -175,19 +179,22 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       waMessageId: result.providerMessageId,
       deliveryStatus: result.status,
       sensitive: false,
-    },
+    } as unknown as Prisma.ChatMessageUncheckedCreateInput,
   });
 
   // Unified CRM timeline (S2) — one activity per outbound message, keyed on
   // the ChatMessage id so it is idempotent.
-  await recordActivity({
-    type: conversation.channel === "SMS" ? "SMS" : "WHATSAPP",
-    summary: `Sent: ${truncateBody(parsed.data.text, "(message)")}`,
-    refId: message.id,
-    occurredAt: message.createdAt,
-    contactId: conversation.contactId,
-    actorId: userId,
-  });
+  await recordActivity(
+    {
+      type: conversation.channel === "SMS" ? "SMS" : "WHATSAPP",
+      summary: `Sent: ${truncateBody(parsed.data.text, "(message)")}`,
+      refId: message.id,
+      occurredAt: message.createdAt,
+      contactId: conversation.contactId,
+      actorId: userId,
+    },
+    db,
+  );
 
   // Claim an unassigned conversation on first send — see file header.
   if (!conversation.assignedAgentId && (role === "AGENT" || role === "SUPERVISOR" || role === "ADMIN")) {
@@ -220,7 +227,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
             actorId: userId,
             targetId: conversation.contactId,
             metadata: { via: "chat_reply", conversationId: conversation.id },
-          },
+          } as unknown as Prisma.AuditLogUncheckedCreateInput,
         })
         .catch(() => undefined);
     }
@@ -230,7 +237,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: result.error ?? "Send failed", message }, { status: 502 });
   }
 
-  void emitEvent("message.sent", {
+  void emitEvent(db, "message.sent", {
     conversationId: conversation.id,
     channel: conversation.channel,
     toE164: conversation.contact.numberE164,

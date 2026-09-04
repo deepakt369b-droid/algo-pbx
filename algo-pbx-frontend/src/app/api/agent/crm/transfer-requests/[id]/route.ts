@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +19,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = ActionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -62,7 +63,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       actorId: userId,
       targetId: existing.contactId,
       metadata: { requestId: existing.id, requestedById: existing.requestedById, currentOwnerId: existing.currentOwnerId },
-    },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ request: updated });

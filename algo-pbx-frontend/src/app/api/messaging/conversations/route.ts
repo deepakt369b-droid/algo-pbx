@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth-guard";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 import { findOrCreateConversation } from "@/lib/messaging/ingest";
@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const mineOnly = request.nextUrl.searchParams.get("mine") === "true";
 
@@ -97,6 +98,7 @@ export async function POST(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -144,13 +146,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const contact = await db.contact.upsert({
-    where: { numberE164: e164 },
-    update: {},
-    create: { numberE164: e164 },
-  });
+  // Was a plain upsert keyed on numberE164 alone — no longer possible, that
+  // field is tenant-composite now (`@@unique([tenantId, numberE164])`, plan
+  // §1) and TenantClient deliberately doesn't expose the raw tenantId
+  // needed to build that compound-key literal. findFirst (tenant-filtered
+  // automatically) + create instead — same pattern as
+  // src/lib/crm/activity.ts's recordActivity().
+  const existingContact = await db.contact.findFirst({ where: { numberE164: e164 } });
+  const contact =
+    existingContact ??
+    (await db.contact.create({ data: { numberE164: e164 } as unknown as Prisma.ContactUncheckedCreateInput }));
 
-  const { conversation } = await findOrCreateConversation(contact.id, channel, waInstanceId, {
+  const { conversation } = await findOrCreateConversation(db, contact.id, channel, waInstanceId, {
     assignedAgentId: userId,
   });
 

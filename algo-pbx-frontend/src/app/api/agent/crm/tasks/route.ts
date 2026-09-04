@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth-guard";
 import { canWriteContact } from "@/lib/contact-ownership";
 import { loadTasks, type TaskFilter } from "@/lib/crm/tasks-data";
@@ -18,7 +17,7 @@ export async function GET(request: NextRequest) {
 
   const sp = new URL(request.url).searchParams;
   const filter = (sp.get("filter") ?? "open") as TaskFilter;
-  const tasks = await loadTasks({
+  const tasks = await loadTasks(guard.db, {
     filter: FILTERS.includes(filter) ? filter : "open",
     assigneeScope: role === "AGENT" ? id : null,
     contactId: sp.get("contactId"),
@@ -36,6 +35,7 @@ export async function PATCH(request: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { role, id: userId } = guard.session.user;
+  const { db } = guard;
 
   const parsed = PatchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
