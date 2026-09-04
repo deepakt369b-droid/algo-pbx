@@ -3,7 +3,13 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
-import { db } from "@/lib/db";
+// Legitimate direct unsafeGlobalDb use (see that export's own doc comment
+// in src/lib/db.ts): login runs BEFORE any tenant is known — you need an
+// unscoped read of User (keyed by email, which stays globally unique per
+// plan §1) to find out which tenant this credential belongs to in the
+// first place. Nothing here reads/writes any OTHER tenant's data as a
+// side effect of that lookup.
+import { unsafeGlobalDb } from "@/lib/db";
 import authConfig from "@/auth.config";
 import { checkLoginRateLimit, clearLoginAttempts, recordLoginFailure, getClientIp } from "@/lib/rate-limit";
 import { isProfileComplete } from "@/lib/registration";
@@ -116,7 +122,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        const user = await db.user.findUnique({
+        const user = await unsafeGlobalDb.user.findUnique({
           where: { email },
           include: { extension: true },
         });
@@ -184,14 +190,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // trusted-device mechanism (TrustedDevice, separate and stronger
         // — see /api/auth/verify-2fa).
         const userAgent = request?.headers?.get?.("user-agent") ?? "unknown";
-        const seenBefore = await db.auditLog.findFirst({
-          where: { action: "auth.signin", actorId: user.id, metadata: { path: ["userAgent"], equals: userAgent } },
+        const seenBefore = await unsafeGlobalDb.auditLog.findFirst({
+          where: {
+            action: "auth.signin",
+            actorId: user.id,
+            tenantId: user.tenantId,
+            metadata: { path: ["userAgent"], equals: userAgent },
+          },
           select: { id: true },
         });
-        await db.auditLog.create({
+        // Written via unsafeGlobalDb (login has no tenantDb() yet — the
+        // tenant is only just now known, from `user` above), so tenantId
+        // is supplied explicitly here rather than by a scoped client.
+        await unsafeGlobalDb.auditLog.create({
           data: {
             action: "auth.signin",
             actorId: user.id,
+            tenantId: user.tenantId,
             metadata: { ip, userAgent, newDevice: !seenBefore },
           },
         });
@@ -204,6 +219,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           extension: user.extension?.number ?? null,
           disabled: user.disabled,
           profileComplete: isProfileComplete(user),
+          // Wave 2a (plan §1/§2): tenant is derived from the user row, not
+          // from the request host — see the plan's "email uniqueness
+          // decision" for why (tenant is a property of WHO you are, not
+          // WHERE you signed in). unsafeGlobalDb.user.findUnique above doesn't select
+          // tenantId explicitly, but it's a plain scalar column on User
+          // returned by the default field set.
+          tenantId: user.tenantId,
         };
       },
     }),
@@ -227,10 +249,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.extension = user.extension;
         token.disabled = user.disabled;
         token.profileComplete = user.profileComplete ?? false;
+        // Wave 2a (plan §1/§2): set on the initial sign-in leg; the
+        // live-reread branch below refreshes it on every subsequent
+        // request the same way it refreshes role/extension.
+        token.tenantId = user.tenantId;
         return token;
       }
       if (token.sub) {
-        const dbUser = await db.user.findUnique({
+        const dbUser = await unsafeGlobalDb.user.findUnique({
           where: { id: token.sub },
           select: {
             disabled: true, name: true, address: true, phoneE164: true,
@@ -243,6 +269,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             // canAccessRecording()/canAccessMailbox() for the new owner.
             role: true,
             extension: { select: { number: true } },
+            // Wave 2a: re-read live for the same reason as role/extension
+            // above. In practice a User's tenantId is not expected to
+            // change post-creation (no reassignment UI exists), but
+            // re-reading it live costs nothing extra on a query this
+            // route already makes every request, and it means a future
+            // "move user to another tenant" admin action (should one ever
+            // ship) takes effect on the user's very next request rather
+            // than needing them to sign out and back in.
+            tenantId: true,
           },
         });
         // A deleted user (dbUser === null) is treated the same as
@@ -266,6 +301,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (dbUser) {
           token.role = dbUser.role;
           token.extension = dbUser.extension?.number ?? null;
+          token.tenantId = dbUser.tenantId;
         }
         // Recomputed live on every request, same as `disabled` — an
         // agent who completes registration mid-session (or has it

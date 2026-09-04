@@ -44,6 +44,11 @@ export default {
       if (user) {
         token.role = user.role;
         token.extension = user.extension;
+        // Wave 2a (plan §1/§2): only set on the initial sign-in leg here —
+        // this edge-safe base callback has no DB access, so it can't
+        // re-verify it live. src/auth.ts's Node-side override is the one
+        // that re-reads it from Postgres on every subsequent request.
+        token.tenantId = user.tenantId;
       }
       return token;
     },
@@ -74,6 +79,17 @@ export default {
       // the wrong failure mode for ADMIN/SUPERVISOR sessions, which
       // src/middleware.ts never gates on this flag regardless.
       session.user.profileComplete = (token.profileComplete as boolean | undefined) ?? true;
+      // Wave 2a (plan §1/§2) — same "edge-safe base has no DB access"
+      // caveat as `disabled`/`profileComplete` above: this is only ever
+      // authoritative once src/auth.ts's Node-side jwt override has run
+      // (every real page/API request). No safe default exists here the
+      // way `false`/`true` work for booleans — an empty string is not a
+      // valid tenantId, so a session resolved only through this base
+      // config (e.g. inside edge middleware, before the Node override has
+      // had a chance to run) carries it as empty and MUST NOT be treated
+      // as authoritative for tenantDb() by anything that reads it before
+      // the Node-side override fires.
+      session.user.tenantId = (token.tenantId as string | undefined) ?? "";
       return session;
     },
   },

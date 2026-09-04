@@ -25,6 +25,17 @@ declare module "next-auth" {
       // it. Defaults true here for the same "don't gate on an
       // uncomputed value" reason `disabled` defaults false.
       profileComplete: boolean;
+      // Multi-tenant SaaS foundation, wave 2a (plan §1/§2). Populated the
+      // same live-recompute way as `disabled`/`role` — src/auth.ts's
+      // Node-side jwt callback override re-reads it from Postgres on every
+      // request, not just at sign-in, so a tenant reassignment (should one
+      // ever happen) takes effect immediately rather than waiting out the
+      // JWT's maxAge. This is what src/lib/auth-guard.ts's guards hand to
+      // `tenantDb()` to build the scoped Prisma client every route uses.
+      // No default-empty-string fallback here on purpose: a session with
+      // no live-verified tenantId must not silently resolve to "" and get
+      // treated as some real tenant's id downstream.
+      tenantId: string;
     } & DefaultSession["user"];
   }
 
@@ -33,6 +44,7 @@ declare module "next-auth" {
     extension: string | null;
     disabled?: boolean;
     profileComplete?: boolean;
+    tenantId?: string;
   }
 }
 
