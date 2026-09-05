@@ -1,0 +1,6 @@
+[tool.skylos]
+exclude = [
+    ".claude",
+    "**/node_modules",
+    ".git",
+]
