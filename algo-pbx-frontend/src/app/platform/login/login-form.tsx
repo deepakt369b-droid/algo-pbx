@@ -25,6 +25,7 @@ export function PlatformLoginForm({ callbackUrl }: { callbackUrl?: string }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,16 +77,26 @@ export function PlatformLoginForm({ callbackUrl }: { callbackUrl?: string }) {
         autoComplete="username"
         className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
       />
-      <input
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        type="password"
-        required
-        minLength={8}
-        placeholder="Password"
-        autoComplete="current-password"
-        className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
-      />
+      <div className="relative">
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type={showPassword ? "text" : "password"}
+          required
+          minLength={8}
+          placeholder="Password"
+          autoComplete="current-password"
+          className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-16 text-sm text-primary outline-none focus:border-cyan"
+        />
+        <button
+          type="button"
+          onClick={() => setShowPassword((v) => !v)}
+          tabIndex={-1}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-tertiary hover:text-secondary"
+        >
+          {showPassword ? "Hide" : "Show"}
+        </button>
+      </div>
       <input
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
