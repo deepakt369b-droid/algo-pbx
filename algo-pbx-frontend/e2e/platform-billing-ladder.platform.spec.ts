@@ -39,8 +39,19 @@ async function tenantByIndex(request: APIRequestContext, i = 0) {
 async function telephonySnapshot(request: APIRequestContext): Promise<string> {
   const res = await request.get("/api/platform/health");
   if (!res.ok()) return "unavailable";
-  const { checks } = (await res.json()) as { checks: Array<{ id: string; status: string }> };
-  return JSON.stringify(checks.filter((c) => c.id === "asterisk" || c.id === "openvpn_server"));
+  const { checks } = (await res.json()) as {
+    checks: Array<{ id: string; status: string; detail?: string }>;
+  };
+  // Project explicitly. The raw check objects carry a `checkedAt` stamped at
+  // request time, so serialising them whole would make this snapshot differ
+  // from itself and the comparison could never hold. What we are asserting is
+  // that billing enforcement did not change telephony's STATE, not that two
+  // health probes ran at the same instant.
+  return JSON.stringify(
+    checks
+      .filter((c) => c.id === "asterisk" || c.id === "openvpn_server")
+      .map((c) => ({ id: c.id, status: c.status, detail: c.detail ?? null }))
+  );
 }
 
 test.describe("billing enforcement ladder", () => {

@@ -6,4 +6,268 @@
   - Environments: .env.local
 
    Creating an optimized production build ...
-Next.js build worker exited with code: 3221225794 and signal: null
+ ⚠ Found lockfile missing swc dependencies, patching...
+ ⨯ Failed to patch lockfile, please try uninstalling and reinstalling next in this workspace
+TypeError: Cannot read properties of undefined (reading 'os')
+    at fetchPkgInfo (C:\Users\DK\Desktop\algo-pbx-master\algo-pbx-frontend\node_modules\next\dist\lib\patch-incorrect-lockfile.js:73:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Promise.all (index 7)
+    at async patchIncorrectLockfile (C:\Users\DK\Desktop\algo-pbx-master\algo-pbx-frontend\node_modules\next\dist\lib\patch-incorrect-lockfile.js:162:26)
+ ⚠ Found lockfile missing swc dependencies, patching...
+ ⚠ Found lockfile missing swc dependencies, patching...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+ ⚠ Found lockfile missing swc dependencies, patching...
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+   Generating static pages (0/54) ...
+   Generating static pages (13/54) 
+   Generating static pages (26/54) 
+   Generating static pages (40/54) 
+settings/service: in-process settings cache is active. This is safe for a single 'web' replica, but will stale across multiple replicas. Set DISABLE_SETTINGS_CACHE=true or move the cache to a shared store (e.g. Redis) before scaling horizontally.
+ ✓ Generating static pages (54/54)
+   Finalizing page optimization ...
+   Collecting build traces ...
+ ⨯ Failed to patch lockfile, please try uninstalling and reinstalling next in this workspace
+TypeError: Cannot read properties of undefined (reading 'os')
+    at fetchPkgInfo (C:\Users\DK\Desktop\algo-pbx-master\algo-pbx-frontend\node_modules\next\dist\lib\patch-incorrect-lockfile.js:73:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Promise.all (index 7)
+    at async patchIncorrectLockfile (C:\Users\DK\Desktop\algo-pbx-master\algo-pbx-frontend\node_modules\next\dist\lib\patch-incorrect-lockfile.js:162:26)
+
+Route (app)                                          Size     First Load JS
+┌ ○ /                                                1.7 kB         98.1 kB
+├ ○ /_not-found                                      880 B          88.5 kB
+├ ƒ /admin                                           1.56 kB        89.2 kB
+├ ƒ /admin/audit                                     1.39 kB          89 kB
+├ ƒ /admin/cdr                                       1.44 kB        89.1 kB
+├ ƒ /admin/connectivity                              4.96 kB        92.6 kB
+├ ƒ /admin/contact-ownership                         1.88 kB        89.5 kB
+├ ƒ /admin/contacts                                  6.24 kB         188 kB
+├ ƒ /admin/crm/companies                             2.18 kB         170 kB
+├ ƒ /admin/crm/pipeline                              164 B           176 kB
+├ ƒ /admin/crm/tasks                                 1.63 kB         170 kB
+├ ƒ /admin/dinstar                                   5.54 kB         173 kB
+├ ƒ /admin/dnc                                       3.67 kB         185 kB
+├ ƒ /admin/domain                                    152 B          87.8 kB
+├ ƒ /admin/escalations                               1.74 kB        89.4 kB
+├ ƒ /admin/extensions                                152 B          87.8 kB
+├ ƒ /admin/monitor                                   1.35 kB         161 kB
+├ ƒ /admin/queues                                    2.05 kB        89.7 kB
+├ ƒ /admin/recording                                 1.24 kB         160 kB
+├ ƒ /admin/recordings                                2.41 kB        90.1 kB
+├ ƒ /admin/reports                                   104 kB          263 kB
+├ ƒ /admin/rooms                                     3.48 kB         104 kB
+├ ƒ /admin/settings                                  2.14 kB        89.8 kB
+├ ƒ /admin/sign-ins                                  1.01 kB        88.7 kB
+├ ƒ /admin/sms                                       1.96 kB         102 kB
+├ ƒ /admin/system                                    2.38 kB          90 kB
+├ ƒ /admin/users                                     4.4 kB           92 kB
+├ ƒ /admin/whatsapp                                  3.92 kB        91.6 kB
+├ ƒ /agent                                           4.99 kB         238 kB
+├ ƒ /agent/call                                      7.7 kB          257 kB
+├ ƒ /agent/calls                                     2.09 kB         163 kB
+├ ƒ /agent/chat                                      3.98 kB         113 kB
+├ ƒ /agent/crm/pipeline                              164 B           176 kB
+├ ƒ /agent/crm/tasks                                 1.63 kB         170 kB
+├ ƒ /agent/missed                                    1.75 kB         251 kB
+├ ƒ /agent/voicemail                                 1.14 kB        88.8 kB
+├ ƒ /api/admin/api-keys                              0 B                0 B
+├ ƒ /api/admin/api-keys/[id]                         0 B                0 B
+├ ƒ /api/admin/audit                                 0 B                0 B
+├ ƒ /api/admin/contact-ownership                     0 B                0 B
+├ ƒ /api/admin/contact-ownership/[contactId]         0 B                0 B
+├ ƒ /api/admin/contacts                              0 B                0 B
+├ ƒ /api/admin/contacts/[id]                         0 B                0 B
+├ ƒ /api/admin/contacts/[id]/merge                   0 B                0 B
+├ ƒ /api/admin/contacts/bulk-import                  0 B                0 B
+├ ƒ /api/admin/crm/companies                         0 B                0 B
+├ ƒ /api/admin/crm/companies/[id]                    0 B                0 B
+├ ƒ /api/admin/crm/deals/[id]                        0 B                0 B
+├ ƒ /api/admin/crm/pipeline                          0 B                0 B
+├ ƒ /api/admin/crm/tasks                             0 B                0 B
+├ ƒ /api/admin/dinstar/apply                         0 B                0 B
+├ ƒ /api/admin/dinstar/discover                      0 B                0 B
+├ ƒ /api/admin/dinstar/ports                         0 B                0 B
+├ ƒ /api/admin/dinstar/probe                         0 B                0 B
+├ ƒ /api/admin/domain/a-record                       0 B                0 B
+├ ƒ /api/admin/domain/cert-status                    0 B                0 B
+├ ƒ /api/admin/domain/ip                             0 B                0 B
+├ ƒ /api/admin/domain/status                         0 B                0 B
+├ ƒ /api/admin/escalation-attempts                   0 B                0 B
+├ ƒ /api/admin/escalation-targets                    0 B                0 B
+├ ƒ /api/admin/escalation-targets/[id]               0 B                0 B
+├ ƒ /api/admin/gateway-alerts                        0 B                0 B
+├ ƒ /api/admin/gateway-events                        0 B                0 B
+├ ƒ /api/admin/gateway-sites                         0 B                0 B
+├ ƒ /api/admin/gateway-sites/[id]                    0 B                0 B
+├ ƒ /api/admin/gateway-sites/[id]/cutover            0 B                0 B
+├ ƒ /api/admin/gateway-sites/[id]/download-cert      0 B                0 B
+├ ƒ /api/admin/gateway-sites/[id]/generate-cert      0 B                0 B
+├ ƒ /api/admin/gateway-sites/[id]/push-vpn-config    0 B                0 B
+├ ƒ /api/admin/gateway-sites/connectivity-check      0 B                0 B
+├ ƒ /api/admin/maintenance/backfill-activity         0 B                0 B
+├ ƒ /api/admin/maintenance/backfill-caller-e164      0 B                0 B
+├ ƒ /api/admin/maintenance/prune                     0 B                0 B
+├ ƒ /api/admin/mcp-approvals                         0 B                0 B
+├ ƒ /api/admin/messaging/sms-access-requests         0 B                0 B
+├ ƒ /api/admin/messaging/sms-access-requests/[id]    0 B                0 B
+├ ƒ /api/admin/messaging/sms/poll                    0 B                0 B
+├ ƒ /api/admin/monitor                               0 B                0 B
+├ ƒ /api/admin/recording                             0 B                0 B
+├ ƒ /api/admin/recordings/[id]                       0 B                0 B
+├ ƒ /api/admin/reports/agent-hours                   0 B                0 B
+├ ƒ /api/admin/reports/agents                        0 B                0 B
+├ ƒ /api/admin/reports/call-volume                   0 B                0 B
+├ ƒ /api/admin/reports/dispositions                  0 B                0 B
+├ ƒ /api/admin/reports/dnc-trend                     0 B                0 B
+├ ƒ /api/admin/reports/leaderboard                   0 B                0 B
+├ ƒ /api/admin/reports/pipeline                      0 B                0 B
+├ ƒ /api/admin/reports/tasks-due                     0 B                0 B
+├ ƒ /api/admin/reports/top-contacts                  0 B                0 B
+├ ƒ /api/admin/rooms                                 0 B                0 B
+├ ƒ /api/admin/rooms/[id]                            0 B                0 B
+├ ƒ /api/admin/rooms/[id]/activity                   0 B                0 B
+├ ƒ /api/admin/settings                              0 B                0 B
+├ ƒ /api/admin/settings/domain/apply                 0 B                0 B
+├ ƒ /api/admin/settings/test                         0 B                0 B
+├ ƒ /api/admin/sign-ins                              0 B                0 B
+├ ƒ /api/admin/system/health                         0 B                0 B
+├ ƒ /api/admin/users                                 0 B                0 B
+├ ƒ /api/admin/users/[id]                            0 B                0 B
+├ ƒ /api/admin/webhook-subscriptions                 0 B                0 B
+├ ƒ /api/admin/whatsapp/instances                    0 B                0 B
+├ ƒ /api/admin/whatsapp/instances/[id]               0 B                0 B
+├ ƒ /api/admin/whatsapp/instances/[id]/pairing       0 B                0 B
+├ ƒ /api/admin/whatsapp/instances/[id]/pairing-code  0 B                0 B
+├ ƒ /api/agent/crm/call-context/latest-call          0 B                0 B
+├ ƒ /api/agent/crm/contacts                          0 B                0 B
+├ ƒ /api/agent/crm/contacts/[id]                     0 B                0 B
+├ ƒ /api/agent/crm/contacts/[id]/notes               0 B                0 B
+├ ƒ /api/agent/crm/contacts/[id]/tasks               0 B                0 B
+├ ƒ /api/agent/crm/deals/[id]                        0 B                0 B
+├ ƒ /api/agent/crm/dispositions                      0 B                0 B
+├ ƒ /api/agent/crm/pipeline                          0 B                0 B
+├ ƒ /api/agent/crm/tasks                             0 B                0 B
+├ ƒ /api/agent/crm/transfer-requests                 0 B                0 B
+├ ƒ /api/agent/crm/transfer-requests/[id]            0 B                0 B
+├ ƒ /api/agent/escalate                              0 B                0 B
+├ ƒ /api/agent/escalation-targets                    0 B                0 B
+├ ƒ /api/ami/status                                  0 B                0 B
+├ ƒ /api/auth-2fa/pre-login                          0 B                0 B
+├ ƒ /api/auth-2fa/verify                             0 B                0 B
+├ ƒ /api/auth/[...nextauth]                          0 B                0 B
+├ ƒ /api/auth/forgot-password                        0 B                0 B
+├ ƒ /api/auth/reset-password                         0 B                0 B
+├ ƒ /api/calls/conference                            0 B                0 B
+├ ƒ /api/calls/manager-merge                         0 B                0 B
+├ ƒ /api/calls/quality                               0 B                0 B
+├ ƒ /api/cdr                                         0 B                0 B
+├ ƒ /api/channels                                    0 B                0 B
+├ ƒ /api/config/public                               0 B                0 B
+├ ƒ /api/crm/click-to-call                           0 B                0 B
+├ ƒ /api/crm/contacts                                0 B                0 B
+├ ƒ /api/crm/contacts/[id]/activity                  0 B                0 B
+├ ƒ /api/dnc                                         0 B                0 B
+├ ƒ /api/dnc/[id]                                    0 B                0 B
+├ ƒ /api/dnc/bulk-import                             0 B                0 B
+├ ƒ /api/dnc/check                                   0 B                0 B
+├ ƒ /api/extensions                                  0 B                0 B
+├ ƒ /api/extensions/[number]                         0 B                0 B
+├ ƒ /api/gateway-events                              0 B                0 B
+├ ƒ /api/health                                      0 B                0 B
+├ ƒ /api/intervention                                0 B                0 B
+├ ƒ /api/invite                                      0 B                0 B
+├ ƒ /api/me/calls                                    0 B                0 B
+├ ƒ /api/me/missed-calls                             0 B                0 B
+├ ƒ /api/me/photo/[id]                               0 B                0 B
+├ ƒ /api/me/preferences                              0 B                0 B
+├ ƒ /api/me/sip-credentials                          0 B                0 B
+├ ƒ /api/me/turn-credentials                         0 B                0 B
+├ ƒ /api/me/whatsapp                                 0 B                0 B
+├ ƒ /api/messaging/avatar/[contactId]                0 B                0 B
+├ ƒ /api/messaging/conversations                     0 B                0 B
+├ ƒ /api/messaging/conversations/[id]/messages       0 B                0 B
+├ ƒ /api/messaging/conversations/[id]/voice          0 B                0 B
+├ ƒ /api/messaging/media/[messageId]                 0 B                0 B
+├ ƒ /api/messaging/openwa-webhook                    0 B                0 B
+├ ƒ /api/messaging/sms-access-requests               0 B                0 B
+├ ƒ /api/platform-auth/[...nextauth]                 0 B                0 B
+├ ƒ /api/platform/audit                              0 B                0 B
+├ ƒ /api/platform/audit/export                       0 B                0 B
+├ ƒ /api/platform/health                             0 B                0 B
+├ ƒ /api/platform/overview                           0 B                0 B
+├ ƒ /api/platform/settings                           0 B                0 B
+├ ƒ /api/platform/settings/domain/apply              0 B                0 B
+├ ƒ /api/platform/setup/password                     0 B                0 B
+├ ƒ /api/platform/setup/totp/confirm                 0 B                0 B
+├ ƒ /api/platform/support-grants                     0 B                0 B
+├ ƒ /api/platform/support-grants/[id]/revoke         0 B                0 B
+├ ƒ /api/platform/tenants                            0 B                0 B
+├ ƒ /api/platform/tenants/[id]/billing               0 B                0 B
+├ ƒ /api/platform/tenants/[id]/compliance            0 B                0 B
+├ ƒ /api/platform/tenants/[id]/dialplan-cut          0 B                0 B
+├ ƒ /api/platform/tenants/[id]/gateway/push-vpn      0 B                0 B
+├ ƒ /api/platform/tenants/[id]/offboard              0 B                0 B
+├ ƒ /api/platform/tenants/[id]/provisioning/advance  0 B                0 B
+├ ƒ /api/platform/tenants/[id]/reachability          0 B                0 B
+├ ƒ /api/platform/tenants/[id]/recording-target      0 B                0 B
+├ ƒ /api/platform/tenants/[id]/suspend               0 B                0 B
+├ ƒ /api/platform/users                              0 B                0 B
+├ ƒ /api/platform/users/[id]                         0 B                0 B
+├ ƒ /api/queues                                      0 B                0 B
+├ ƒ /api/queues/members                              0 B                0 B
+├ ƒ /api/recordings                                  0 B                0 B
+├ ƒ /api/recordings/[uniqueid]                       0 B                0 B
+├ ƒ /api/recordings/hide                             0 B                0 B
+├ ƒ /api/register                                    0 B                0 B
+├ ƒ /api/register/photo                              0 B                0 B
+├ ƒ /api/register/send-fallback-otp                  0 B                0 B
+├ ƒ /api/register/verify-fallback-otp                0 B                0 B
+├ ƒ /api/register/verify-phone                       0 B                0 B
+├ ƒ /api/setup                                       0 B                0 B
+├ ƒ /api/voicemail                                   0 B                0 B
+├ ƒ /api/voicemail/[id]                              0 B                0 B
+├ ƒ /api/voicemail/[id]/audio                        0 B                0 B
+├ ƒ /api/wallboard                                   0 B                0 B
+├ ƒ /billing-hold                                    152 B          87.8 kB
+├ ○ /forgot-password                                 1.56 kB        89.2 kB
+├ ƒ /invite/[token]                                  1.41 kB        89.1 kB
+├ ƒ /login                                           2.4 kB          102 kB
+├ ƒ /platform                                        183 B          96.5 kB
+├ ƒ /platform/audit                                  2.07 kB         105 kB
+├ ƒ /platform/login                                  1.52 kB        89.2 kB
+├ ƒ /platform/provisioning                           183 B          96.5 kB
+├ ƒ /platform/provisioning/[id]                      5.33 kB        99.8 kB
+├ ƒ /platform/provisioning/new                       3.02 kB        97.5 kB
+├ ƒ /platform/settings                               5.09 kB         127 kB
+├ ƒ /platform/setup                                  1.61 kB        89.3 kB
+├ ƒ /platform/tenants                                2.11 kB         105 kB
+├ ƒ /platform/tenants/[id]                           13.1 kB         143 kB
+├ ƒ /platform/users                                  4 kB            121 kB
+├ ○ /register                                        37.8 kB         125 kB
+└ ○ /setup                                           2.4 kB         93.2 kB
++ First Load JS shared by all                        87.6 kB
+  ├ chunks/2117-d5e8bec57666a8f3.js                  31.9 kB
+  ├ chunks/fd9d1056-206c6b522ae29b49.js              53.6 kB
+  └ other shared chunks (total)                      2.1 kB
+
+
+ƒ Middleware                                         78.6 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

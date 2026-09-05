@@ -49,19 +49,19 @@ export function canDisable(
 ): GuardrailResult {
   if (target.disabled) return refuse(`${target.email} is already disabled.`);
 
-  // Self-disable is not a last-owner problem specifically, but it is the same
-  // class of foot-gun and there is never a good reason for it — an operator
-  // wanting to leave asks another owner to disable them.
-  if (target.id === actorId) {
-    return refuse("You cannot disable your own account. Ask another platform owner to do it.");
-  }
-
   if (target.role === "PLATFORM_OWNER" && otherEnabledOwners(all, target.id).length === 0) {
     return refuse(
       `${target.email} is the last enabled PLATFORM_OWNER. Disabling them would leave nobody able ` +
         `to provision, bill, or offboard — recoverable only with shell access to the production host. ` +
         `Create another owner first.`
     );
+  }
+
+  // Self-disable is not a last-owner problem specifically, but it is the same
+  // class of foot-gun and there is never a good reason for it — an operator
+  // wanting to leave asks another owner to disable them.
+  if (target.id === actorId) {
+    return refuse("You cannot disable your own account. Ask another platform owner to do it.");
   }
 
   return ok;
@@ -78,10 +78,9 @@ export function canChangeRole(
   all: readonly PlatformUserView[],
   actorId: string
 ): GuardrailResult {
-  if (target.id === actorId) {
-    return refuse("You cannot change your own role. Ask another platform owner to do it.");
-  }
-
+  // A no-op is neither a demotion nor a self-edit, so it is answered first —
+  // otherwise "set the sole owner to PLATFORM_OWNER" would be refused with a
+  // demotion message describing something the caller never asked for.
   if (target.role === nextRole) {
     return refuse(`${target.email} already has the ${nextRole} role.`);
   }
@@ -93,6 +92,10 @@ export function canChangeRole(
       `${target.email} is the last enabled PLATFORM_OWNER. Demoting them would leave nobody able ` +
         `to provision, bill, or offboard. Promote another owner first.`
     );
+  }
+
+  if (target.id === actorId) {
+    return refuse("You cannot change your own role. Ask another platform owner to do it.");
   }
 
   return ok;

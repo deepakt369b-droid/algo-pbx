@@ -66,6 +66,34 @@ describe("self-action protection", () => {
   });
 });
 
+describe("reason precedence when two rules both apply", () => {
+  // The sole owner acting on themselves trips both the last-owner rule and
+  // the self-edit rule. Either way the action is refused, but only one of the
+  // two messages is true: "ask another platform owner" names somebody who
+  // does not exist, and would send an operator looking for a colleague
+  // instead of creating a second owner.
+  it("tells the sole owner to create another owner, not to ask one", () => {
+    const result = canDisable(owner1, [owner1, support], "o1");
+    expect(result.ok).toBe(false);
+    expect(reasonOf(result)).toMatch(/last enabled PLATFORM_OWNER/);
+    expect(reasonOf(result)).toMatch(/Create another owner first/);
+  });
+
+  it("gives the same precedence for a sole owner demoting themselves", () => {
+    const result = canChangeRole(owner1, "PLATFORM_SUPPORT", [owner1, support], "o1");
+    expect(result.ok).toBe(false);
+    expect(reasonOf(result)).toMatch(/last enabled PLATFORM_OWNER/);
+    expect(reasonOf(result)).toMatch(/Promote another owner first/);
+  });
+
+  // A no-op is neither, and must not borrow either message.
+  it("answers a no-op role change as a no-op, even for the sole owner", () => {
+    const result = canChangeRole(owner1, "PLATFORM_OWNER", [owner1, support], "o1");
+    expect(result.ok).toBe(false);
+    expect(reasonOf(result)).toMatch(/already has the PLATFORM_OWNER role/);
+  });
+});
+
 describe("last-owner protection — demotion", () => {
   it("refuses to demote the only owner", () => {
     const result = canChangeRole(owner1, "PLATFORM_SUPPORT", [owner1, support], "o2");

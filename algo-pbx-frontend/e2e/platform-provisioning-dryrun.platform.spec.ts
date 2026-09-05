@@ -59,8 +59,13 @@ test.describe("provisioning wizard", () => {
     await page.getByTestId("new-tenant-reason").fill("acceptance test — provisioning dry run");
     await page.getByTestId("submit-new-tenant").click();
 
-    await page.waitForURL(/\/platform\/provisioning\/[^/]+$/, { timeout: 15_000 });
+    // The negative lookahead matters: without it this pattern also matches
+    // /platform/provisioning/new — the page we are already on — so the wait
+    // resolves instantly and `tenantId` becomes the literal string "new",
+    // sending every later test to the create form instead of the run.
+    await page.waitForURL(/\/platform\/provisioning\/(?!new$)[^/]+$/, { timeout: 15_000 });
     tenantId = page.url().split("/").pop()!;
+    expect(tenantId).not.toBe("new");
 
     // Slug validation and tenant creation are done by the create handler
     // itself, so the run starts at step 3.
@@ -103,16 +108,30 @@ test.describe("provisioning wizard", () => {
     const gate = page.getByTestId("cert-gate");
     const blocked = page.getByTestId("blocked-step");
 
-    // The run must be paused — either at the cert gate itself, or blocked
-    // earlier by a truthful prerequisite failure. What must NOT happen is the
-    // run sailing past certificate issuance.
+    // The invariant under test is one thing only: the run must NOT have
+    // sailed past certificate issuance. Assert that directly, on the pipeline,
+    // rather than inferring it from which pause state the page happens to be
+    // in — the step list is the authoritative record either way.
+    await expect(page.locator('[data-step="issue_cert"]')).not.toHaveAttribute("data-state", "done");
+
     const atGate = (await gate.count()) > 0;
-    const earlierBlock = (await blocked.count()) > 0;
-    expect(atGate || earlierBlock).toBe(true);
 
     if (!atGate) {
-      // Blocked before the gate: the reason must be stated, not implied.
-      await expect(page.getByTestId("blocked-reason")).not.toBeEmpty();
+      // Stopped short of the gate. There are two honest ways for that to
+      // happen and both must state a reason rather than stalling silently:
+      //   - a `blocked` verdict, e.g. an unmet prerequisite; or
+      //   - a runnable step whose last attempt failed, which is what an
+      //     environment without the one-time *.algopbx.com wildcard DNS
+      //     record produces at "Verify workspace subdomain".
+      const stoppedBlocked = (await blocked.count()) > 0;
+      const stoppedOnError = (await page.getByTestId("wizard-error").count()) > 0;
+      expect(stoppedBlocked || stoppedOnError).toBe(true);
+
+      const reason = stoppedBlocked
+        ? page.getByTestId("blocked-reason")
+        : page.getByTestId("wizard-error");
+      await expect(reason).not.toBeEmpty();
+
       await page.screenshot({ path: "e2e/screenshots/provisioning-blocked.png", fullPage: true });
       return;
     }
