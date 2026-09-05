@@ -1,14 +1,25 @@
+# Handoff — First SaaS owner account bootstrapped (2026-09-05): `algopbx@saharatechs.com` / PLATFORM_OWNER created on the live VPS via a redesigned `scripts/create-platform-user.mjs` (self-generated one-time password, no CLI arg) and a new in-browser `/platform/setup` flow (forced password change + TOTP enrollment at first login, replacing the old out-of-band `create`/`confirm` script pair). Code committed (`a3f3f17`, unpushed), deployed, and DB-verified (`PlatformUser` row, `PlatformAuditLog` entry, zero matching tenant `User` rows). **One step left with the operator**: log in at https://pbx.saharatechs.com/platform with the one-time password shown in-session, complete the forced password change + TOTP enrollment with their own authenticator app, and confirm the owner console loads — I can't complete TOTP confirmation myself, it needs a live code from a device I don't have. Full detail in `LLM.md`'s newest Build Log entry.
+
+---
+
 # Handoff — Public website for saharatechs.com BUILT + GATED GREEN + DEPLOYED to production (2026-09-05), one manual DNS step left with the operator. `website/` (landing/terms/privacy/docs) built and verified (typecheck/lint/build/Playwright 20/20), both plan gates run for real (Gate A: legal drafts approved with placeholders; Gate B: Caddy diff + dry-run + a real `caddy validate` pass on the VPS), committed locally (`054fdcd`, unpushed) and deployed live on the VPS (Caddyfile backed up, apex block surgically replaced, `pbx.` block untouched, verified via `curl --resolve`). **Real blocker found and stopped for, not steamrolled**: `saharatechs.com` DNS still points at a separate existing site (`217.165.236.207`) — contradicts the plan's assumption the apex was already free, and directly matches a standing memory warning never to repoint it without checking first. Operator confirmed that other site is being retired and repointing is fine, but the actual Cloudflare A-record edit is a manual step (no automated DNS write-path exists in this codebase) — not done, and I don't hold that credential. Full detail in the "2026-09-05 session" entry below and `LLM.md`'s new Build Log entry.
 
 ## ▶ "claude continue" — the remaining work, in order
 
 Updated 2026-09-05, end of session. Remaining, in order:
 
-1. **Public website — one manual step left with the operator.** Repoint `saharatechs.com`'s Cloudflare A record from `217.165.236.207` to this VPS's public IP (`187.53.128.252`) once the operator is ready (they've confirmed the old site there is being retired). After that: re-verify all four checks against the real public domain (apex, `pbx.`, `www`, agent WSS) — the `curl --resolve` checks this session ran prove the server side works, not that the public path does yet. Also still open: fill `[ENTITY]`/`[JURISDICTION]` in `website/src/app/{terms,privacy}/page.tsx` (Gate A was approved with those left as placeholders) before this is truly launch-ready, and decide whether/when to push `054fdcd` to GitHub (held per standing instruction).
-2. **Multi-tenant wave 1 loose ends**: Playwright acceptance (`e2e/tenancy-acceptance.*.spec.ts`) and the real-call check were never run against the live stack (need a running app + a human for the call) — not blocking, but should happen before wave 2's route-level behavior is trusted beyond "it compiles and the smoke test passed". The pre-migration encrypted snapshot (`/root/tenancy-prod-deploy/` on the VPS) is a rollback point, not yet reviewed for deletion.
-3. **Multi-tenant waves 4-7** — not started, per the plan's own sequencing: billing enforcement, domain/TLS re-scope, telephony namespacing (needs live Asterisk), tenant provisioning (blocked on CA signing flow v2 + G2 tunnel, same blockers as below).
-4. Everything below this line (G2 tunnel bring-up, CA signing flow v2, live-call verification, Dinstar syslog live-traffic) is **carried over unchanged from before** — none of it was touched this session. (Pushing to GitHub is no longer on this list — done, see above; `main`/`origin/main`/VPS are all in sync at `4d04b09`.)
-5. **G2 — the tunnel bring-up test (next concrete step, everything is
+1. **Platform owner account — operator's own step, next.** Log in at
+   https://pbx.saharatechs.com/platform with the one-time password from
+   this session's transcript, complete the forced password change (min. 12
+   chars) then TOTP enrollment (scan/enter the otpauth URI shown on
+   `/platform/setup`, confirm a live code), and confirm the owner console
+   loads. Not something I can do — TOTP confirmation needs a code from your
+   own authenticator app.
+3. **Public website — one manual step left with the operator.** Repoint `saharatechs.com`'s Cloudflare A record from `217.165.236.207` to this VPS's public IP (`187.53.128.252`) once the operator is ready (they've confirmed the old site there is being retired). After that: re-verify all four checks against the real public domain (apex, `pbx.`, `www`, agent WSS) — the `curl --resolve` checks this session ran prove the server side works, not that the public path does yet. Also still open: fill `[ENTITY]`/`[JURISDICTION]` in `website/src/app/{terms,privacy}/page.tsx` (Gate A was approved with those left as placeholders) before this is truly launch-ready, and decide whether/when to push `054fdcd` to GitHub (held per standing instruction).
+4. **Multi-tenant wave 1 loose ends**: Playwright acceptance (`e2e/tenancy-acceptance.*.spec.ts`) and the real-call check were never run against the live stack (need a running app + a human for the call) — not blocking, but should happen before wave 2's route-level behavior is trusted beyond "it compiles and the smoke test passed". The pre-migration encrypted snapshot (`/root/tenancy-prod-deploy/` on the VPS) is a rollback point, not yet reviewed for deletion.
+5. **Multi-tenant waves 4-7** — not started, per the plan's own sequencing: billing enforcement, domain/TLS re-scope, telephony namespacing (needs live Asterisk), tenant provisioning (blocked on CA signing flow v2 + G2 tunnel, same blockers as below).
+6. Everything below this line (G2 tunnel bring-up, CA signing flow v2, live-call verification, Dinstar syslog live-traffic) is **carried over unchanged from before** — none of it was touched this session. (Pushing to GitHub is no longer on this list — done, see above; `main`/`origin/main`/VPS are all in sync at `4d04b09`.)
+7. **G2 — the tunnel bring-up test (next concrete step, everything is
    ready for it)**. **PRE-FLIGHT DONE 2026-09-04** — server side verified
    healthy and one real blocker found (see "G2 pre-flight" below); the
    `ufw` fix is the only thing standing between here and the upload, and
@@ -28,14 +39,14 @@ Updated 2026-09-05, end of session. Remaining, in order:
    server config AND the client `.ovpn` — see part 2 for why the client
    side needed a separate fix) but this is the first time it meets the
    real device.
-6. **Only after the tunnel is confirmed up**: G2's remaining steps — run
+8. **Only after the tunnel is confirmed up**: G2's remaining steps — run
    the cutover (`POST /api/admin/gateway-sites/[id]/cutover`, already
    built, re-points `DINSTAR_LAN_IP` + verifies via AMI), real
    inbound+outbound test call over the tunnel, confirm syslog arrives via
    `10.8.0.1` (needs `SYSLOG_BIND_IP_SECONDARY` set on
    `gateway-syslog-listener` first — not done yet, do this as part of G2,
    not before), only then mark Tailscale legacy.
-7. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
+9. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
    the operator for review first** (their explicit instruction — do not
    build unilaterally): encrypted CA-passphrase storage in the
    AppSetting store, an admin-approval-at-signing-time flow (passphrase
