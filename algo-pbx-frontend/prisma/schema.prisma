@@ -99,6 +99,41 @@ model Tenant {
   // tenant's subnet.
   tunnelSubnetIndex Int? @unique
 
+  // Progress through the provisioning pipeline, shaped by
+  // src/lib/platform/provisioning-machine.ts's ProvisioningState
+  // ({completed: StepId[], lastError}). Json rather than a table because it
+  // is a small ordered set owned entirely by one state machine — a row per
+  // step would buy nothing and would need its own ordering column. The
+  // authoritative record of WHO advanced WHICH step and when is
+  // PlatformAuditLog's "provisioning.step" rows, not this field; this is
+  // resumable working state.
+  provisioningState Json?
+
+  // --- Lifecycle timestamps (owner console §2c) ---
+  // Each set by its own explicit, reasoned, audited action. Deliberately
+  // separate fields rather than one status history: `dialplanCutAt` in
+  // particular must be independently queryable, because it is the ONLY
+  // telephony-affecting flag on this model and no automatic path may ever
+  // set it (plan §5 — the enforcement ladder governs UI login and nothing
+  // else; cutting calls is manual, owner-only and typed-confirmed).
+  suspendedAt   DateTime?
+  offboardedAt  DateTime?
+  dialplanCutAt DateTime?
+
+  // --- Per-tenant onboarding compliance checklist ---
+  // Nullable timestamps, not booleans: the question an auditor asks is
+  // "when was this filed", and a boolean cannot answer it. Evaluated by
+  // src/lib/platform/compliance.ts. An incomplete checklist does NOT block
+  // tenant creation — it raises a persistent warning, because paperwork
+  // legitimately lags a technical setup and a console that refuses to
+  // record the customer just moves the record-keeping somewhere invisible.
+  complianceTypeApprovalFiledAt   DateTime?
+  complianceEtisalatLetterAt      DateTime?
+  complianceAupSignedAt           DateTime?
+  compliancePdplTermsSignedAt     DateTime?
+  complianceRecordingDisclosureAt DateTime?
+  complianceNotes                 String?
+
   // --- Back-relations: every customer-owned model in this schema ---
   users                   User[]
   extensions              Extension[]
@@ -142,6 +177,7 @@ model Tenant {
 
   @@index([status])
   @@index([billingStatus, paidUntil])
+  @@index([dialplanCutAt])
 }
 
 // D2: no tenantId, by construction. A tenant-scoped query cannot return one.
@@ -165,6 +201,28 @@ model PlatformUser {
   disabled        Boolean        @default(false)
   grants          SupportGrant[]
   createdAt       DateTime       @default(now())
+
+  // --- Owner console §4 additions ---
+  // Written on every successful authorize() in src/lib/platform-auth.ts.
+  // Shown in the platform users list, where a long-dormant account with
+  // standing access to every tenant is exactly what an operator should
+  // notice and disable.
+  lastLoginAt DateTime?
+  // Which PlatformUser created this one. A plain String, NOT a self-relation
+  // FK: the bootstrap owner is created by scripts/create-platform-user.mjs
+  // with no creator at all, and a nullable self-relation would add a
+  // migration-time cycle for a field that exists only for audit legibility.
+  // The authoritative record is PlatformAuditLog's platform_user.create row.
+  createdById String?
+  // When the account was disabled, so the users list can say "disabled 3
+  // months ago" rather than just "disabled". Set alongside `disabled`; the
+  // boolean stays authoritative so no query has to interpret a timestamp.
+  disabledAt  DateTime?
+  // When an owner last forced a TOTP re-enrolment. Left set after the user
+  // re-enrols, as a record that the reset happened.
+  totpResetAt DateTime?
+
+  @@index([disabled])
 }
 
 // Time-boxed, reasoned, dual-logged support access. Absence of a live row
