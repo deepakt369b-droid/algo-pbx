@@ -1,8 +1,12 @@
 import { auth, signOut } from "@/auth";
 import { AgentShell } from "@/components/agent-shell/agent-shell";
 import { CrmCallLayer } from "@/components/crm/crm-call-layer";
+import { redirect } from "next/navigation";
 import { SupportAccessBanner } from "@/components/support-access-banner";
+import { BillingWarningBanner } from "@/components/billing-warning-banner";
 import { getActiveGrantForTenant } from "@/lib/support-grant";
+import { unsafeGlobalDb as db } from "@/lib/db";
+import { evaluateBillingAccess } from "@/lib/billing/enforcement";
 
 // Mirrors admin/layout.tsx's pattern exactly: server component fetches
 // the session and hands a server action down to the client shell, which
@@ -29,6 +33,22 @@ export default async function AgentLayout({ children }: { children: React.ReactN
     ? await getActiveGrantForTenant(session.user.tenantId)
     : null;
 
+  // Billing enforcement, layout half — re-checked live because a session
+  // minted before the lapse stays valid until it expires. An AGENT has no
+  // billing-hold exemption (only the tenant ADMIN does), so past the grace
+  // window they are sent to the login page rather than into the workspace.
+  // UI ACCESS ONLY: their calls are unaffected throughout.
+  const tenant = session?.user.tenantId
+    ? await db.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { billingStatus: true, paidUntil: true, status: true },
+      })
+    : null;
+  const access = tenant ? evaluateBillingAccess(tenant) : null;
+  if (access?.rung === "login_blocked") {
+    redirect("/login?billing=hold");
+  }
+
   // userId is passed so AgentShell can detect the session cookie being
   // replaced underneath an already-rendered page — see
   // @/lib/use-session-identity-guard. Without it, an admin signing in on the
@@ -42,6 +62,7 @@ export default async function AgentLayout({ children }: { children: React.ReactN
       signOutAction={signOutAction}
     >
       <SupportAccessBanner grant={grant} />
+      <BillingWarningBanner access={access} />
       <CrmCallLayer>{children}</CrmCallLayer>
     </AgentShell>
   );

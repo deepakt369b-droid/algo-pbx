@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { unsafeGlobalDb as db } from "@/lib/db";
 
 // Time-boxed, reasoned, dual-logged support access (plan §3). A live row
@@ -93,6 +94,41 @@ function systemActorEmail(tenantId: string): string {
   return `platform-support-system+${tenantId}@algopbx.internal`;
 }
 
+/** Upserts (and returns the id of) the per-tenant system actor described
+ * above.
+ *
+ * Exported because the owner console hit the identical wall: any platform
+ * action that writes a TENANT-side AuditLog row — creating a grant, or
+ * pushing a VPN config through the existing tenant-scoped helper — needs an
+ * actorId that is a real User, and a PlatformUser is deliberately not one.
+ * Sharing this function rather than re-deriving the email string elsewhere
+ * keeps there being exactly ONE such row per tenant; two call sites inventing
+ * their own convention would quietly create two "do not use" accounts in the
+ * customer's user directory.
+ */
+export async function ensureSystemActorId(
+  // Prisma's own transaction-client type, so both a `$transaction` callback's
+  // `tx` and the global client satisfy it without a hand-rolled structural
+  // type that would have to track Prisma's generated argument shapes.
+  tx: Pick<Prisma.TransactionClient, "user">,
+  tenantId: string
+): Promise<string> {
+  const actor = await tx.user.upsert({
+    where: { email: systemActorEmail(tenantId) },
+    update: {},
+    create: {
+      tenantId,
+      email: systemActorEmail(tenantId),
+      name: "Platform Support (system account — do not use)",
+      role: "ADMIN",
+      passwordHash: null,
+      disabled: true,
+      disabledAt: new Date(),
+    },
+  });
+  return actor.id;
+}
+
 export async function createSupportGrant(input: CreateSupportGrantInput): Promise<SupportGrantRecord> {
   const reason = input.reason.trim();
   if (!reason) {
@@ -106,19 +142,7 @@ export async function createSupportGrant(input: CreateSupportGrantInput): Promis
   const expiresAt = new Date(Date.now() + durationMinutes * 60_000);
 
   return db.$transaction(async (tx) => {
-    const systemActor = await tx.user.upsert({
-      where: { email: systemActorEmail(input.tenantId) },
-      update: {},
-      create: {
-        tenantId: input.tenantId,
-        email: systemActorEmail(input.tenantId),
-        name: "Platform Support (system account — do not use)",
-        role: "ADMIN",
-        passwordHash: null,
-        disabled: true,
-        disabledAt: new Date(),
-      },
-    });
+    const systemActorId = await ensureSystemActorId(tx, input.tenantId);
 
     const grant = await tx.supportGrant.create({
       data: {
@@ -147,7 +171,7 @@ export async function createSupportGrant(input: CreateSupportGrantInput): Promis
       data: {
         tenantId: input.tenantId,
         action: "support_grant.create",
-        actorId: systemActor.id,
+        actorId: systemActorId,
         targetId: grant.id,
         metadata: {
           platformUserId: input.platformUserId,

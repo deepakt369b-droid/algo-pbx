@@ -14,6 +14,7 @@ import authConfig from "@/auth.config";
 import { checkLoginRateLimit, clearLoginAttempts, recordLoginFailure, getClientIp } from "@/lib/rate-limit";
 import { isProfileComplete } from "@/lib/registration";
 import { OTP_VERIFIED_COOKIE, verifyOtpVerifiedToken } from "@/lib/two-factor";
+import { evaluateLoginGate } from "@/lib/billing/login-gate";
 
 /** Auth.js hands authorize() a standard Web API Request, not a
  * NextRequest — no `.cookies` convenience, just a raw Cookie header to
@@ -124,8 +125,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const user = await unsafeGlobalDb.user.findUnique({
           where: { email },
-          include: { extension: true },
+          include: { extension: true, tenant: true },
         });
+
+        // Cross-plane rejection. A PlatformUser is deliberately not a User
+        // (D2), so a platform operator's email finds nothing above and would
+        // already fail — this block exists to make the refusal EXPLICIT and,
+        // more importantly, VISIBLE: someone typing owner credentials into
+        // the tenant login form is either confused or probing, and both are
+        // worth a record.
+        //
+        // The response stays a generic failure on purpose. Saying "that's a
+        // platform account, sign in at /platform" would confirm to an
+        // attacker that a given address is a privileged operator — the
+        // highest-value account in the system — which is a poor trade for a
+        // small UX gain. Same enumeration-avoidance reasoning as the
+        // disabled-account and rate-limit paths above.
+        if (!user) {
+          const platformUser = await unsafeGlobalDb.platformUser.findUnique({
+            where: { email },
+            select: { id: true },
+          });
+          if (platformUser) {
+            await unsafeGlobalDb.platformAuditLog.create({
+              data: {
+                action: "platform.login",
+                platformUserId: platformUser.id,
+                metadata: {
+                  outcome: "rejected_wrong_plane",
+                  note: "Platform credentials were used on the tenant login form.",
+                  ip,
+                },
+              },
+            });
+          }
+        }
 
         // Constant-time-ish path: always run a bcrypt.compare, whether or
         // not the user exists and whether or not they've completed their
@@ -176,6 +210,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             await recordLoginFailure(email, ip, user.id);
             return null;
           }
+        }
+
+        // Billing enforcement ladder (plan §5). UI LOGIN ONLY — this check
+        // has no telephony effect, and evaluateLoginGate returns nothing a
+        // telephony caller could act on. Asterisk keeps carrying this
+        // tenant's calls, inbound and outbound, at every rung.
+        //
+        // The tenant's own ADMIN is exempt and lands on /billing-hold: they
+        // are the person who can pay the invoice, and locking them out would
+        // make the ladder self-defeating.
+        const gate = evaluateLoginGate(user.tenant, user.role as "ADMIN" | "SUPERVISOR" | "AGENT");
+        if (!gate.allowed) {
+          await unsafeGlobalDb.auditLog.create({
+            data: {
+              action: "auth.signin_blocked_billing",
+              actorId: user.id,
+              tenantId: user.tenantId,
+              metadata: { rung: gate.rung, reason: gate.reason, telephonyAffected: false },
+            },
+          });
+          return null;
         }
 
         await clearLoginAttempts(email, ip);

@@ -7,12 +7,19 @@ import { cn } from "@/lib/utils";
 export function Tabs({
   tabs,
   className,
+  defaultIndex,
 }: {
   tabs: { label: string; content: ReactNode }[];
   className?: string;
+  /** Which tab opens first. Additive and optional — existing callers are
+   * unaffected. Needed so a deep link can land on a specific tab (the
+   * platform console's attention queue links to ?tab=billing and friends,
+   * and an item that opened the wrong tab would defeat the point of
+   * linking at all). */
+  defaultIndex?: number;
 }) {
   return (
-    <TabGroup className={className}>
+    <TabGroup className={className} defaultIndex={defaultIndex}>
       <TabList className="flex gap-1 border-b [border-color:rgb(var(--hairline))]">
         {tabs.map((t) => (
           <Tab
