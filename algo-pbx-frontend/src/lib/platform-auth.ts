@@ -135,6 +135,17 @@ export const {
           },
         });
 
+        // lastLoginAt surfaces in the platform users list. The audit table
+        // already holds every login, but "when did this account last sign
+        // in" should be answerable at a glance rather than by querying an
+        // audit log — a long-dormant account with standing access to every
+        // tenant is exactly what an operator should notice and disable, and
+        // a fact nobody can see easily is a fact nobody acts on.
+        await db.platformUser.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() },
+        });
+
         // Cast, not a `declare module "next-auth"` User augmentation — see
         // platform-auth.config.ts's comment on why a second global
         // augmentation for the platform plane isn't used here. Without
