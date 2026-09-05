@@ -4,10 +4,16 @@
 
 Updated 2026-09-04, end of session. Remaining, in order:
 
-1. **Multi-tenant wave 1 loose ends**: Playwright acceptance (`e2e/tenancy-acceptance.*.spec.ts`) and the real-call check were never run against the live stack (need a running app + a human for the call) — not blocking, but should happen before wave 2's route-level behavior is trusted beyond "it compiles and the smoke test passed". The pre-migration encrypted snapshot (`/root/tenancy-prod-deploy/` on the VPS) is a rollback point, not yet reviewed for deletion.
-2. **Multi-tenant waves 4-7** — not started, per the plan's own sequencing: billing enforcement, domain/TLS re-scope, telephony namespacing (needs live Asterisk), tenant provisioning (blocked on CA signing flow v2 + G2 tunnel, same blockers as below).
-3. Everything below this line (G2 tunnel bring-up, CA signing flow v2, live-call verification, Dinstar syslog live-traffic) is **carried over unchanged from before** — none of it was touched this session. (Pushing to GitHub is no longer on this list — done, see above; `main`/`origin/main`/VPS are all in sync at `4d04b09`.)
-4. **G2 — the tunnel bring-up test (next concrete step, everything is
+1. **New task queued: public website for saharatechs.com (plan approved, not started).** Full plan at `C:\Users\DK\.claude\plans\task-public-website-for-radiant-shore.md` — read it in full before starting, this is only a summary. Build a standalone, independently deployable `website/` (Next.js 14 static export, Tailwind 3.4, `@headlessui/react`) at the apex `saharatechs.com`; `pbx.saharatechs.com` untouched. Greenfield build (no fork — no local copy of bazz-blocks-saas-starter/stratify exists and `gh` isn't installed; confirmed with operator to build greenfield reusing this app's own Apple-black token system instead). Pages: landing (hero/how-it-works/features/ONE pricing card — AED 500/month includes 4 seats, manual invoicing/contact-to-onboard/FAQ/contact `algopbx@saharatechs.com`), `/terms`, `/privacy` (PDPL-aligned, controller=customer/processor=us), `/docs`. No payment gateway scaffolding (explicitly out of scope). Sequencing:
+   1. Build `website/`, verify locally with Playwright (all 4 pages, mobile+desktop, light+dark).
+   2. **Gate A** — show `/terms` and `/privacy` drafts for legal review before shipping (entity/jurisdiction left as marked `[ENTITY]`/`[JURISDICTION]` placeholder for operator to fill).
+   3. **Gate B** — show the Caddy config **generator** diff (`scripts/render-caddy-env.sh` + the domain-apply route) and a dry-run of the regenerated Caddyfile — never edit the generated file directly, and never touch Cloudflare/DNS (apex A record already exists, grey-cloud, verify only).
+   4. Deploy (static export served by Caddy `file_server`, no new container needed); `caddy validate` before reload; after reload verify all 4: apex 200+cert, `pbx.saharatechs.com` 200+cert+login renders, `www` redirects sensibly, agent console WebSocket still upgrades (this is the regression that hurt silently on 2026-09-01). Keep a `.bak` of the prior generated Caddyfile; any failure in this step = immediate rollback via that `.bak`, no live debugging on prod.
+   5. Commit (`website/` + Caddy generator change). **No push without explicit go-ahead.** Update `LLM.md` Build Log + Phase Checklist per `CLAUDE.md`.
+2. **Multi-tenant wave 1 loose ends**: Playwright acceptance (`e2e/tenancy-acceptance.*.spec.ts`) and the real-call check were never run against the live stack (need a running app + a human for the call) — not blocking, but should happen before wave 2's route-level behavior is trusted beyond "it compiles and the smoke test passed". The pre-migration encrypted snapshot (`/root/tenancy-prod-deploy/` on the VPS) is a rollback point, not yet reviewed for deletion.
+3. **Multi-tenant waves 4-7** — not started, per the plan's own sequencing: billing enforcement, domain/TLS re-scope, telephony namespacing (needs live Asterisk), tenant provisioning (blocked on CA signing flow v2 + G2 tunnel, same blockers as below).
+4. Everything below this line (G2 tunnel bring-up, CA signing flow v2, live-call verification, Dinstar syslog live-traffic) is **carried over unchanged from before** — none of it was touched this session. (Pushing to GitHub is no longer on this list — done, see above; `main`/`origin/main`/VPS are all in sync at `4d04b09`.)
+5. **G2 — the tunnel bring-up test (next concrete step, everything is
    ready for it)**. **PRE-FLIGHT DONE 2026-09-04** — server side verified
    healthy and one real blocker found (see "G2 pre-flight" below); the
    `ufw` fix is the only thing standing between here and the upload, and
@@ -27,14 +33,14 @@ Updated 2026-09-04, end of session. Remaining, in order:
    server config AND the client `.ovpn` — see part 2 for why the client
    side needed a separate fix) but this is the first time it meets the
    real device.
-5. **Only after the tunnel is confirmed up**: G2's remaining steps — run
+6. **Only after the tunnel is confirmed up**: G2's remaining steps — run
    the cutover (`POST /api/admin/gateway-sites/[id]/cutover`, already
    built, re-points `DINSTAR_LAN_IP` + verifies via AMI), real
    inbound+outbound test call over the tunnel, confirm syslog arrives via
    `10.8.0.1` (needs `SYSLOG_BIND_IP_SECONDARY` set on
    `gateway-syslog-listener` first — not done yet, do this as part of G2,
    not before), only then mark Tailscale legacy.
-6. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
+7. **"CA signing flow v2" — queued, NOT started, needs a plan brought to
    the operator for review first** (their explicit instruction — do not
    build unilaterally): encrypted CA-passphrase storage in the
    AppSetting store, an admin-approval-at-signing-time flow (passphrase
@@ -44,12 +50,12 @@ Updated 2026-09-04, end of session. Remaining, in order:
    Until this ships, `bridge-watch.sh`'s unattended signing stays
    disabled by design (interim hard rule, see part 2) — every new client
    cert is issued manually by an admin.
-7. **Live-call verification (deferred by the operator to a later
+8. **Live-call verification (deferred by the operator to a later
    session)**: screen-pop on a real inbound call + the disposition
    prompt (Operator TODO old #3's last bullet), S6 announcement prompt
    heard on a real call (`docs/S6-real-call-test-plan.md`),
    Manager-merge/Phase MM (`LLM.md §30`, never live-call-tested).
-8. **Dinstar gateway syslog — live traffic verification (deferred by the
+9. **Dinstar gateway syslog — live traffic verification (deferred by the
    operator, SIM was ejected mid-diagnosis)**: everything is built and
    deployed (schema, parser, receiver sidecar, ingest route, retention, UI
    panel, alerts), but **zero packets have ever been observed arriving** at

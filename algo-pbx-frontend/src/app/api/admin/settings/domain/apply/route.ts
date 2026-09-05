@@ -18,7 +18,62 @@ const GENERATED_DIR = process.env.GENERATED_CONFIG_DIR || "/generated";
 // registry validator entirely, so this route needs its own guard too.
 const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
+// The public marketing/legal/docs site (website/, task "public website for
+// saharatechs.com") lives at the apex domain, one level up from
+// VM_PUBLIC_DOMAIN's own "pbx." subdomain — e.g. VM_PUBLIC_DOMAIN
+// "pbx.saharatechs.com" -> apex "saharatechs.com". Derived rather than a
+// second AppSetting because the two names are meant to always move
+// together (same zone, same cert automation, same Cloudflare token) and a
+// second independently-editable setting would let them drift out of sync
+// with no validation catching it. Only fires when VM_PUBLIC_DOMAIN
+// actually has that "pbx." prefix — an operator who set VM_PUBLIC_DOMAIN to
+// something else entirely gets the exact same Caddyfile as before this
+// feature existed, never a guessed apex block.
+const PBX_SUBDOMAIN_RE = /^pbx\.(.+)$/;
+
+function apexDomainFor(domain: string): string | null {
+  const m = PBX_SUBDOMAIN_RE.exec(domain);
+  return m ? m[1] : null;
+}
+
 function renderCaddyfile(domain: string): string {
+  const apex = apexDomainFor(domain);
+
+  const websiteBlock = apex
+    ? `
+# Public marketing/legal/docs site (website/) — static export served
+# directly by Caddy, no app container involved. Requires website/out/ to
+# exist on the host (built during deploy, see website/README or
+# handoff.md's deploy sequence) BEFORE this config is applied, or Caddy
+# will fail to start entirely (a missing file_server root is a fatal
+# config-load error the same way a bad tls block is — see this file's own
+# header history). www redirects to the bare apex; no separate cert
+# needed for it beyond what Cloudflare DNS-01 already covers for the zone.
+http://${apex} {
+	redir https://${apex}{uri} permanent
+}
+
+https://${apex} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	encode zstd gzip
+
+	root * /srv/website
+	file_server
+}
+
+https://www.${apex} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	redir https://${apex}{uri} permanent
+}
+`
+    : "";
+
   return `# GENERATED FILE — DO NOT HAND-EDIT.
 # Written by POST /api/admin/settings/domain/apply (Loop C4). Hand edits
 # survive until the next Connect-domain action, then are silently
@@ -38,7 +93,7 @@ https://${domain} {
 
 	reverse_proxy web:3000
 }
-
+${websiteBlock}
 # Headscale (OpenVPN/Headscale/connectivity task, Node C) — the fallback
 # connectivity control plane's own subdomain. Same Cloudflare DNS-01
 # token as the block above (one Caddy instance, one cert store); a

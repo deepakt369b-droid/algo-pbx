@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================
+   Apple-black design system — copied from algo-pbx-frontend/src/app/
+   globals.css (same token values) so the marketing site matches the app
+   pixel-for-pixel. Keep these two files in sync by hand if the app's
+   palette ever changes; they are intentionally NOT shared via import since
+   this is a separate, independently deployable app.
+   ========================================================================= */
+
+:root {
+  color-scheme: light;
+
+  --canvas: 255 255 255;
+  --surface: 255 255 255;
+  --surface-subtle: 245 245 247;
+  --surface-hover: 240 240 242;
+  --hairline: 0 0 0 / 0.10;
+  --hairline-strong: 0 0 0 / 0.16;
+
+  --text-primary: 29 29 31;
+  --text-secondary: 99 99 102;
+  --text-tertiary: 142 142 147;
+  --text-on-accent: 255 255 255;
+
+  --accent: 10 132 255;
+  --accent-hover: 0 113 227;
+  --accent-subtle: 10 132 255 / 0.10;
+
+  --success: 48 164 108;
+  --success-subtle: 48 164 108 / 0.12;
+  --warning: 191 137 0;
+  --warning-subtle: 191 137 0 / 0.14;
+  --danger: 215 58 73;
+  --danger-subtle: 215 58 73 / 0.12;
+
+  --ring: 10 132 255 / 0.55;
+
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-lg: 14px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: 0 0 0;
+  --surface: 28 28 30;
+  --surface-subtle: 44 44 46;
+  --surface-hover: 58 58 60;
+  --hairline: 255 255 255 / 0.08;
+  --hairline-strong: 255 255 255 / 0.14;
+
+  --text-primary: 245 245 247;
+  --text-secondary: 174 174 178;
+  --text-tertiary: 122 122 128;
+  --text-on-accent: 255 255 255;
+
+  --accent: 10 132 255;
+  --accent-hover: 51 153 255;
+  --accent-subtle: 10 132 255 / 0.16;
+
+  --success: 48 209 88;
+  --success-subtle: 48 209 88 / 0.16;
+  --warning: 255 214 10;
+  --warning-subtle: 255 214 10 / 0.16;
+  --danger: 255 69 58;
+  --danger-subtle: 255 69 58 / 0.16;
+
+  --ring: 10 132 255 / 0.65;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --canvas: 0 0 0;
+    --surface: 28 28 30;
+    --surface-subtle: 44 44 46;
+    --surface-hover: 58 58 60;
+    --hairline: 255 255 255 / 0.08;
+    --hairline-strong: 255 255 255 / 0.14;
+
+    --text-primary: 245 245 247;
+    --text-secondary: 174 174 178;
+    --text-tertiary: 122 122 128;
+    --text-on-accent: 255 255 255;
+
+    --accent: 10 132 255;
+    --accent-hover: 51 153 255;
+    --accent-subtle: 10 132 255 / 0.16;
+
+    --success: 48 209 88;
+    --success-subtle: 48 209 88 / 0.16;
+    --warning: 255 214 10;
+    --warning-subtle: 255 214 10 / 0.16;
+    --danger: 255 69 58;
+    --danger-subtle: 255 69 58 / 0.16;
+
+    --ring: 10 132 255 / 0.65;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-primary antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+      "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
+  }
+
+  * {
+    border-color: rgb(var(--hairline));
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border bg-surface;
+    border-color: rgb(var(--hairline));
+  }
+}

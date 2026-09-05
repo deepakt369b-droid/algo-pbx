@@ -740,6 +740,13 @@ services:
       # first bring-up and POST /api/admin/settings/domain/apply rewrites
       # once a real domain is configured.
       - ./pbx_configs/generated/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Public marketing/legal/docs site (website/) static export. Built on
+      # the host (`cd website && npm run build`, static `output: "export"`)
+      # BEFORE `caddy` is (re)started with the apex `file_server` block
+      # active — an empty/missing dir here is a fatal config-load error for
+      # that block, same failure class as a bad `tls` directive. Read-only:
+      # Caddy only ever serves these files, never writes them.
+      - ./website/out:/srv/website:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:
