@@ -2,6 +2,19 @@
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  experimental: {
+    // ssh2 (via ssh2-sftp-client, used by the recording-delivery transport)
+    // ships a compiled native addon — sshcrypto.node. webpack has no loader
+    // for a binary and fails the whole build trying to parse it. Marking the
+    // package external leaves it to Node's own require at runtime, which is
+    // the correct handling for a native module and costs nothing here: these
+    // are server-only routes and a worker script, never client code.
+    //
+    // @aws-sdk/client-s3 is listed for a different reason — it is pure JS and
+    // would bundle fine, but it is large and only ever used server-side, so
+    // externalising keeps it out of the standalone server bundle.
+    serverComponentsExternalPackages: ["ssh2", "ssh2-sftp-client", "@aws-sdk/client-s3"],
+  },
   // Security headers, including CSP. The original hydration bug was caused
   // by a static `script-src 'self'` with no `'unsafe-inline'` and no nonce:
   // Next.js App Router ships its RSC payload as inline
