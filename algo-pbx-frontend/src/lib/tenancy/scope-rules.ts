@@ -55,6 +55,14 @@ export const TENANT_SCOPED_MODELS: readonly string[] = [
   "ApiKey",
   "GatewayEvent",
   "GatewaySite",
+  // Recording delivery (owner console). Both carry a tenantId and both are
+  // listed here even though the platform console reads them through
+  // unsafeGlobalDb: the moment a tenant-side page wants to show its own
+  // delivery status, tenantDb() must scope it rather than throw "unknown
+  // model" — and an unlisted model with a tenantId is exactly the shape a
+  // future cross-tenant leak takes.
+  "RecordingStorageTarget",
+  "RecordingDelivery",
 ];
 
 // AppSetting is the one model that does not fit the simple pattern (plan

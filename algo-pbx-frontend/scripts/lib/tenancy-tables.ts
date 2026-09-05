@@ -42,6 +42,13 @@ export const TENANCY_TABLES: readonly string[] = [
   "AppSetting",
   "GatewayEvent",
   "GatewaySite",
+  // Added with the recording-delivery feature (2026-09-06). Kept in sync
+  // with src/lib/tenancy/scope-rules.ts's TENANT_SCOPED_MODELS — these two
+  // lists must always name the same set. Note both tables were created
+  // AFTER the tenancy backfill migration, so they start life with a NOT NULL
+  // tenantId and need no backfill of their own.
+  "RecordingStorageTarget",
+  "RecordingDelivery",
 ];
 
 // Platform-global tables (plan §1/§7) — never get a tenantId. Listed here

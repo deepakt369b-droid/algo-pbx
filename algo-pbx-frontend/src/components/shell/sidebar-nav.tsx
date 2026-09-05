@@ -22,9 +22,10 @@ export type NavGroup = {
 };
 
 function isActive(pathname: string, href: string) {
-  // "/admin" and "/agent" are exact; everything else is a prefix match so
-  // nested/detail routes keep their parent highlighted.
-  if (href === "/admin" || href === "/agent") return pathname === href;
+  // Shell roots are exact; everything else is a prefix match so nested/detail
+  // routes keep their parent highlighted. Without "/platform" here, the
+  // console's Overview link would stay highlighted on every /platform/* page.
+  if (href === "/admin" || href === "/agent" || href === "/platform") return pathname === href;
   return pathname === href || pathname.startsWith(href + "/");
 }
 

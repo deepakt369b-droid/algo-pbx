@@ -1,6 +1,8 @@
 import { auth, signOut } from "@/auth";
 import { AgentShell } from "@/components/agent-shell/agent-shell";
 import { CrmCallLayer } from "@/components/crm/crm-call-layer";
+import { SupportAccessBanner } from "@/components/support-access-banner";
+import { getActiveGrantForTenant } from "@/lib/support-grant";
 
 // Mirrors admin/layout.tsx's pattern exactly: server component fetches
 // the session and hands a server action down to the client shell, which
@@ -17,6 +19,16 @@ export default async function AgentLayout({ children }: { children: React.ReactN
     await signOut({ redirectTo: "/login" });
   }
 
+  // "No silent impersonation" (plan §3): while a platform operator holds a
+  // live support grant into this tenant, every page of the tenant UI says so,
+  // naming them and the expiry. This is the guarantee the customer is given —
+  // the grant machinery is worthless to them if they cannot see it — so it is
+  // rendered inside the shell rather than on individual pages, where it could
+  // be missed off one.
+  const grant = session?.user.tenantId
+    ? await getActiveGrantForTenant(session.user.tenantId)
+    : null;
+
   // userId is passed so AgentShell can detect the session cookie being
   // replaced underneath an already-rendered page — see
   // @/lib/use-session-identity-guard. Without it, an admin signing in on the
@@ -29,6 +41,7 @@ export default async function AgentLayout({ children }: { children: React.ReactN
       role={session?.user.role}
       signOutAction={signOutAction}
     >
+      <SupportAccessBanner grant={grant} />
       <CrmCallLayer>{children}</CrmCallLayer>
     </AgentShell>
   );

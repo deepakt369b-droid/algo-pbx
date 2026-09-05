@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { AdminShell } from "@/components/admin-shell/admin-shell";
+import { SupportAccessBanner } from "@/components/support-access-banner";
+import { getActiveGrantForTenant } from "@/lib/support-grant";
 
 // Server component: fetches the session, hands a server action + the
 // user's email down to the client AdminShell (sidebar/topbar/health
@@ -31,8 +33,15 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // userId lets AdminShell notice the session cookie being swapped
   // underneath an already-rendered admin page — see
   // @/lib/use-session-identity-guard.
+  // "No silent impersonation" (plan §3): while a platform operator holds a
+  // live support grant into this tenant, the admin UI says so on every page,
+  // naming them and the expiry. Rendered in the layout rather than per page
+  // so it cannot be omitted from one.
+  const grant = await getActiveGrantForTenant(session.user.tenantId);
+
   return (
     <AdminShell userId={session.user.id} userEmail={session.user.email} signOutAction={signOutAction}>
+      <SupportAccessBanner grant={grant} />
       {children}
     </AdminShell>
   );

@@ -171,6 +171,8 @@ model Tenant {
   pipelineStages          PipelineStage[]
   appSettings             AppSetting[]
   supportGrants           SupportGrant[]
+  recordingStorageTarget  RecordingStorageTarget?
+  recordingDeliveries     RecordingDelivery[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -682,8 +684,92 @@ model Recording {
   hiddenByUser      User?            @relation(fields: [hiddenByUserId], references: [id])
   createdAt         DateTime         @default(now())
 
+  deliveries        RecordingDelivery[]
+
   @@index([cdrId])
   @@index([tenantId])
+}
+
+// =========================================
+// Per-tenant recording storage & delivery
+// =========================================
+// The named follow-on feature from the SaaS plan §4: recordings are the
+// customer's data, and several want them landing in their own S3 bucket or
+// pulled onto a machine they control rather than living only on our disk.
+//
+// Two rules shape these models:
+//   1. VERIFY THEN PURGE. A local file is removed only after the delivered
+//      copy has been read back successfully. Deleting on "upload returned
+//      200" is how a silent bucket-policy change turns into permanently lost
+//      customer recordings — and unlike most bugs, that one is unrecoverable.
+//   2. NO PLAINTEXT CREDENTIALS. Target config (S3 keys, SFTP passwords) is
+//      encrypted with the same AES-256-GCM helper the settings store uses.
+
+enum RecordingTargetKind {
+  PLATFORM_LOCAL
+  CUSTOMER_S3
+  CUSTOMER_SFTP
+}
+
+enum DeliveryState {
+  PENDING
+  IN_FLIGHT
+  DELIVERED
+  FAILED
+}
+
+model RecordingStorageTarget {
+  id       String @id @default(cuid())
+  // One target per tenant for now. A tenant wanting both S3 and SFTP is a
+  // real but unrequested case; making this @unique keeps the delivery worker
+  // from having to reason about partial success across targets, which is
+  // where verify-then-purge would get genuinely hard.
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  kind RecordingTargetKind @default(PLATFORM_LOCAL)
+  // AES-256-GCM via src/lib/settings/crypto.ts. Never plaintext, and never
+  // returned to the client — the UI shows a suffix only.
+  configEncrypted String?
+  // Off by default so configuring a target never silently starts shipping
+  // customer audio somewhere before the operator has confirmed it works.
+  enabled           Boolean   @default(false)
+  verifyBeforePurge Boolean   @default(true)
+  lastVerifiedAt    DateTime?
+
+  deliveries RecordingDelivery[]
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+}
+
+model RecordingDelivery {
+  id          String                 @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id])
+  recordingId String
+  recording   Recording              @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  targetId    String
+  target      RecordingStorageTarget @relation(fields: [targetId], references: [id])
+
+  state    DeliveryState @default(PENDING)
+  attempts Int           @default(0)
+  // Retained after a later success, so a flapping target is still visible
+  // rather than looking clean the moment one attempt gets through.
+  lastError     String?
+  lastAttemptAt DateTime?
+  deliveredAt   DateTime?
+  // Set only once the delivered copy has been read back and matched.
+  verifiedAt DateTime?
+  purgedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One delivery row per recording per target — the worker upserts on this,
+  // so a retry can never fan out into duplicate in-flight uploads.
+  @@unique([recordingId, targetId])
+  @@index([tenantId, state])
+  @@index([state, lastAttemptAt])
 }
 
 // Audit trail — originally scoped to recording lifecycle actions only, now
