@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { requireAdminSession } from "@/lib/auth-guard";
-import { getSettingDef, SETTINGS_REGISTRY } from "@/lib/settings/schema";
+import { getSettingDef, SETTINGS_REGISTRY, tenantVisibleSettings } from "@/lib/settings/schema";
 import { getSetting, getSettingMeta, setSetting } from "@/lib/settings/service";
 import { withApiErrorHandler } from "@/lib/api-handler";
 
@@ -37,8 +37,12 @@ export const GET = withApiErrorHandler(async function GET() {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
 
+  // Domain & TLS moved to the platform console (plan §6): one Cloudflare
+  // token and one wildcard certificate serve every tenant, so those keys are
+  // no longer a tenant admin's to see or set. They stay in the registry for
+  // their env fallback and validator — only their visibility changes here.
   const results = await Promise.all(
-    SETTINGS_REGISTRY.map(async (def) => {
+    tenantVisibleSettings(SETTINGS_REGISTRY).map(async (def) => {
       const meta = await getSettingMeta(def.key);
       return {
         key: def.key,
@@ -81,6 +85,17 @@ export const PATCH = withApiErrorHandler(async function PATCH(request: NextReque
 
   const def = getSettingDef(parsed.data.key);
   if (!def) return NextResponse.json({ error: `Unknown setting "${parsed.data.key}"` }, { status: 400 });
+
+  // Enforced here, not merely hidden in the UI. Removing a field from a page
+  // does not stop a PATCH, and CLOUDFLARE_API_TOKEN in particular can rewrite
+  // DNS for every tenant workspace — it must not be settable by a tenant
+  // admin through a hand-made request.
+  if (def.platformOnly) {
+    return NextResponse.json(
+      { error: `"${def.key}" is managed by the platform owner console and cannot be set here.` },
+      { status: 403 }
+    );
+  }
 
   if (parsed.data.value === "") {
     // Leave-unchanged no-op — not an error, just nothing to do.

@@ -31,6 +31,25 @@ export interface SettingDef {
   envFallback?: string;
   default?: string;
   validator: z.ZodTypeAny;
+  /**
+   * Owned by the platform plane, not by tenant admins (approved plan §6).
+   *
+   * The definition STAYS in this registry rather than being deleted, because
+   * it is what gives the key its env fallback, its validator and its secret
+   * flag — and getSetting()/requireSetting() rely on all three regardless of
+   * which plane writes the value. What the flag changes is visibility: the
+   * tenant-admin settings page filters these out, and they are edited from
+   * /platform/settings instead.
+   *
+   * Deleting the definitions would have silently dropped the env fallback
+   * that keeps VM_PUBLIC_DOMAIN resolvable on a fresh deploy.
+   */
+  platformOnly?: boolean;
+}
+
+/** Settings a tenant admin may see and edit — everything not platform-owned. */
+export function tenantVisibleSettings(defs: readonly SettingDef[]): SettingDef[] {
+  return defs.filter((d) => !d.platformOnly);
 }
 
 export const SETTINGS_REGISTRY: SettingDef[] = [
@@ -298,6 +317,10 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   {
     key: "VM_PUBLIC_DOMAIN",
     section: "domain_tls",
+    // Platform-owned (plan §6): one domain, one wildcard certificate, every
+    // tenant. Edited at /platform/settings; tenants see a read-only
+    // "Your workspace URL" instead.
+    platformOnly: true,
     label: "Public Domain",
     help: "The domain agents' browsers and this VM's Caddy/Asterisk/Coturn all present themselves as. Changing this alone does nothing to the running containers — use the \"Connect domain\" action below, not just Save.",
     secret: false,
@@ -307,6 +330,10 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   {
     key: "CLOUDFLARE_API_TOKEN",
     section: "domain_tls",
+    // Platform-owned (plan §6). This single token can rewrite DNS for every
+    // tenant workspace, which is precisely why it does not belong in a
+    // tenant admin's settings page.
+    platformOnly: true,
     label: "Cloudflare API Token",
     help: "A scoped token with BOTH Zone:DNS:Edit AND Zone:Zone:Read on the zone covering the domain above (the \"Edit zone DNS\" template scoped to that one zone gives both). Create it at Cloudflare → My Profile → API Tokens. Used for the Let's Encrypt DNS-01 challenge and the A-record write, never sent anywhere else.",
     secret: true,

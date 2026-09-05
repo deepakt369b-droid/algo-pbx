@@ -84,7 +84,7 @@ const NAV: NavGroup[] = [
       { href: "/admin/escalations", label: "Manager escalation", icon: Headphones },
       { href: "/admin/dnc", label: "Do not call", icon: Ban },
       { href: "/admin/recording", label: "Call recording", icon: Disc3 },
-      { href: "/admin/domain", label: "Connect domain", icon: Globe },
+      { href: "/admin/domain", label: "Workspace URL", icon: Globe },
       { href: "/admin/settings", label: "Settings", icon: Settings },
       { href: "/admin/system", label: "System", icon: Activity },
     ],

@@ -40,8 +40,6 @@ export default function SettingsPage() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [testingSection, setTestingSection] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<{ key: string; text: string } | null>(null);
-  const [applying, setApplying] = useState(false);
-  const [applyResult, setApplyResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -123,22 +121,8 @@ export default function SettingsPage() {
     }
   };
 
-  const applyDomain = async () => {
-    setApplying(true);
-    setApplyResult(null);
-    try {
-      const res = await fetch("/api/admin/settings/domain/apply", { method: "POST" });
-      const data = await res.json();
-      setApplyResult({ ok: res.ok && data.ok, text: data.message ?? data.error ?? "Unknown result" });
-    } catch (err) {
-      setApplyResult({ ok: false, text: err instanceof Error ? err.message : "Network error." });
-    } finally {
-      setApplying(false);
-    }
-  };
-
   const sections = Array.from(new Set(settings.map((s) => s.section)));
-  const testableSections = ["email", "whatsapp_openwa", "whatsapp_meta", "sms_dinstar", "firebase", "domain_tls"];
+  const testableSections = ["email", "whatsapp_openwa", "whatsapp_meta", "sms_dinstar", "firebase"];
 
   return (
     <div className="flex w-full flex-col items-center gap-6">
@@ -213,25 +197,15 @@ export default function SettingsPage() {
 
           {section === "domain_tls" && (
             <div className="mt-4 flex flex-col gap-2 border-t border-border pt-4">
+              {/* Plan §6: Domain & TLS is platform-owned now. One Cloudflare
+                  token and one wildcard certificate serve every tenant, so the
+                  editable fields and the Connect action moved to the owner
+                  console. What remains here is the read-only fact a tenant
+                  admin actually needs: where their workspace lives. */}
               <p className="text-xs text-tertiary">
-                Save the domain and token above first, then Connect — this writes the config Caddy actually reads
-                and asks it to recreate itself with a fresh Let&apos;s Encrypt certificate. Save alone does not do this.
-                First time setting this up?{" "}
-                <a href="/admin/domain" className="text-cyan hover:underline">
-                  Use the guided Connect Domain page
-                </a>{" "}
-                instead — same fields, plus live status and a Cloudflare token walkthrough.
+                Domain and TLS are managed by Algo PBX for every workspace. There is nothing to
+                configure here.
               </p>
-              <button
-                onClick={applyDomain}
-                disabled={applying}
-                className="self-start rounded-lg bg-blue px-4 py-2 text-xs font-medium text-primary disabled:opacity-50"
-              >
-                {applying ? "Connecting…" : "Connect domain"}
-              </button>
-              {applyResult && (
-                <p className={`text-xs ${applyResult.ok ? "text-success" : "text-danger"}`}>{applyResult.text}</p>
-              )}
             </div>
           )}
         </div>
