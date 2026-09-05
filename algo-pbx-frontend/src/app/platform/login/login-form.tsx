@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
 // Single-phase login form, unlike src/app/login/login-form.tsx's two-phase
@@ -32,26 +31,30 @@ export function PlatformLoginForm({ callbackUrl }: { callbackUrl?: string }) {
     setError(null);
     setPending(true);
     try {
-      // Uses next-auth/react's signIn, but note this app has TWO NextAuth
-      // instances — this call must hit the platform one, not the tenant
-      // one. That routing happens by cookie/route, not by which client
-      // helper is imported (both `/api/auth/*` and `/api/platform-auth/*`
-      // aren't distinct here — see the route handler at
-      // src/app/api/platform-auth/[...nextauth]/route.ts, which wires
-      // next-auth/react's default basePath to the platform instance's
-      // handlers for pages under /platform).
-      const result = await signIn("credentials", {
-        email,
-        password,
-        code,
-        redirect: false,
-        // next-auth/react defaults to POSTing /api/auth/callback/credentials;
-        // the platform instance's route handlers live under
-        // /api/platform-auth instead (see that route file's comment), so
-        // basePath here is required, not cosmetic.
-        basePath: "/api/platform-auth",
+      // Deliberately NOT next-auth/react's signIn(): this app has TWO
+      // NextAuth instances, and signIn() targets a single global
+      // `__NEXTAUTH.basePath` set by whichever <SessionProvider> last
+      // rendered — it has no per-call basePath override despite appearing
+      // to accept one in its options object (that value silently gets
+      // absorbed into the POST body instead). Since the root layout's
+      // tenant-plane <AuthSessionProvider> sets that global to `/api/auth`,
+      // signIn() here would always POST to the TENANT credentials
+      // endpoint, never the platform one — confirmed live via a browser
+      // network trace, not a hunch. Posting to `/api/platform-auth/*`
+      // directly sidesteps that shared global entirely.
+      const csrfRes = await fetch("/api/platform-auth/csrf");
+      const { csrfToken } = await csrfRes.json();
+      const res = await fetch("/api/platform-auth/callback/credentials", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Auth-Return-Redirect": "1",
+        },
+        body: new URLSearchParams({ email, password, code, csrfToken, callbackUrl: safeCallbackUrl(callbackUrl) }),
       });
-      if (result?.error) {
+      const data = await res.json();
+      const errorParam = data?.url ? new URL(data.url).searchParams.get("error") : "1";
+      if (!res.ok || errorParam) {
         setError("Invalid email, password, or code.");
         return;
       }
