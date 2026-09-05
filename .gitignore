@@ -77,5 +77,6 @@ algo-pbx-frontend/.auth/
 # Playwright
 algo-pbx-frontend/test-results/
 algo-pbx-frontend/playwright-report/
+algo-pbx-frontend/e2e/screenshots/
 algo-pbx-frontend/blob-report/
 algo-pbx-frontend/.last-run.json
