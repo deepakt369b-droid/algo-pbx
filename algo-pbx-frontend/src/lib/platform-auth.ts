@@ -43,7 +43,13 @@ const CredentialsSchema = z.object({
   // collects password + TOTP code together in one submit, since the code
   // already lives in the operator's authenticator app before they ever
   // load the page.
-  code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code from your authenticator app."),
+  //
+  // Optional/blank here on purpose: an account with no CONFIRMED secret yet
+  // (freshly created by scripts/create-platform-user.mjs) has no code to
+  // enter. authorize() below still hard-blocks that account from anywhere
+  // but /platform/setup — this schema just has to not reject the blank
+  // field the login form submits on that first attempt.
+  code: z.union([z.string().regex(/^\d{6}$/), z.literal("")]).optional().default(""),
 });
 
 // Same user-enumeration-timing defense as src/auth.ts's DUMMY_HASH — a
@@ -101,17 +107,23 @@ export const {
         if (!user || !validPassword) return null;
         if (user.disabled) return null;
 
-        // Mandatory TOTP from day one (plan §"Platform auth requirements"):
-        // a PlatformUser row with no CONFIRMED secret cannot complete login
-        // at all — this is a hard block, not "let them in and prompt setup
-        // afterward". First-time TOTP secret generation + confirmation
-        // happens out-of-band via scripts/create-platform-user.mjs (the
-        // platform-plane equivalent of scripts/create-admin-user.mjs),
-        // never through this login form — there is no unauthenticated
-        // "set up 2FA" web route, which would itself be a way to bypass
-        // the mandate.
-        if (!user.totpSecret || !user.totpConfirmedAt) return null;
-        if (!verifyTotpCode(user.totpSecret, code)) return null;
+        // Mandatory TOTP from day one (plan §"Platform auth requirements"),
+        // but enforced two different ways depending on enrollment state:
+        //
+        // - Already enrolled (totpConfirmedAt set): a code is REQUIRED and
+        //   must verify, exactly as before. Wrong/missing code -> no session.
+        // - Not yet enrolled (fresh account from
+        //   scripts/create-platform-user.mjs, or a script-issued password
+        //   reset that cleared the old secret): password alone is enough to
+        //   establish a session, but requirePlatformSession()
+        //   (platform-guard.ts) refuses that session everywhere except
+        //   /platform/setup until enrollment (and any forced password
+        //   change) actually completes in-browser. This is NOT "let them
+        //   into the console and prompt setup afterward" — it's "let them
+        //   into the one screen that can complete setup, nothing else".
+        if (user.totpConfirmedAt) {
+          if (!user.totpSecret || !verifyTotpCode(user.totpSecret, code)) return null;
+        }
 
         // Mirrors src/auth.ts's "every successful sign-in is audited"
         // convention, on the platform's own audit table.

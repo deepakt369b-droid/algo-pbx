@@ -25,8 +25,11 @@ function hasShape(session: unknown): session is PlatformSession {
   return Boolean(s?.user?.id && s.user.email && s.user.role);
 }
 
-export async function requirePlatformSession(): Promise<
-  { session: PlatformSession } | { response: NextResponse }
+/** Session-valid-and-not-disabled check shared by both guards below. Does
+ * NOT check setup completion — callers decide what that means for them. */
+async function requireLiveSession(): Promise<
+  { session: PlatformSession; dbUser: { disabled: boolean; totpConfirmedAt: Date | null; mustChangePassword: boolean } }
+  | { response: NextResponse }
 > {
   const raw = await platformAuth();
   if (!hasShape(raw)) {
@@ -46,13 +49,44 @@ export async function requirePlatformSession(): Promise<
   // sized for.
   const dbUser = await db.platformUser.findUnique({
     where: { id: session.user.id },
-    select: { disabled: true },
+    select: { disabled: true, totpConfirmedAt: true, mustChangePassword: true },
   });
   if (!dbUser || dbUser.disabled) {
     return { response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
 
-  return { session };
+  return { session, dbUser };
+}
+
+/** Full guard for every real platform-console route (pages and APIs alike,
+ * except the setup screen itself): refuses a session that hasn't finished
+ * the forced password change + TOTP enrollment from
+ * scripts/create-platform-user.mjs, not just an invalid/disabled one. */
+export async function requirePlatformSession(): Promise<
+  { session: PlatformSession } | { response: NextResponse }
+> {
+  const guard = await requireLiveSession();
+  if ("response" in guard) return guard;
+  if (!guard.dbUser.totpConfirmedAt || guard.dbUser.mustChangePassword) {
+    return { response: NextResponse.json({ error: "Setup required", setupRequired: true }, { status: 403 }) };
+  }
+  return { session: guard.session };
+}
+
+/** Guard for the /platform/setup screen and its two APIs only: a valid,
+ * non-disabled session is enough — setup completion is exactly what this
+ * screen exists to produce, so it can't require it of itself. */
+export async function requirePlatformSetupSession(): Promise<
+  | { session: PlatformSession; totpConfirmedAt: Date | null; mustChangePassword: boolean }
+  | { response: NextResponse }
+> {
+  const guard = await requireLiveSession();
+  if ("response" in guard) return guard;
+  return {
+    session: guard.session,
+    totpConfirmedAt: guard.dbUser.totpConfirmedAt,
+    mustChangePassword: guard.dbUser.mustChangePassword,
+  };
 }
 
 // Stricter than requirePlatformSession(): PLATFORM_OWNER only. Mirrors

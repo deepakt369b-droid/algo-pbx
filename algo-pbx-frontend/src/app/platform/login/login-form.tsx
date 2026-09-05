@@ -89,16 +89,15 @@ export function PlatformLoginForm({ callbackUrl }: { callbackUrl?: string }) {
       <input
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-        placeholder="6-digit authenticator code"
+        placeholder="6-digit authenticator code (leave blank if not yet enrolled)"
         inputMode="numeric"
         autoComplete="one-time-code"
-        required
         className="rounded-lg border border-border bg-background px-3 py-2 text-center text-lg tracking-widest text-primary outline-none focus:border-cyan"
       />
       {error && <p className="text-sm text-danger">{error}</p>}
       <button
         type="submit"
-        disabled={pending || code.length !== 6}
+        disabled={pending || (code.length > 0 && code.length !== 6)}
         className="rounded-lg bg-cyan px-4 py-2 font-medium text-accent-fg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {pending ? "Signing in…" : "Sign in"}

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { requirePlatformSession } from "@/lib/platform-guard";
+import { requirePlatformSetupSession } from "@/lib/platform-guard";
 import { unsafeGlobalDb as db } from "@/lib/db";
 
 // Owner console home — tenant listing. Any live, TOTP-confirmed
@@ -10,9 +10,12 @@ import { unsafeGlobalDb as db } from "@/lib/db";
 // here: tenant CREATE/provisioning is wave 7, blocked on the CA
 // signing-flow v2 the plan names explicitly — not built in this file.
 export default async function PlatformHomePage() {
-  const guard = await requirePlatformSession();
+  const guard = await requirePlatformSetupSession();
   if ("response" in guard) {
     redirect("/platform/login");
+  }
+  if (!guard.totpConfirmedAt || guard.mustChangePassword) {
+    redirect("/platform/setup");
   }
 
   const tenants = await db.tenant.findMany({
