@@ -7,6 +7,8 @@ import { defineConfig, devices } from "@playwright/test";
 //   E2E_BASE_URL        default http://localhost:3000
 //   E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD
 //   E2E_AGENT_EMAIL / E2E_AGENT_PASSWORD
+//   E2E_PLATFORM_EMAIL / E2E_PLATFORM_PASSWORD / E2E_PLATFORM_TOTP_SECRET
+//                       LOCAL/STAGING ONLY — never set against production
 //   E2E_WEBSERVER=1     also boot `next start` for the run
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
@@ -47,6 +49,19 @@ export default defineConfig({
       name: "anon",
       testMatch: /.*\.anon\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
+    },
+    // Owner console. Its own storageState because the platform plane has its
+    // own session cookie (algopbx-platform-session) — a tenant state file
+    // would carry the wrong cookie entirely, not merely the wrong role.
+    //
+    // Credentials are LOCAL/STAGING ONLY: no platform test account may exist
+    // on production. See e2e/auth.setup.ts's guard, which refuses to run
+    // against a production host even if the env is misconfigured.
+    {
+      name: "platform",
+      testMatch: /.*\.platform\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: ".auth/platform.json" },
     },
   ],
   webServer: process.env.E2E_WEBSERVER

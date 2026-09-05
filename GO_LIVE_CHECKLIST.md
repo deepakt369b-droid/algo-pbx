@@ -67,6 +67,38 @@ Nothing below Gate 1 matters until one call works end to end.
 - [ ] Voicemail: let a call time out → message lands → agent sees it in
       workspace → playback + delete work (delete is destructive by design).
 
+### Gate 1b — Billing suspension must NOT affect calls (manual, unavoidable)
+
+This is the one acceptance criterion of the owner console that cannot be
+automated, and it is deliberately listed here rather than quietly dropped.
+
+The approved plan's hard rule is that billing enforcement governs UI login and
+nothing else — Asterisk keeps carrying a suspended tenant's calls, inbound and
+outbound, at every rung of the ladder. A tenant whose calls stop on day 8 of a
+*disputed* invoice does not experience an enforcement lever; they experience an
+outage their own customers blame them for.
+
+The automated suite (`e2e/platform-billing-ladder.platform.spec.ts`) proves the
+structural half: the endpoints report `telephonyAffected: false`, the audit
+rows record it, the generated telephony config is unchanged across a
+suspension, and a repo-wide invariant proves no telephony module imports the
+enforcement function at all. What it cannot do is place a phone call.
+
+So, with a live stack:
+
+- [ ] **BLOCKER (owner console)** Suspend a test tenant from
+      `/platform/tenants/<id>` → Lifecycle → Suspend login. Confirm its agents
+      cannot sign in and its tenant ADMIN lands on `/billing-hold`.
+- [ ] **BLOCKER (owner console)** While that tenant is still suspended, place
+      a real inbound call to its number and a real outbound call from one of
+      its extensions. **Both must connect with two-way audio.** If either
+      fails, the separation has been broken somewhere and the ladder must not
+      ship.
+- [ ] Unsuspend, and confirm login is restored on the next request.
+- [ ] Separately: confirm the dialplan cut is reachable ONLY from the
+      Lifecycle tab, requires the tenant slug typed exactly, and appears
+      nowhere in the billing action set.
+
 ## Gate 2 — Messaging & OTP
 
 - [ ] OpenWA sidecar healthy; pair ONE instance end-to-end (QR or pairing
