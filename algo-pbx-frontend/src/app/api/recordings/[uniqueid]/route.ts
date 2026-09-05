@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth-guard";
 import { canAccessRecording } from "@/lib/recording-access";
+import { resolveRecordingPath } from "@/lib/recordings/layout";
 
 export const dynamic = "force-dynamic";
 
@@ -50,18 +51,38 @@ export async function GET(req: NextRequest, { params }: { params: { uniqueid: st
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const dir = path.resolve(process.env.RECORDINGS_DIR || "/recordings");
-  const filePath = path.resolve(dir, `${uniqueid}.wav`);
-
-  // Defense in depth: the regex above already forbids `/` and `..`, so
-  // filePath cannot escape dir — but a resolved-path check costs nothing
-  // and catches this invariant breaking under some future refactor.
-  if (!filePath.startsWith(dir + path.sep)) {
+  // Dual-layout resolution. Recordings are moving from a flat
+  // `<uniqueId>.wav` to `<tenantId>/<uniqueId>.wav`, and the two coexist
+  // while scripts/migrate-recordings-layout.ts works through the backlog —
+  // so this route must serve either. resolveRecordingPath() prefers the new
+  // location and falls back to the legacy one, and re-asserts the
+  // escape-the-root check itself (it now joins more segments than this route
+  // used to, and every extra segment is another way a `..` could enter).
+  //
+  // Note the stored Recording.filePath is preferred over reconstructing a
+  // name from the id: once migrated, the row is authoritative about where its
+  // own file lives.
+  const stored = recording?.filePath ?? `${uniqueid}.wav`;
+  const resolved = resolveRecordingPath(session.user.tenantId, stored);
+  if (!resolved) {
     return NextResponse.json({ error: "Invalid recording id" }, { status: 400 });
   }
 
+  let filePath = resolved.absolute;
   if (!existsSync(filePath)) {
-    return NextResponse.json({ error: "Recording not found" }, { status: 404 });
+    // The preferred location is empty. Try the legacy flat path explicitly
+    // before giving up — a row not yet migrated resolves "tenant-first" above
+    // and would otherwise 404 on a file that is present.
+    const legacy = path.resolve(
+      path.resolve(process.env.RECORDINGS_DIR || "/recordings"),
+      `${uniqueid}.wav`
+    );
+    const root = path.resolve(process.env.RECORDINGS_DIR || "/recordings");
+    if (legacy.startsWith(root + path.sep) && existsSync(legacy)) {
+      filePath = legacy;
+    } else {
+      return NextResponse.json({ error: "Recording not found" }, { status: 404 });
+    }
   }
 
   const stat = statSync(filePath);
