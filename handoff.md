@@ -1,53 +1,46 @@
-# Handoff — SaaS owner console at `/platform` BUILT (2026-09-06): all six sections, the billing ladder, provisioning, platform users, audit center, platform settings, plus the per-tenant recording delivery pipeline. Ten commits, **pushed to `origin/main`** (owner go-ahead given 2026-09-06). Every commit gated on typecheck + lint + test + build (784 unit tests, up from 490). **Both migrations are APPLIED to production** — each with its own go-ahead and before/after row counts, verified identical (Tenant 1, PlatformUser 1, User 2, Recording 47, CDR 42, GatewaySite 0, PlatformAuditLog 8 — unchanged across both). **The console code itself is still NOT deployed**: the VPS working tree remains at `a37f2e7`, so production runs the old code against a schema with new, unused columns — the safe expand/contract state. Deploying it was put to the owner on 2026-09-05 and **deferred, not refused**; it is now item 0 of the list below, with all the pre-flight diligence already recorded there (`origin/main` is 21 commits ahead, the VPS's dirty working tree is safe to discard, and the live public-website Caddy block survives the pull — each verified, not assumed). **The Playwright acceptance suite HAS now been executed** (2026-09-05, once Docker became available on the build machine): 28 passed, 0 failed, 5 skipped against a local Postgres with a seeded TOTP-enrolled owner. It found one real product bug and three test defects, all fixed — see item 2 below. One acceptance criterion is deliberately not automatable — "a real call completes while a tenant is suspended" — and is now a documented BLOCKER in `GO_LIVE_CHECKLIST.md` Gate 1b.
+# Handoff — SaaS owner console at `/platform` is **DEPLOYED AND LIVE on production** (2026-09-07). The VPS moved `a37f2e7` → `4e8fc91` (22 commits) with owner go-ahead, rebuilt `--no-cache` one service at a time, and verified: `/api/health` `{"ok":true}`, `/login` 200, `/platform/login` 200, `/platform` 307 → login (guard live), the public apex site still 200 (`/` and `/terms`), `algo-web` healthy with zero errors, all 13 containers up. Both migrations were already applied (2026-09-06), so this was the "contract" half of expand/contract and the container's start-up `prisma migrate deploy` correctly found nothing pending. Everything the reset discarded is preserved under `/root/pre-console-deploy-20260907/` on the VPS. **Nothing here has carried a live call since the deploy** — Gate 1b (a real call completing while a tenant is suspended) is still the untested, load-bearing promise of the billing design, and is now item 0 below. Prior state: console built over ten commits, all gated on typecheck + lint + test + build (784 unit tests); Playwright acceptance suite run 2026-09-05 (28 passed, 0 failed, 5 skipped), which found one real product bug and three test defects, all fixed.
 
 ## ▶ "claude continue" — the remaining work, in order
 
-Updated 2026-09-05 (acceptance-suite session). Remaining, in order:
+Updated 2026-09-07 (console deploy session). Remaining, in order:
 
-0. **DECIDE: deploy the owner console to the VPS, or keep holding.** This is
-   the top of the list because everything else about the console is done and
-   this is the only thing standing between "built and tested" and "live". It
-   was put to the owner on 2026-09-05 and **deferred, not refused** — no
-   deploy was performed. All the diligence is already done; do not re-derive
-   it:
-   - **`origin/main` is at `e2e6000`. The VPS is at `a37f2e7`, 21 commits
-     behind.** So "deploy the latest" is not a small change: it puts the
-     ENTIRE owner console live at once — `/platform`, the billing ladder,
-     provisioning, platform users, audit center, platform settings, recording
-     delivery — none of which has ever run on production. Both migrations are
-     already applied, so this is the intended "contract" half of the
-     expand/contract; the schema is ready and waiting.
-   - **The VPS working tree is dirty (10 modified tracked files + 5 untracked
-     paths), and it is SAFE to discard those edits — verified, not assumed.**
-     The raw diff looks alarming (~9,900 insertions) but is almost entirely
-     CRLF/LF churn; `git diff --ignore-cr-at-eol` reduces it to 332/147. Of
-     the ten files, `create-platform-user.mjs`, `platform/login/login-form.tsx`,
-     `platform-guard.ts` and `docker-compose.yml` are **byte-identical to
-     `origin/main`** (those hotfixes were already committed and pushed), and
-     the rest differ only by being the OLD pre-refactor code.
-   - **Specifically checked, because it was the real risk: the live public
-     website is not lost.** The apex/`www` Caddy block that the 2026-09-05
-     website session hand-added to `domain/apply/route.ts` on the VPS was
-     refactored upstream by `0df53c9` into
-     `src/lib/domain/caddyfile.ts` — `apexDomainFor`, `root * /srv/website`
-     and the `www` redirect are all present there. Confirmed by reading that
-     file at `origin/main`, not inferred from the commit message.
-   - **If you do deploy, the constraints that will bite:** build ONE service
-     at a time (`docker compose build web`) — this VPS has 2 vCPU/7.7GB and
-     concurrent builds have caused real, reproducible compile failures;
-     beware the cached-build-omits-new-files variant recorded in memory (a
-     console this size adds many new files, so `--no-cache` is the safe
-     choice); and `website/out/` must exist on the host before any generated
-     Caddyfile referencing `/srv/website` is applied, or Caddy fails to load
-     its ENTIRE config and takes the working production site down with it.
-   - **If you keep holding, nothing is at risk.** The three commits from the
-     acceptance-suite session are two test files and a guardrail message that
-     only executes inside the console — which is not live. Production is
-     unaffected either way.
+0. ~~DECIDE: deploy the owner console to the VPS, or keep holding.~~ **DONE
+   2026-09-07 — DEPLOYED.** Owner chose deploy. Method and the three things
+   the earlier pre-flight had NOT caught, each worth knowing before the next
+   deploy of this kind:
+   - **`website/out` is untracked AND absent from `origin/main`, but it IS the
+     live public site** — `docker-compose.yml` bind-mounts it to
+     `/srv/website` and the Caddyfile `root`s the apex at it. The obvious way
+     to clear the checkout conflict (delete the untracked `website/` tree)
+     would have taken the working public website down. It was moved aside and
+     restored after the reset; apex verified 200 before and after.
+   - **`20260904140000_add_tenancy_constrain` is applied in the production DB
+     but does not exist in `origin/main`.** It was deliberately kept as an
+     untracked directory so the migrations folder stays a superset of the DB.
+     Start-up `prisma migrate deploy` then reported "29 migrations found / No
+     pending migrations to apply". Cleaning it would have failed the container
+     on an applied-but-missing migration. **Do not `git clean` that path.**
+   - Everything discarded lives under **`/root/pre-console-deploy-20260907/`**
+     (full `git diff`, `git status`, an untracked tarball, `website-out/`, and
+     the displaced `website/`, `platform/setup`, `api/platform/setup` and
+     `20260905090000` migration trees). Nothing was `rm`'d; the reset is
+     reversible.
+   - The build itself: `docker compose build --no-cache web` then
+     `docker compose up -d web` — one service (2 vCPU), `--no-cache` because
+     this pull adds many new files and cached builds have silently omitted
+     new files on this box before.
 
+0b. **THE NEXT REAL THING: Gate 1b, and it now matters more than it did.**
+   Suspend a test tenant, then place a real inbound and a real outbound call
+   and confirm both still connect. Until 2026-09-07 the billing ladder was
+   code that had never run on production; it is now live in front of a real
+   tenant. The design promise is that suspension gates UI login and NEVER
+   telephony — asserted structurally in `enforcement.test.ts`, but never once
+   demonstrated on real hardware. See item 3 (same check, unchanged) and
+   `GO_LIVE_CHECKLIST.md` Gate 1b.
 1. ~~Apply the two migrations to production.~~ **DONE 2026-09-06.** Both applied with individual go-ahead and before/after evidence: `20260906100000_add_platform_console` (13:22:18 UTC — 10 nullable `Tenant` columns, 4 nullable `PlatformUser` columns, 2 indexes) and `20260906110000_add_recording_delivery` (13:24:03 UTC — 2 empty tables, 2 enums, 4 FKs, 6 indexes). Row counts identical before and after both; every new column NULL on every existing row; `Recording` still has its original 8 columns. App verified healthy afterwards (`/login`, `/platform/login`, `/api/health` all HTTP 200, no container errors).
    - **Method worth knowing for next time:** `DEPLOYMENT.md` says the `web` container runs `prisma migrate deploy` on start — but using that path would have rebuilt and deployed the *entire* console, far beyond applying a migration. Instead: `git fetch` (NOT pull), `git archive origin/main` into a temp dir, and `prisma migrate deploy` from a throwaway `node:20-slim` container on `algo-pbx_algo-net`. **Both `node:20-alpine` and `node:20-slim` lack OpenSSL** and fail at schema-engine load (harmlessly, before any SQL) — `apt-get install -y openssl` in the container is required.
-   - **The VPS working tree is deliberately still at `a37f2e7`.** A future `docker compose up -d --build web` will therefore rebuild the OLD code, not silently deploy the console. Deploying is an explicit `git pull` + rebuild, when you choose.
+   - **The VPS working tree is now at `4e8fc91` (deployed 2026-09-07).** This note is superseded — it used to say the tree was deliberately held at `a37f2e7` so a rebuild would not silently deploy the console. The console has since been deployed; see item 0.
 2. ~~Run the platform Playwright suite against a local or staging stack.~~ **DONE 2026-09-05.** Docker became available on the build machine, which was the blocker. Ran against a throwaway local Postgres 16 with all migrations applied and a seeded, TOTP-enrolled owner: first run 20 passed / 4 failed, all four fixed (`33b710c`), **final run 28 passed, 0 failed, 5 skipped** (the tenant-role specs, which skip by design without `E2E_ADMIN_*`). No platform test account was created on production. One of the four was a real product fix — a sole owner acting on themselves was told to "ask another platform owner", who does not exist; the last-owner reason now wins. The other three were test defects that had made their own tests unable to pass. Full detail in `LLM.md` §5's 2026-09-05 entry.
    - **To re-run it:** override `PLAYWRIGHT_BROWSERS_PATH` — this machine's points at `E:\ms-playwright`, which does not exist, while the browsers are under `%LOCALAPPDATA%\ms-playwright`. `DATABASE_URL` in `.env.local` is a deliberate dud and must be overridden. `scripts/create-platform-user.mjs` leaves TOTP un-enrolled on purpose, so a suite-ready account needs `totpSecret`/`totpConfirmedAt` written directly.
    - **Still open from this:** the 5 skipped tenant-role specs need a seeded tenant admin/agent (`E2E_ADMIN_*` / `E2E_AGENT_*`) to run at all.
