@@ -49,6 +49,14 @@ export const TENANCY_TABLES: readonly string[] = [
   // tenantId and need no backfill of their own.
   "RecordingStorageTarget",
   "RecordingDelivery",
+  // Per-extension geo lock (2026-09-08, plan §3.3). Kept in sync with
+  // src/lib/tenancy/scope-rules.ts's TENANT_SCOPED_MODELS — both tables
+  // were created AFTER the tenancy backfill migration, so they start life
+  // with a NOT NULL tenantId and need no backfill of their own. Not in the
+  // RLS policy set (20260904120000_add_rls) — see that migration's header
+  // and the geo-lock migration's header for why.
+  "GeoLoginEvent",
+  "ExtensionUnlockRequest",
 ];
 
 // Platform-global tables (plan §1/§7) — never get a tenantId. Listed here

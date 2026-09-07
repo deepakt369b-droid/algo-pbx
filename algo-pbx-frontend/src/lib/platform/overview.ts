@@ -48,7 +48,7 @@ function parseProvisioningState(raw: unknown): ProvisioningState {
 }
 
 export async function loadOverview(now: Date = new Date()): Promise<OverviewData> {
-  const [tenants, extensionCounts, sites, grants, failedDeliveries] = await Promise.all([
+  const [tenants, extensionCounts, sites, grants, failedDeliveries, pendingUnlockRequests, lockedWithoutRequest] = await Promise.all([
     db.tenant.findMany({
       select: {
         id: true,
@@ -96,6 +96,13 @@ export async function loadOverview(now: Date = new Date()): Promise<OverviewData
     db.recordingDelivery
       .groupBy({ by: ["tenantId"], where: { state: "FAILED" }, _count: { _all: true } })
       .catch(() => [] as Array<{ tenantId: string; _count: { _all: number } }>),
+    // W6 geo lock queue (plan §3.3) — see attention-queue.ts's geoLocks
+    // field for why these are cross-tenant aggregates rather than per-tenant
+    // rows.
+    db.extensionUnlockRequest.count({ where: { status: "PENDING" } }),
+    db.extension.count({
+      where: { geoLockedAt: { not: null }, unlockRequests: { none: { status: "PENDING" } } },
+    }),
   ]);
 
   const extensionsByTenant = new Map(extensionCounts.map((e) => [e.tenantId, e._count._all]));
@@ -169,6 +176,7 @@ export async function loadOverview(now: Date = new Date()): Promise<OverviewData
         tenantSlug: slugById.get(d.tenantId) ?? d.tenantId,
         count: d._count._all,
       })),
+      geoLocks: { pendingUnlockRequests, lockedWithoutRequest },
     },
     now
   );

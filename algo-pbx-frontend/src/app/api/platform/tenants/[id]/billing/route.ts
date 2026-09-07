@@ -4,6 +4,7 @@ import { unsafeGlobalDb as db } from "@/lib/db";
 import { requirePlatformOwner } from "@/lib/platform-guard";
 import { withApiErrorHandler } from "@/lib/api-handler";
 import { recordPlatformAudit, requireReason, MissingReasonError } from "@/lib/platform/audit";
+import { isValidPlanChange } from "@/lib/platform/plan-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,19 @@ export const PATCH = withApiErrorHandler(async function PATCH(
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   const body = parsed.data;
+
+  // Validated against the plan catalogue rather than accepted as any free
+  // string — a plan id absent from src/lib/platform/plan-catalog.ts, or a
+  // seat count above that plan's ceiling, is rejected here rather than
+  // silently becoming an unenforceable price of 0 in src/lib/platform/mrr.ts.
+  if (body.action === "change_plan" && !isValidPlanChange(body.plan, body.seats)) {
+    return NextResponse.json(
+      {
+        error: `"${body.plan}" is not a known plan, or ${body.seats} seats exceeds its ceiling. See the plan catalogue.`,
+      },
+      { status: 400 }
+    );
+  }
 
   const tenant = await db.tenant.findUnique({
     where: { id: params.id },

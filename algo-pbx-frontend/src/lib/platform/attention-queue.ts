@@ -51,6 +51,18 @@ export interface AttentionInputs {
     expiresAt: Date;
   }>;
   failedDeliveries: Array<{ tenantId: string; tenantSlug: string; count: number }>;
+  /** W6 geo lock queue (plan §3.3) — aggregate counts across ALL tenants,
+   * not per-tenant like the items above, because the fix for both is the
+   * same single page (/platform/geo-locks) regardless of which tenant owns
+   * the row. Optional so existing callers/tests that predate this feature
+   * are unaffected. */
+  geoLocks?: {
+    /** ExtensionUnlockRequest rows with status "PENDING". */
+    pendingUnlockRequests: number;
+    /** Extensions with geoLockedAt set but no PENDING request — locked and
+     * invisible to the tenant admin's own queue unless this fires. */
+    lockedWithoutRequest: number;
+  };
 }
 
 /** paidUntil inside this window raises an info item, before the ladder bites. */
@@ -127,6 +139,34 @@ export function buildAttentionQueue(inputs: AttentionInputs, now: Date = new Dat
       href: tenantHref(g.tenantId, "support"),
       rank: minutes,
     });
+  }
+
+  // --- Geo lock queue (W6). Warning: nothing here is an outage — the
+  // extension in question is deliberately locked out, working as designed —
+  // but a request or a silent lock left unattended for days is a genuine
+  // agent who cannot work, which is why this sits above the info band.
+  if (inputs.geoLocks) {
+    const { pendingUnlockRequests, lockedWithoutRequest } = inputs.geoLocks;
+    if (pendingUnlockRequests > 0) {
+      items.push({
+        id: "geo-locks:pending",
+        severity: "warning",
+        title: `${pendingUnlockRequests} extension unlock request${pendingUnlockRequests === 1 ? "" : "s"} pending`,
+        detail: "A tenant admin is waiting on an owner decision to restore a locked agent's access.",
+        href: "/platform/geo-locks",
+        rank: 40,
+      });
+    }
+    if (lockedWithoutRequest > 0) {
+      items.push({
+        id: "geo-locks:silent",
+        severity: "warning",
+        title: `${lockedWithoutRequest} extension${lockedWithoutRequest === 1 ? "" : "s"} geo-locked with no unlock request`,
+        detail: "Locked out and the tenant hasn't asked yet — nothing about this is otherwise visible to them.",
+        href: "/platform/geo-locks",
+        rank: 41,
+      });
+    }
   }
 
   for (const t of inputs.tenants) {

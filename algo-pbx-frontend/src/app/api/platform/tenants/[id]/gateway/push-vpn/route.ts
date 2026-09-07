@@ -86,7 +86,8 @@ export const POST = withApiErrorHandler(async function POST(
     site.gatewayLanIp,
     ovpnFile,
     `${site.name}.ovpn`,
-    actorId
+    actorId,
+    site.tenantId
   );
 
   await recordPlatformAudit({

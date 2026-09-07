@@ -134,6 +134,46 @@ model Tenant {
   complianceRecordingDisclosureAt DateTime?
   complianceNotes                 String?
 
+  // --- W2/W3 connectivity + failover (plan §3.2) -------------------------
+  // Which GatewaySite is currently the active trunk path. A plain String,
+  // NOT a relation field: GatewaySite.tenantId -> Tenant is a many-to-one
+  // that already exists, and a Tenant -> GatewaySite FK here would form a
+  // two-way cycle between the same two tables for a value that is only
+  // ever written by cutoverToSite() (manual or automatic) — reading it
+  // back is a plain lookup by id, same treatment as PlatformUser.createdById
+  // above. Null until a tenant's first cutover (or initial provisioning)
+  // sets it.
+  activeGatewaySiteId String?
+  // Owner/admin-controlled per plan §3.2 H2: ships false everywhere so the
+  // failover supervisor (W3) never re-points a trunk until explicitly
+  // turned on for that tenant, after its probes have agreed with reality
+  // for a few days.
+  failoverEnabled     Boolean @default(false)
+
+  // --- W4-W6 per-extension geo lock (plan §3.3) ---------------------------
+  // null = off (default, no behavior change for any existing tenant).
+  // "monitor" records GeoLoginEvent rows and never blocks or locks.
+  // "enforce" is the real lock path. Modeled as String (not a Prisma enum)
+  // so ops can flip it via a raw UPDATE without a migration, matching how
+  // other tri-state operational toggles in this schema are done.
+  geoLockMode         String?
+  // What "home country" means for this tenant's agents when an Extension
+  // has no explicit geoAllowedCountries of its own set by the owner. Purely
+  // advisory to the UI/allocation flow — evaluateGeoAccess() (W4) only ever
+  // reads Extension.geoAllowedCountries, never this field, so a tenant
+  // default can be changed without touching any already-allocated
+  // extension's lock behavior.
+  geoDefaultCountry   String?
+  // Whether a datacenter/VPN-range ASN match (independent of country) also
+  // counts as a strike. Ships false (plan §3.3): a country match from a
+  // datacenter ASN is not, by itself, treated as suspicious unless the
+  // owner opts a tenant in.
+  geoBlockVpn         Boolean @default(false)
+  // Strikes before an extension locks. Nullable so the code-side default
+  // (6, per plan §3.3) applies uniformly without every existing tenant row
+  // needing a backfilled value.
+  geoFailureThreshold Int?
+
   // --- Back-relations: every customer-owned model in this schema ---
   users                   User[]
   extensions              Extension[]
@@ -173,6 +213,8 @@ model Tenant {
   supportGrants           SupportGrant[]
   recordingStorageTarget  RecordingStorageTarget?
   recordingDeliveries     RecordingDelivery[]
+  geoLoginEvents          GeoLoginEvent[]
+  extensionUnlockRequests ExtensionUnlockRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -184,25 +226,25 @@ model Tenant {
 
 // D2: no tenantId, by construction. A tenant-scoped query cannot return one.
 model PlatformUser {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  passwordHash String
-  name         String
-  role         PlatformRole @default(PLATFORM_SUPPORT)
+  id                 String         @id @default(cuid())
+  email              String         @unique
+  passwordHash       String
+  name               String
+  role               PlatformRole   @default(PLATFORM_SUPPORT)
   // 2FA is mandatory, not optional — a row with totpSecret null may not
   // complete login (enforced in the /platform authorize path, not just UI).
-  totpSecret      String?
-  totpConfirmedAt DateTime?
+  totpSecret         String?
+  totpConfirmedAt    DateTime?
   // Forces the /platform/setup flow on next login. Set true whenever
   // scripts/create-platform-user.mjs (re)issues a one-time password —
   // default false so a hand-backfilled row is never accidentally treated
   // as "needs setup" (there is no legitimate way for an already-onboarded
   // account to end up back in this state except the script explicitly
   // resetting it).
-  mustChangePassword Boolean     @default(false)
-  disabled        Boolean        @default(false)
-  grants          SupportGrant[]
-  createdAt       DateTime       @default(now())
+  mustChangePassword Boolean        @default(false)
+  disabled           Boolean        @default(false)
+  grants             SupportGrant[]
+  createdAt          DateTime       @default(now())
 
   // --- Owner console §4 additions ---
   // Written on every successful authorize() in src/lib/platform-auth.ts.
@@ -256,9 +298,9 @@ model PlatformAuditLog {
   // billing overrides alone: suspend, offboard, dialplan cut, plan/seat
   // change, and support-grant creation all require one. Enforced at the
   // API layer (rejects empty/whitespace), not just in the form.
-  reason    String?
-  metadata  Json?
-  createdAt DateTime @default(now())
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
 
   @@index([tenantId, createdAt])
   @@index([action])
@@ -553,8 +595,40 @@ model Extension {
   // DialPermission's own comment for why this exists. Defaults to the
   // most restrictive tier.
   dialPermission DialPermission @default(LOCAL)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+
+  // --- W4-W6 per-extension geo lock (plan §3.3) ---------------------------
+  // Owner-only allocation (never set by a tenant admin). Empty array =
+  // unallocated = evaluateGeoAccess() never enforces for this extension,
+  // regardless of Tenant.geoLockMode.
+  geoAllowedCountries         String[]  @default([])
+  // Strikes since the last successful allowed login or the last unlock.
+  // Reset to 0 by W5's unlock path, not by a successful login alone (a
+  // wrong-country attempt followed immediately by a right-country one
+  // should not quietly erase the evidence that a strike happened).
+  geoFailedAttempts           Int       @default(0)
+  geoLastFailureAt            DateTime?
+  geoLastFailureCountry       String?
+  geoLastFailureIp            String?
+  geoLastFailureAsn           Int?
+  // Non-null means locked, with NO expiry — this field IS the lock.
+  // Deliberately not reusing LoginAttempt.lockedUntil's time-expiring
+  // shape (see plan §3.3): only a platform owner clearing this (or
+  // approving an ExtensionUnlockRequest) may unlock.
+  geoLockedAt                 DateTime?
+  geoLockedReason             String?
+  geoUnlockedAt               DateTime?
+  // A plain String, not a PlatformUser relation: PlatformUser is a
+  // platform-plane table this tenant-scoped model must not FK into
+  // directly (same reasoning as Tenant.activeGatewaySiteId and
+  // PlatformUser.createdById elsewhere in this schema) — the authoritative
+  // record of who unlocked what is the platform AuditLog, not this column.
+  geoUnlockedByPlatformUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unlockRequests ExtensionUnlockRequest[]
+  geoLoginEvents GeoLoginEvent[]
 
   @@unique([tenantId, number])
   @@index([tenantId])
@@ -684,7 +758,7 @@ model Recording {
   hiddenByUser      User?            @relation(fields: [hiddenByUserId], references: [id])
   createdAt         DateTime         @default(now())
 
-  deliveries        RecordingDelivery[]
+  deliveries RecordingDelivery[]
 
   @@index([cdrId])
   @@index([tenantId])
@@ -727,14 +801,14 @@ model RecordingStorageTarget {
   tenantId String @unique
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
-  kind RecordingTargetKind @default(PLATFORM_LOCAL)
+  kind              RecordingTargetKind @default(PLATFORM_LOCAL)
   // AES-256-GCM via src/lib/settings/crypto.ts. Never plaintext, and never
   // returned to the client — the UI shows a suffix only.
-  configEncrypted String?
+  configEncrypted   String?
   // Off by default so configuring a target never silently starts shipping
   // customer audio somewhere before the operator has confirmed it works.
-  enabled           Boolean   @default(false)
-  verifyBeforePurge Boolean   @default(true)
+  enabled           Boolean             @default(false)
+  verifyBeforePurge Boolean             @default(true)
   lastVerifiedAt    DateTime?
 
   deliveries RecordingDelivery[]
@@ -751,16 +825,16 @@ model RecordingDelivery {
   targetId    String
   target      RecordingStorageTarget @relation(fields: [targetId], references: [id])
 
-  state    DeliveryState @default(PENDING)
-  attempts Int           @default(0)
+  state         DeliveryState @default(PENDING)
+  attempts      Int           @default(0)
   // Retained after a later success, so a flapping target is still visible
   // rather than looking clean the moment one attempt gets through.
   lastError     String?
   lastAttemptAt DateTime?
   deliveredAt   DateTime?
   // Set only once the delivered copy has been read back and matched.
-  verifiedAt DateTime?
-  purgedAt   DateTime?
+  verifiedAt    DateTime?
+  purgedAt      DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1709,6 +1783,10 @@ enum SiteTransport {
   TAILSCALE
   OPENVPN
   HEADSCALE
+  // W2 — connectivity plan §3.2. A fifth transport becomes a registry entry
+  // under src/lib/connectivity/transports/, not a schema change; this enum
+  // value plus WireGuard's own transport file is the only schema-side cost.
+  WIREGUARD
 }
 
 enum SiteConnectivityStatus {
@@ -1735,9 +1813,111 @@ model GatewaySite {
   lastReachableAt  DateTime?
   status           SiteConnectivityStatus @default(UNKNOWN)
   events           GatewayEvent[]
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+
+  // --- W2/W3 connectivity + failover (plan §3.2) -----------------------
+  // Lower number wins. The supervisor's primary-selection rule (W3) is
+  // "lowest priority, enabled, UP, fresh handshake" — this is the only
+  // knob that expresses "prefer site A over site B" for a tenant with
+  // more than one gateway.
+  priority        Int       @default(100)
+  // Owner/admin kill switch independent of connectivity status: a site can
+  // be reachable and still excluded from primary selection and manual
+  // cutover (e.g. mid-maintenance).
+  enabled         Boolean   @default(true)
+  // Transport-specific config blob (WireGuard peer config, headscale
+  // pre-auth key, etc.), at rest via the existing settings encryption
+  // helper (src/lib/settings/crypto.ts's encryptSetting/decryptSetting) —
+  // NOT a new encryption scheme. Null for transports needing no stored
+  // config (e.g. Tailscale, which authenticates via its own daemon).
+  configEncrypted String?
+  // Set only by the failover supervisor's automatic cutover and by the
+  // manual "Cut over now" action, both of which already go through
+  // cutoverToSite() — this column is not written directly anywhere else.
+  // Doubles as the cooldown clock (10 min, W3 guard rail) that stops a
+  // flapping tunnel from re-pointing the trunk every minute.
+  lastFailoverAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
+  @@index([tenantId])
+}
+
+// W4-W6 per-extension geo lock (plan §3.3) — the evidence trail an owner
+// reads before approving or denying an unlock. One row per login/credential
+// attempt that evaluateGeoAccess() (W4, pure logic, no I/O of its own)
+// actually evaluated. Deliberately NOT reusing LoginAttempt: that table is
+// IP-bucketed and time-expiring, this is a durable per-extension audit
+// trail pruned only by the existing 180-day /api/admin/maintenance/prune
+// cron (plan §3.3).
+//
+// Tenant-scoped (has tenantId) but deliberately NOT added to the RLS
+// policy set in 20260904120000_add_rls — that migration covers only the
+// four highest-value tables named in its own plan (CallDetailRecord,
+// Recording, Contact, ChatMessage). This is a considered scope decision,
+// not an oversight: see this migration's header comment.
+model GeoLoginEvent {
+  id          String     @id @default(cuid())
+  tenantId    String
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  // Nullable: an event can be recorded before an extension is resolved
+  // (e.g. email didn't match any user) — still useful evidence of an
+  // attempt against this tenant.
+  extensionId String?
+  extension   Extension? @relation(fields: [extensionId], references: [id])
+  userId      String?
+  email       String
+  ip          String
+  country     String?
+  asn         Int?
+  asnOrg      String?
+  // "allowed" | "wrong_country" | "vpn_suspected" | "unknown_ip" |
+  // "db_unavailable" | "monitor_only" — see evaluateGeoAccess()'s
+  // GeoOutcome union (W4) for the authoritative list.
+  outcome     String
+  // Whether this event incremented Extension.geoFailedAttempts. Recorded
+  // per-row (not derived from outcome) because the same outcome can count
+  // or not depending on tenant mode and current lock state — e.g. a
+  // wrong_country event against an already-locked extension does NOT
+  // increment further (plan §3.3: "the 7th does not increment a locked
+  // extension").
+  counted     Boolean    @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([extensionId, createdAt])
+}
+
+// W4-W6 per-extension geo lock (plan §3.3) — a tenant admin's only lever
+// against a locked extension. The tenant side can request; only a platform
+// owner can approve or deny (POST /api/platform/geo-locks/[id]). At most
+// one PENDING request per extension is enforced by BOTH the route (defense
+// in depth) and a raw partial unique index added by hand in this model's
+// migration, because Prisma's schema language has no way to express a
+// partial (WHERE-qualified) unique index.
+//
+// Tenant-scoped but deliberately NOT in the RLS policy set — same
+// reasoning as GeoLoginEvent above.
+model ExtensionUnlockRequest {
+  id                       String    @id @default(cuid())
+  tenantId                 String
+  tenant                   Tenant    @relation(fields: [tenantId], references: [id])
+  extensionId              String
+  extension                Extension @relation(fields: [extensionId], references: [id])
+  requestedByUserId        String
+  // Non-empty enforced at the app layer (requireReason()-style validation
+  // in the route), not by a DB CHECK constraint — consistent with how
+  // other mandatory-reason fields in this schema are handled.
+  requestedReason          String
+  status                   String    @default("PENDING") // "PENDING" | "APPROVED" | "DENIED"
+  resolvedByPlatformUserId String?
+  resolutionNote           String?
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([status, createdAt])
   @@index([tenantId])
 }

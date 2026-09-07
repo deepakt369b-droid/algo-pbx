@@ -338,6 +338,13 @@ services:
       WHATSAPP_OTP_TEMPLATE_NAME: "${WHATSAPP_OTP_TEMPLATE_NAME:-agent_otp_verification}"
       WHATSAPP_OTP_TEMPLATE_LANG: "${WHATSAPP_OTP_TEMPLATE_LANG:-en}"
       AGENT_PHOTOS_DIR: /agent-photos
+      # Geo-lock module (src/lib/geo/**, a separate workstream) — where it
+      # reads GeoLite2-Country.mmdb / GeoLite2-ASN.mmdb from, refreshed by
+      # the `geoip-refresh` service via the shared `geoip_data` volume below.
+      # Missing/corrupt files here MUST fail open (allow, don't count) by
+      # that module's own design — see this service's geoip_data mount
+      # comment for why an unconfigured MaxMind account is not an outage.
+      GEOIP_DB_DIR: /app/geoip
     extra_hosts:
       - "host.docker.internal:host-gateway" # Linux Docker Engine needs this explicitly; Docker Desktop provides it natively.
     volumes:
@@ -412,6 +419,15 @@ services:
       # already used elsewhere in this same volumes list.
       - ./pbx_configs/openvpn/requests:/app/openvpn-requests
       - ./pbx_configs/openvpn/clients:/app/openvpn-clients:ro
+      # geoip-refresh task — read-only, whole-volume mount (unlike the
+      # openvpn_data subpath-only mount above): geoip_data holds nothing
+      # but the two public GeoLite2 .mmdb files `geoip-refresh` writes, no
+      # private key material, so there's no equivalent reason to narrow it
+      # to a single file.
+      - type: volume
+        source: geoip_data
+        target: /app/geoip
+        read_only: true
     ports:
       # Loop B0: bind to loopback only. Docker-published ports bypass ufw's
       # INPUT chain entirely, so `"3000:3000"` exposed the whole Next.js app
@@ -841,6 +857,43 @@ services:
     networks:
       - algo-net
 
+  # 10. geoip-refresh — refreshes the two GeoLite2-FORMAT mmdb databases
+  # (Country + ASN) onto a shared volume that `web`'s geo-lock module
+  # (src/lib/geo/**, a separate workstream) reads at runtime. Replaces the
+  # old `maxmindinc/geoipupdate` service: that image required a free
+  # MaxMind account + licence key before it would write anything, which
+  # meant geo-lock enforcement silently stayed inert until someone signed
+  # up. This service needs NO account/key/env var — it pulls pre-built
+  # .mmdb files from sapics/ip-location-db's public GitHub Release
+  # instead of hitting MaxMind's own licence-gated endpoint (same
+  # underlying GeoLite2 data, republished with no auth wall; see
+  # pbx_configs/geoip/geoip-refresh.sh's header for licence/attribution
+  # detail and DEPLOYMENT.md's "GeoIP database" section).
+  #
+  # `web`'s geo module is REQUIRED to fail open (allow, don't count) when
+  # the mmdb files are missing — this container having a transient
+  # network failure degrades geo-lock enforcement to "off", never an
+  # outage. This container has NO other access to the app — it only ever
+  # writes .mmdb files to `geoip_data`. Plain curlimages/alpine-based
+  # image (pinned) + a mounted poll-loop script, same pattern as
+  # pbx_configs/openvpn/bridge-watch.sh / openvpn-bridge above, rather
+  # than a purpose-built vendor image.
+  #
+  # sapics publishes new GeoLite2-format builds twice weekly; daily is
+  # comfortable headroom without hammering their release endpoint.
+  geoip-refresh:
+    image: curlimages/curl:8.11.1
+    container_name: algo-geoip-refresh
+    restart: unless-stopped
+    logging: *default-logging
+    entrypoint: ["/bin/sh", "/scripts/geoip-refresh.sh"]
+    environment:
+      DEST_DIR: /geoip
+      POLL_INTERVAL_SECS: "86400"
+    volumes:
+      - ./pbx_configs/geoip/geoip-refresh.sh:/scripts/geoip-refresh.sh:ro
+      - geoip_data:/geoip
+
 volumes:
   postgres_data:
   openwa_data:
@@ -851,6 +904,12 @@ volumes:
   # OpenVPN server — see pbx_configs/openvpn/README.md for why this is a
   # named Docker volume, not a bind mount into the git-tracked checkout.
   openvpn_data:
+  # GeoLite2-Country.mmdb + GeoLite2-ASN.mmdb, refreshed by `geoip-refresh`
+  # above and read read-only by `web` at GEOIP_DB_DIR. Named volume (not a
+  # bind mount) because these are MaxMind's licence-restricted binaries —
+  # they must never land in this git-tracked checkout, matching the
+  # openvpn_data PKI-material precedent above.
+  geoip_data:
 
 networks:
   algo-net:

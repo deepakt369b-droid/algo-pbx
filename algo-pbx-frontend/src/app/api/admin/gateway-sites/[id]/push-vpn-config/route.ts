@@ -49,7 +49,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
     );
   }
 
-  const result = await pushVpnConfig(db, site.id, site.gatewayLanIp, ovpnFile, `${site.name}.ovpn`, session.user.id);
+  const result = await pushVpnConfig(db, site.id, site.gatewayLanIp, ovpnFile, `${site.name}.ovpn`, session.user.id, site.tenantId);
 
   return NextResponse.json(result, { status: result.verifiedByReadback ? 200 : 502 });
 }

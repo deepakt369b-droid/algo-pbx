@@ -21,18 +21,30 @@ export function PlatformSettingsForm({
   cloudflareConfigured,
   publicDomain,
   perTenantSubnetEnabled,
+  wildcardDnsRecordConfirmed,
   tenants,
 }: {
   isOwner: boolean;
   cloudflareConfigured: boolean;
   publicDomain: string;
   perTenantSubnetEnabled: boolean;
+  wildcardDnsRecordConfirmed: boolean;
   tenants: Array<{ id: string; slug: string }>;
 }) {
   const router = useRouter();
   const [token, setToken] = useState("");
   const [domain, setDomain] = useState(publicDomain);
-  const [pending, setPending] = useState<null | { key: string; value: string; title: string; blast: string }>(null);
+  const [pending, setPending] = useState<null | {
+    key: string;
+    value: string;
+    title: string;
+    blast: string;
+    /** When set, this specific save requires typing this exact phrase — the
+     * SECOND, more severe confirmation the wildcard-DNS flag needs beyond
+     * every other setting's single reasoned confirmation (see the toggle
+     * below for why). */
+    typedConfirmation?: string;
+  }>(null);
   const [probe, setProbe] = useState<Record<string, { ok: boolean; detail: string }>>({});
   const [probing, setProbing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -185,6 +197,67 @@ export function PlatformSettingsForm({
         </div>
       </div>
 
+      {/* --- Wildcard DNS record confirmation ---------------------------- */}
+      {/*
+       * This is the SECOND, uniquely-severe confirmation among this page's
+       * settings, and it exists for a specific reason: POST
+       * /api/platform/settings/domain/apply refuses to emit the tenant
+       * wildcard Caddy block unless this flag reads "true", because a
+       * failed DNS-01 challenge for a WILDCARD record is fatal to Caddy's
+       * ENTIRE config — not just the wildcard site block. It crash-loops the
+       * reverse proxy and takes the ALREADY-WORKING production site down
+       * with it. A reason field alone (this page's usual bar) is not enough
+       * friction for a flag whose only job is to unlock exactly that outage
+       * path, so this one additionally requires typing a fixed phrase,
+       * proving the operator read this paragraph rather than clicking
+       * through a form they've seen four times already.
+       */}
+      <div className="rounded-[var(--radius)] border p-3 [border-color:rgb(var(--hairline))]">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-primary">
+              Wildcard DNS record confirmed{" "}
+              <Badge tone={wildcardDnsRecordConfirmed ? "success" : "neutral"}>
+                {wildcardDnsRecordConfirmed ? "Confirmed" : "Not confirmed"}
+              </Badge>
+            </p>
+            <p className="text-[12px] text-secondary">
+              Confirms the one-time wildcard DNS record for the tenant base domain exists, before
+              domain-apply is allowed to request a wildcard certificate for it. If the record does
+              not actually exist, the DNS-01 challenge fails and Caddy treats that as fatal to its
+              entire config — crash-looping the reverse proxy for every tenant, not just this one.
+              Do not confirm this unless you have personally verified the DNS record is live.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant={wildcardDnsRecordConfirmed ? "secondary" : "danger"}
+            data-testid="toggle-wildcard-dns-confirmed"
+            onClick={() =>
+              setPending({
+                key: "WILDCARD_DNS_RECORD_CONFIRMED",
+                value: wildcardDnsRecordConfirmed ? "" : "true",
+                title: wildcardDnsRecordConfirmed
+                  ? "Un-confirm the wildcard DNS record"
+                  : "Confirm the wildcard DNS record exists",
+                blast: wildcardDnsRecordConfirmed
+                  ? "This blocks domain-apply from requesting the tenant wildcard certificate again until re-confirmed."
+                  : "This tells domain-apply it may request a wildcard certificate for the tenant base domain. " +
+                    "If the DNS-01 challenge fails because the record does not actually exist, Caddy treats a " +
+                    "failed wildcard challenge as fatal to its ENTIRE configuration — the reverse proxy crash-loops " +
+                    "and the already-working production site goes down with it, not just the wildcard block.",
+                // Only the "confirm" direction (the dangerous one) requires
+                // the extra typed phrase — un-confirming is the safe
+                // direction and gets the page's normal single confirmation.
+                typedConfirmation: wildcardDnsRecordConfirmed ? undefined : "I HAVE VERIFIED THE DNS RECORD",
+              })
+            }
+          >
+            {wildcardDnsRecordConfirmed ? "Un-confirm" : "Confirm record exists"}
+          </Button>
+        </div>
+      </div>
+
       {/* --- Per-tenant reachability ------------------------------------ */}
       <div>
         <p className="mb-2 text-[13px] font-medium text-primary">Per-tenant TLS &amp; reachability</p>
@@ -236,6 +309,8 @@ export function PlatformSettingsForm({
           blastRadius={pending.blast}
           confirmLabel="Save setting"
           tone="danger"
+          requireTypedConfirmation={pending.typedConfirmation}
+          typedConfirmationLabel="confirmation phrase"
           onConfirm={save}
         />
       )}

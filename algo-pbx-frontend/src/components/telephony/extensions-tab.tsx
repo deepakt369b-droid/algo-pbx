@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { COUNTRY_OPTIONS } from "@/lib/countries";
 
 type DialPermission = "LOCAL" | "NATIONAL" | "INTERNATIONAL";
 
@@ -10,6 +11,18 @@ interface ExtensionRow {
   kind: string;
   status: string;
   dialPermission: DialPermission;
+  // W6 (plan §3.3) — read-only here. Allocation is owner-only, done from
+  // the platform console's Geo tab; this plane only ever displays it.
+  geoAllowedCountries: string[];
+  geoLockedAt: string | null;
+  geoLockedReason: string | null;
+}
+
+interface UnlockRequestRow {
+  id: string;
+  extensionId: string;
+  status: "PENDING" | "APPROVED" | "DENIED";
+  createdAt: string;
 }
 
 const DIAL_PERMISSION_LABELS: Record<DialPermission, string> = {
@@ -17,6 +30,8 @@ const DIAL_PERMISSION_LABELS: Record<DialPermission, string> = {
   NATIONAL: "National (UAE + India)",
   INTERNATIONAL: "International (everywhere)",
 };
+
+const COUNTRY_LABEL = new Map(COUNTRY_OPTIONS.map((c) => [c.code, c.label]));
 
 // Extracted verbatim from the former standalone /admin/extensions page
 // (merged into /admin/dinstar's Extensions tab — see that page). No
@@ -29,6 +44,10 @@ export function ExtensionsTab() {
   const [message, setMessage] = useState<string | null>(null);
   const [permissionSaving, setPermissionSaving] = useState<string | null>(null);
   const [confirmDeleteNumber, setConfirmDeleteNumber] = useState<string | null>(null);
+  const [unlockRequests, setUnlockRequests] = useState<UnlockRequestRow[]>([]);
+  const [requestingUnlockFor, setRequestingUnlockFor] = useState<string | null>(null);
+  const [unlockReason, setUnlockReason] = useState("");
+  const [unlockSubmitting, setUnlockSubmitting] = useState(false);
   // sipSecret is only ever available right after creation — the server
   // never returns it again (see GET /api/extensions's comment). Shown once,
   // then gone; the admin must copy it now or regenerate the extension.
@@ -38,9 +57,39 @@ export function ExtensionsTab() {
     fetch("/api/extensions")
       .then((r) => r.json())
       .then((data) => setExtensions(data.extensions ?? []));
+    fetch("/api/admin/extension-unlock-requests")
+      .then((r) => (r.ok ? r.json() : { requests: [] }))
+      .then((data) => setUnlockRequests(data.requests ?? []));
   };
 
   useEffect(load, []);
+
+  const pendingRequestFor = (extensionId: string) =>
+    unlockRequests.find((r) => r.extensionId === extensionId && r.status === "PENDING");
+
+  const submitUnlockRequest = async (extensionId: string) => {
+    if (!unlockReason.trim()) return;
+    setUnlockSubmitting(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/admin/extension-unlock-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extensionId, reason: unlockReason.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(`Failed: ${data.error ?? JSON.stringify(data)}`);
+        return;
+      }
+      setMessage("Unlock request sent. A platform owner will review it.");
+      setRequestingUnlockFor(null);
+      setUnlockReason("");
+      load();
+    } finally {
+      setUnlockSubmitting(false);
+    }
+  };
 
   const updatePermission = async (number: string, next: DialPermission) => {
     setPermissionSaving(number);
@@ -189,6 +238,80 @@ export function ExtensionsTab() {
                   <span className="text-tertiary">{ext.kind}</span>
                   <span className="text-tertiary">{ext.status}</span>
                 </div>
+
+                {/* W6 (plan §3.3) — read-only country allocation + lock
+                    state. The tenant admin never edits either; allocation
+                    happens on the platform owner's Geo tab. */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    title={ext.geoLockedAt ? `Locked ${new Date(ext.geoLockedAt).toLocaleString()}` : undefined}
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      ext.geoLockedAt
+                        ? "bg-danger/10 text-danger"
+                        : "bg-surface-hover text-tertiary"
+                    }`}
+                  >
+                    {ext.geoLockedAt ? "Geo-locked" : "Unlocked"}
+                  </span>
+                  {ext.geoAllowedCountries.length === 0 ? (
+                    <span className="text-[11px] text-tertiary">No countries allocated</span>
+                  ) : (
+                    ext.geoAllowedCountries.map((c) => (
+                      <span key={c} className="rounded-full bg-surface-hover px-2 py-0.5 text-[11px] text-secondary">
+                        {COUNTRY_LABEL.get(c) ?? c}
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {ext.geoLockedAt && (
+                  <div className="text-xs">
+                    {pendingRequestFor(ext.id) ? (
+                      <p className="text-tertiary">
+                        Pending since {new Date(pendingRequestFor(ext.id)!.createdAt).toLocaleString()}
+                      </p>
+                    ) : requestingUnlockFor === ext.id ? (
+                      <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2">
+                        <textarea
+                          value={unlockReason}
+                          onChange={(e) => setUnlockReason(e.target.value)}
+                          placeholder="Why should this extension be unlocked?"
+                          rows={2}
+                          className="rounded-lg border border-border bg-background px-2 py-1 text-xs outline-none focus:border-cyan"
+                        />
+                        <div className="flex justify-end gap-3">
+                          <button
+                            onClick={() => submitUnlockRequest(ext.id)}
+                            disabled={unlockSubmitting || !unlockReason.trim()}
+                            className="text-cyan hover:underline disabled:opacity-50"
+                          >
+                            {unlockSubmitting ? "Sending…" : "Send request"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setRequestingUnlockFor(null);
+                              setUnlockReason("");
+                            }}
+                            className="text-tertiary"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setRequestingUnlockFor(ext.id);
+                          setUnlockReason("");
+                        }}
+                        className="text-cyan hover:underline"
+                      >
+                        Request unlock
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <select
                   value={ext.dialPermission}
                   disabled={permissionSaving === ext.number}

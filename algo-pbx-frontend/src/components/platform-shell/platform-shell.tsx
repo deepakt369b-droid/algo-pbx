@@ -18,6 +18,7 @@ import {
   Settings,
   Menu as MenuIcon,
   LogOut,
+  Globe2,
 } from "lucide-react";
 import { SidebarNav, type NavGroup } from "@/components/shell/sidebar-nav";
 import { ThemeToggleButton } from "@/components/shell/theme-toggle";
@@ -41,6 +42,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/platform/tenants", label: "Tenants", icon: Building2 },
       { href: "/platform/provisioning", label: "Provisioning", icon: ServerCog },
+      { href: "/platform/geo-locks", label: "Geo locks", icon: Globe2 },
     ],
   },
   {

@@ -19,10 +19,22 @@ export const dynamic = "force-dynamic";
 // existing settings service. A "show me what I saved" affordance on a secret
 // is a credential-exfiltration path wearing a helpful hat.
 
+// WILDCARD_DNS_RECORD_CONFIRMED added per plan §1: "WILDCARD_DNS_RECORD_CONFIRMED
+// is settable by nothing, so settings/domain/apply is permanently
+// unreachable" — that route (see its own header comment) refuses to emit the
+// tenant wildcard Caddy block unless this flag reads "true". It exists
+// because a failed DNS-01 challenge for a WILDCARD record is fatal to
+// Caddy's ENTIRE config, not just to that one site block — an invalid or
+// premature confirmation here can crash-loop the reverse proxy and take the
+// whole platform down with it, not just one tenant. That is why, uniquely
+// among these four keys, PlatformSettingsForm requires the operator to type
+// a fixed confirmation phrase (not just supply a reason) before this one
+// specific value is written — see that component's own comment.
 const ALLOWED_PLATFORM_KEYS = [
   "CLOUDFLARE_API_TOKEN",
   "VM_PUBLIC_DOMAIN",
   "PROVISIONING_PER_TENANT_SUBNET_ENABLED",
+  "WILDCARD_DNS_RECORD_CONFIRMED",
 ] as const;
 
 const BodySchema = z.object({
@@ -49,6 +61,16 @@ export const PUT = withApiErrorHandler(async function PUT(req: NextRequest) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
+  }
+
+  // This flag is a bare boolean-as-string, not free text — "true" to confirm,
+  // empty to clear/un-confirm. Anything else is refused rather than stored
+  // and silently treated as falsy by whatever reads it later.
+  if (key === "WILDCARD_DNS_RECORD_CONFIRMED" && value !== "true" && value !== "") {
+    return NextResponse.json(
+      { error: 'WILDCARD_DNS_RECORD_CONFIRMED must be "true" or empty (to clear it).' },
+      { status: 400 }
+    );
   }
 
   // Verify the Cloudflare token BEFORE storing it. Storing an invalid token

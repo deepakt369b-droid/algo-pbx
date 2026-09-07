@@ -24,11 +24,29 @@ const PatchSchema = z
   .object({
     gatewayLanIp: z.string().min(1).max(64).optional(),
     tunnelIp: z.string().max(64).nullable().optional(),
-    transport: z.enum(["TAILSCALE", "OPENVPN", "HEADSCALE"]).optional(),
-    status: z.enum(["UNKNOWN", "UP", "DEGRADED", "DOWN"]).optional(),
+    // WIREGUARD added (W2 — connectivity plan §3.2); `z.enum` here is a
+    // second, deliberate re-check of the same `SiteTransport` values the
+    // Prisma column itself enforces — a bad string is a 400 from this
+    // route, not a 500 from a failed Prisma write.
+    transport: z.enum(["TAILSCALE", "OPENVPN", "HEADSCALE", "WIREGUARD"]).optional(),
+    // `status` and `lastHandshakeAt` are deliberately NOT patchable here —
+    // they must only ever be written by the connectivity-check poller
+    // (src/app/api/admin/gateway-sites/connectivity-check/route.ts, via
+    // unsafeGlobalDb.gatewaySite.update directly, not this route) after an
+    // actual transport probe. Letting an admin set these directly would let
+    // a site "claim" to be UP with a fresh handshake without ever having
+    // been probed as such — and for transports whose probe can return
+    // UNKNOWN (TAILSCALE always; HEADSCALE with no API key configured),
+    // the poller skips overwriting status on UNKNOWN, so a manually-set
+    // UP would never self-correct and could look like a valid failover
+    // candidate indefinitely. `lastReachableAt` has no such consequence
+    // (nothing selects on it) and stays admin-patchable.
     headscaleNodeKey: z.string().max(200).nullable().optional(),
-    lastHandshakeAt: z.string().datetime({ offset: true }).nullable().optional(),
     lastReachableAt: z.string().datetime({ offset: true }).nullable().optional(),
+    // W2 — priority (lower wins, W3's primary-selection input) and enabled
+    // (owner/admin kill switch independent of connectivity status).
+    priority: z.number().int().min(1).max(1000).optional(),
+    enabled: z.boolean().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "No fields to update" });
 
@@ -45,12 +63,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ error: "Invalid payload", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { lastHandshakeAt, lastReachableAt, ...rest } = parsed.data;
+  const { lastReachableAt, ...rest } = parsed.data;
   const site = await db.gatewaySite.update({
     where: { id: params.id },
     data: {
       ...rest,
-      ...(lastHandshakeAt !== undefined ? { lastHandshakeAt: lastHandshakeAt ? new Date(lastHandshakeAt) : null } : {}),
       ...(lastReachableAt !== undefined ? { lastReachableAt: lastReachableAt ? new Date(lastReachableAt) : null } : {}),
     },
   });

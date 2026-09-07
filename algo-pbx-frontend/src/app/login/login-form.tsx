@@ -55,7 +55,28 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
     // actually creates the session.
     const result = await signIn("credentials", { email, password, redirect: false });
     if (result?.error) {
-      setError("Invalid email or password.");
+      // Geo allocation + lock (plan §3.3, node W5). authorize() can only
+      // return null/throw — it has no response object to hand back a
+      // reason — so a geo rejection sets a short-lived, HMAC-signed,
+      // httpOnly cookie instead (src/auth.ts, mirroring
+      // src/lib/two-factor.ts's OTP_VERIFIED_COOKIE style) and this
+      // companion route reads + verifies + clears it. Every OTHER
+      // rejection reason in this form (rate limit, wrong password,
+      // disabled, billing hold) has no equivalent cookie and always falls
+      // through to the generic message below — investigated first, not
+      // guessed: pre-login/verify (api/auth-2fa/*) already return their
+      // OWN JSON error directly and never reach this signIn() call in the
+      // first place, so there was no pre-existing "authorize() -> cookie
+      // -> this form" mechanism for the OTP case to copy; this is a new,
+      // small one built the same way that flow's cookies already are.
+      const geoBlock = await fetch("/api/auth/geo-block-reason")
+        .then((r) => r.json())
+        .catch(() => null);
+      if (geoBlock?.blocked && typeof geoBlock.reason === "string") {
+        setError(geoBlock.reason);
+      } else {
+        setError("Invalid email or password.");
+      }
       setPhase("credentials");
       return;
     }

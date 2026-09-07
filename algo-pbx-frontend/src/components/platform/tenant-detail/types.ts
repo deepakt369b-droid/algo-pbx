@@ -103,6 +103,24 @@ export interface SerialisedTenantDetail {
 
 export type PlatformRole = "PLATFORM_OWNER" | "PLATFORM_SUPPORT";
 
+// Tab slugs for TenantDetailTabs. Kept here (not inline in the tabs
+// component) so a tab's ?tab= deep link and its ownership gating share one
+// source of truth. Adding a tab means adding its slug here AND registering it
+// in tenant-detail-tabs.tsx's ALL_TABS array — the two are deliberately kept
+// separate so ownership gating in the tabs file can't silently drift from
+// this list.
+export const TAB_SLUGS = [
+  "identity",
+  "billing",
+  "lifecycle",
+  "gateway",
+  "support",
+  "users",
+  "geo",
+] as const;
+
+export type TabSlug = (typeof TAB_SLUGS)[number];
+
 export function fmtDate(iso: string | null): string {
   return iso ? iso.slice(0, 10) : "—";
 }

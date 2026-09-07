@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Check, Circle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Textarea, Label } from "@/components/ui/input";
 import { type SerialisedTenantDetail, type PlatformRole, fmtDate } from "./types";
 
 // The per-tenant onboarding compliance checklist.
@@ -32,6 +33,16 @@ export function ComplianceChecklist({
   const [error, setError] = useState<string | null>(null);
   const canEdit = role === "PLATFORM_OWNER";
 
+  // The compliance API has always accepted `notes` on any item toggle (see
+  // PATCH .../compliance's BodySchema) — this tab simply had no field that
+  // ever sent one (plan §1: "complianceNotes accepted by the API, no form
+  // field sends it"). Saved by riding along on the FIRST checklist item's
+  // toggle request rather than adding a second endpoint call, since the
+  // route already merges `notes` into whichever update it's handling.
+  const [notes, setNotes] = useState(tenant.complianceNotes ?? "");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const notesDirty = notes !== (tenant.complianceNotes ?? "");
+
   async function toggle(itemId: string, filed: boolean) {
     setBusy(itemId);
     setError(null);
@@ -50,6 +61,33 @@ export function ComplianceChecklist({
       setError(err instanceof Error ? err.message : "Could not update the checklist.");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function saveNotes() {
+    if (compliance.items.length === 0) return;
+    setSavingNotes(true);
+    setError(null);
+    try {
+      const first = compliance.items[0];
+      const res = await fetch(`/api/platform/tenants/${tenant.id}/compliance`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item: first.id,
+          filed: first.filedAt !== null,
+          notes,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Could not save the notes.");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the notes.");
+    } finally {
+      setSavingNotes(false);
     }
   }
 
@@ -109,6 +147,32 @@ export function ComplianceChecklist({
             {error}
           </p>
         )}
+
+        <div className="mt-4 space-y-1.5 border-t pt-3 [border-color:rgb(var(--hairline))]">
+          <Label htmlFor="compliance-notes">Compliance notes</Label>
+          <Textarea
+            id="compliance-notes"
+            rows={3}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            disabled={!canEdit}
+            placeholder="Free-text context for whoever reads this checklist next — what's outstanding, who to chase, why an item is marked filed."
+            data-testid="compliance-notes-input"
+          />
+          {canEdit && (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={!notesDirty || savingNotes}
+                onClick={saveNotes}
+                data-testid="action-save-compliance-notes"
+              >
+                {savingNotes ? "Saving…" : "Save notes"}
+              </Button>
+            </div>
+          )}
+        </div>
 
         {!canEdit && (
           <p className="mt-3 text-[11px] text-tertiary">

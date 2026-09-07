@@ -273,6 +273,54 @@ every image by digest (`docker image inspect --format '{{index .RepoDigests 0}}'
 once a build is verified, so `docker compose pull` can never silently move
 you to a broken upstream release.
 
+### GeoIP database (per-extension geo-lock)
+
+The `geoip-refresh` service refreshes the two GeoLite2-format mmdb
+databases (Country + ASN) onto a shared `geoip_data` volume that `web`'s
+geo module reads read-only. No signup, account, or licence key is
+needed -- this replaces the old `maxmindinc/geoipupdate` service, which
+required a free MaxMind account before it would write anything.
+
+Two open, no-auth sources are used:
+
+- **Country + ASN mmdb files**: pulled from
+  [sapics/ip-location-db](https://github.com/sapics/ip-location-db)'s
+  public `latest` GitHub Release, which republishes MaxMind's GeoLite2
+  Country and ASN databases as plain downloadable `.mmdb` files with no
+  account wall (same underlying data `geoipupdate` used to fetch,
+  rebuilt twice weekly). **Attribution**: GeoLite2 data is created by
+  MaxMind and provided under CC BY-SA 4.0 -- see
+  [MaxMind's GeoLite2 EULA](https://www.maxmind.com/en/geolite2/eula).
+- **Datacenter/VPN ASN list** (`src/lib/geo/datacenter-asns.ts`):
+  generated from [X4BNet/lists_vpn](https://github.com/X4BNet/lists_vpn)
+  (MIT licensed), `input/datacenter/ASN.txt`. Unlike the mmdb files
+  above, this is a compiled TS constant, not something fetched live at
+  runtime -- re-run `npx tsx scripts/update-datacenter-asns.ts` (from
+  `algo-pbx-frontend/`) periodically (quarterly is reasonable) to
+  refresh it; see that script's header comment for why.
+
+The `geoip-refresh` compose service runs `pbx_configs/geoip/geoip-refresh.sh`,
+a small poll loop (same style as `pbx_configs/openvpn/bridge-watch.sh`)
+that downloads both mmdb files on startup and once a day thereafter -- no
+`docker compose up` flags or `.env` values required for it at all.
+
+Leaving it running with no network access is safe, not broken: the geo
+module is built to **fail open** -- missing or corrupt `.mmdb` files mean
+every login is allowed and not counted toward a lock, never a login
+outage.
+
+Verify it worked after deploying:
+
+```bash
+docker compose run --rm geoip-refresh
+docker compose run --rm --entrypoint sh geoip-refresh -c "ls -l /geoip"
+```
+
+You should see both `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` in
+that listing. If they're missing, check the container's logs
+(`docker compose logs geoip-refresh`) -- this almost always means the VM
+couldn't reach GitHub, not an auth problem (there is no auth to fail).
+
 ## Before your first `git push`
 
 Run `git status` and confirm nothing under `.env`, `pbx_configs/keys/`,

@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { cookies } from "next/headers";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
 // Legitimate direct unsafeGlobalDb use (see that export's own doc comment
 // in src/lib/db.ts): login runs BEFORE any tenant is known — you need an
@@ -15,6 +16,8 @@ import { checkLoginRateLimit, clearLoginAttempts, recordLoginFailure, getClientI
 import { isProfileComplete } from "@/lib/registration";
 import { OTP_VERIFIED_COOKIE, verifyOtpVerifiedToken } from "@/lib/two-factor";
 import { evaluateLoginGate } from "@/lib/billing/login-gate";
+import { enforceGeoAccess } from "@/lib/geo/enforce";
+import { GEO_BLOCK_COOKIE, GEO_BLOCK_MAX_AGE_SECONDS, signGeoBlockCookie } from "@/lib/geo/geo-block-cookie";
 
 /** Auth.js hands authorize() a standard Web API Request, not a
  * NextRequest — no `.cookies` convenience, just a raw Cookie header to
@@ -233,6 +236,105 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
+        // Geo allocation + lock (plan §3.3, node W5). Placement here is
+        // LOAD-BEARING, not stylistic — it must run:
+        //   - AFTER the password + 2FA checks above. An unauthenticated
+        //     geo check would let any stranger who merely knows an agent's
+        //     email lock that extension in six requests sent from a
+        //     foreign IP — a free denial-of-service that only the platform
+        //     owner could undo, and the attacker need never guess the
+        //     password to pull it off.
+        //   - AFTER the billing gate immediately above. A tenant in
+        //     billing hold gets the billing answer (already returned by
+        //     now if it applied), not a geo answer — the two ladders must
+        //     never race for which message the user sees.
+        //   - BEFORE clearLoginAttempts() and the auth.signin AuditLog
+        //     write below. A geo-rejected attempt is not a successful
+        //     sign-in: clearing the brute-force bucket here would let a
+        //     six-strike geo lock also erase whatever real password-
+        //     guessing history led up to it, and writing "auth.signin"
+        //     would record a false success for an attempt that was, in
+        //     fact, just blocked.
+        //
+        // Only extension-holding users are in scope: the entire mechanism
+        // lives on Extension (geoAllowedCountries/geoFailedAttempts/
+        // geoLockedAt), so a user with none linked — most ADMIN/SUPERVISOR
+        // accounts — has nothing to evaluate or lock, and
+        // evaluateGeoAccess() is not invoked for them at all.
+        if (user.extension) {
+          const decision = await enforceGeoAccess(unsafeGlobalDb, {
+            tenantId: user.tenantId,
+            extensionId: user.extension.id,
+            email: user.email,
+            userId: user.id,
+            ip,
+          });
+
+          if (!decision.allowed) {
+            // Same unsafeGlobalDb reasoning as the billing-block audit
+            // write below this block: no tenantDb() exists yet at login,
+            // so tenantId is supplied explicitly.
+            await unsafeGlobalDb.auditLog.create({
+              data: {
+                action: "auth.signin_blocked_geo",
+                actorId: user.id,
+                tenantId: user.tenantId,
+                metadata: {
+                  outcome: decision.outcome,
+                  remainingAttempts: decision.remainingAttempts,
+                  telephonyAffected: false,
+                },
+              },
+            });
+
+            // Auth.js's Credentials authorize() can only return null or
+            // throw — it has no response object to hand the login page a
+            // message directly (confirmed against this repo's existing
+            // 2FA flow before writing this: pre-login/verify,
+            // api/auth-2fa/*, are ordinary JSON routes that never call
+            // authorize() at all, so there was no pre-existing
+            // "authorize() sets a cookie the client reads" mechanism to
+            // copy — this is a new, small one, mirrored on
+            // two-factor.ts's own cookie style). See
+            // GET /api/auth/geo-block-reason (src/app/api/auth/
+            // geo-block-reason/route.ts) for the other half: the
+            // short-lived, HMAC-signed, single-use cookie set here is read
+            // and verified there, and login-form.tsx calls it right after
+            // a blocked signIn(). Setting a cookie from inside authorize()
+            // works because it executes inside the SAME request's
+            // AsyncLocalStorage context as the enclosing
+            // POST /api/auth/callback/credentials route handler —
+            // next/headers's cookies() is documented as usable from a
+            // Server Action or Route Handler, and this call stack is one,
+            // just several layers down inside NextAuth's own dispatch.
+            try {
+              cookies().set(
+                GEO_BLOCK_COOKIE,
+                signGeoBlockCookie({
+                  reason: decision.agentMessage ?? "Sign-in was blocked for a location-policy reason.",
+                  country: null,
+                  remaining: decision.remainingAttempts,
+                }),
+                {
+                  httpOnly: true,
+                  secure: process.env.NODE_ENV === "production",
+                  sameSite: "lax",
+                  maxAge: GEO_BLOCK_MAX_AGE_SECONDS,
+                  path: "/",
+                }
+              );
+            } catch (err) {
+              // Best-effort message delivery only — the block itself
+              // (`return null` below) does not depend on this succeeding;
+              // a failure here just means the login page falls back to
+              // its generic "Invalid email or password." copy.
+              console.error("authorize(): failed to set geo-block cookie", err);
+            }
+
+            return null;
+          }
+        }
+
         await clearLoginAttempts(email, ip);
 
         // Sign-in visibility (agent-registration plan, Workstream 4) —
@@ -308,6 +410,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // live-reread branch below refreshes it on every subsequent
         // request the same way it refreshes role/extension.
         token.tenantId = user.tenantId;
+        // W5 (plan §3.3): always false on this leg — authorize() above
+        // already returned null instead of a user object if this
+        // extension were locked (evaluateGeoAccess()'s alreadyLocked
+        // branch is unreachable from a sign-in that got this far). The
+        // live-reread branch below is what actually keeps this current
+        // for the rest of the session.
+        token.geoLocked = false;
         return token;
       }
       if (token.sub) {
@@ -323,7 +432,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             // accounts, and the old extension holder kept passing
             // canAccessRecording()/canAccessMailbox() for the new owner.
             role: true,
-            extension: { select: { number: true } },
+            // geoLockedAt added to this ALREADY-existing select (W5, plan
+            // §3.3) rather than a new query — this callback already reads
+            // `extension` live on every request for `disabled`/`role`
+            // purposes, so surfacing the lock flag here costs nothing
+            // extra. Deliberately NOT an mmdb lookup or a call into
+            // enforceGeoAccess(): this callback runs on every single
+            // request and must stay cheap; it only reflects whatever the
+            // login-time or sip-credentials-time check already decided and
+            // persisted to geoLockedAt. Does not sign the user out or
+            // block anything by itself — it exists so the session (and,
+            // downstream, a future UI banner — W6's job, not this one) can
+            // see the flag. See the session callback in auth.config.ts for
+            // where this is exposed as `session.user.geoLocked`.
+            extension: { select: { number: true, geoLockedAt: true } },
             // Wave 2a: re-read live for the same reason as role/extension
             // above. In practice a User's tenantId is not expected to
             // change post-creation (no reassignment UI exists), but
@@ -358,6 +480,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.extension = dbUser.extension?.number ?? null;
           token.tenantId = dbUser.tenantId;
         }
+        // W5 (plan §3.3): recomputed live on every request, same pattern
+        // as `disabled` above. `!!` collapses "no extension linked" and
+        // "extension linked, geoLockedAt null" to the same `false` — both
+        // mean "nothing to show a banner about."
+        token.geoLocked = !!dbUser?.extension?.geoLockedAt;
         // Recomputed live on every request, same as `disabled` — an
         // agent who completes registration mid-session (or has it
         // overridden by an admin) sees the gate lift on their very next

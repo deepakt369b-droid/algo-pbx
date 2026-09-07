@@ -5,8 +5,10 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { ConfirmActionDialog } from "@/components/platform-shell/confirm-action-dialog";
 import { TELEPHONY_UNAFFECTED_NOTE } from "@/lib/platform/blast-radius";
+import { PLAN_CATALOG, findPlan } from "@/lib/platform/plan-catalog";
 import { type SerialisedTenantDetail, type PlatformRole, fmtDate } from "./types";
 
 // Billing — manual-first, owner-overridable.
@@ -186,8 +188,22 @@ export function BillingTab({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="plan-input">Plan</Label>
-                    <Input id="plan-input" value={plan} onChange={(e) => setPlan(e.target.value)} />
+                    <Label htmlFor="plan-select">Plan</Label>
+                    <Select
+                      value={plan as (typeof PLAN_CATALOG)[number]["id"] | null}
+                      onChange={(v) => setPlan(v)}
+                      options={PLAN_CATALOG.map((p) => ({
+                        value: p.id,
+                        label: `${p.label} · up to ${p.seatCeiling} seats · $${p.monthlyPriceUsd}/seat/mo`,
+                      }))}
+                      aria-label="Plan"
+                    />
+                    {!findPlan(tenant.plan) && (
+                      <p className="text-[11px] text-warning">
+                        Current plan &quot;{tenant.plan}&quot; is not in the catalogue — pick one below
+                        to bring it in line.
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="seats-input">Seats</Label>
@@ -195,9 +211,15 @@ export function BillingTab({
                       id="seats-input"
                       type="number"
                       min={1}
+                      max={findPlan(plan)?.seatCeiling}
                       value={seats}
                       onChange={(e) => setSeats(Number(e.target.value))}
                     />
+                    {findPlan(plan) && (
+                      <p className="text-[11px] text-tertiary">
+                        Ceiling for {findPlan(plan)!.label}: {findPlan(plan)!.seatCeiling} seats.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -208,7 +230,12 @@ export function BillingTab({
                   <Button size="sm" variant="secondary" onClick={() => setAction("extend")}>
                     Extend
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setAction("change_plan")}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!findPlan(plan) || seats < 1 || seats > (findPlan(plan)?.seatCeiling ?? 0)}
+                    onClick={() => setAction("change_plan")}
+                  >
                     Change plan
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setAction("comp")}>

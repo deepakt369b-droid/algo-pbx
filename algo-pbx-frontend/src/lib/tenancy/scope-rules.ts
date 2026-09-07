@@ -63,6 +63,14 @@ export const TENANT_SCOPED_MODELS: readonly string[] = [
   // future cross-tenant leak takes.
   "RecordingStorageTarget",
   "RecordingDelivery",
+  // Per-extension geo lock (2026-09-08, plan §3.3). Both carry a tenantId
+  // and go through this scoping the same as every other tenant-owned
+  // model; deliberately NOT added to the RLS policy set in
+  // 20260904120000_add_rls (see that migration's own header and
+  // 20260908100000_add_extension_geo_lock's header for why — a considered
+  // scope decision, not an oversight).
+  "GeoLoginEvent",
+  "ExtensionUnlockRequest",
 ];
 
 // AppSetting is the one model that does not fit the simple pattern (plan

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { requireAdminSession, requireStaffSession } from "@/lib/auth-guard";
+import { gatewayTunnelIp } from "@/lib/platform/subnet";
+import { unsafeGlobalDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +16,21 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const guard = await requireStaffSession();
   if ("response" in guard) return guard.response;
-  const { db } = guard;
+  const { session, db } = guard;
 
   const sites = await db.gatewaySite.findMany({ orderBy: { name: "asc" } });
-  return NextResponse.json({ sites });
+
+  // `Tenant` isn't a TENANT_SCOPED_MODELS entry, so this reads it directly —
+  // scoped to the CALLER's OWN tenant only (session.user.tenantId, never a
+  // request-supplied value), the same read pattern the POST handler below
+  // already uses for `tunnelSubnetIndex`. Surfaced here so the connectivity
+  // page can render the per-tenant failover toggle without a second route.
+  const tenant = await unsafeGlobalDb.tenant.findUnique({
+    where: { id: session.user.tenantId },
+    select: { failoverEnabled: true },
+  });
+
+  return NextResponse.json({ sites, failoverEnabled: tenant?.failoverEnabled ?? false });
 }
 
 // `name` becomes the OpenVPN client cert's CN and the client-config-dir
@@ -30,6 +43,11 @@ const NameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Use only letters, 
 const CreateSchema = z.object({
   name: NameSchema,
   gatewayLanIp: z.string().min(1).max(64),
+  // Optional — defaults to TAILSCALE for backward compat with the
+  // existing wizard (add-site-wizard.tsx doesn't send this field at all
+  // today), matching the pre-W2 hardcoded behavior exactly for any
+  // caller that doesn't opt in.
+  transport: z.enum(["TAILSCALE", "OPENVPN", "HEADSCALE", "WIREGUARD"]).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -47,15 +65,45 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `A site named "${parsed.data.name}" already exists.` }, { status: 409 });
   }
 
-  // New sites start on the legacy transport (TAILSCALE) and UNKNOWN status —
-  // a site only moves to OPENVPN/HEADSCALE once the operator actually runs
-  // the cutover (Node G), never optimistically at creation time.
+  // Prefills `tunnelIp` from the tenant's own pooled-subnet allocation
+  // (src/lib/platform/subnet.ts's `gatewayTunnelIp()`, the ".10" address
+  // convention already documented there) when the tenant has a
+  // `tunnelSubnetIndex` — most tenants provisioned since the pooled-stack
+  // migration do. Left null, exactly as before, for a tenant with no
+  // subnet index (e.g. the pre-pooling legacy tenant), so the operator
+  // still sets it by hand via PATCH.
+  // `Tenant` itself is deliberately NOT on TENANT_SCOPED_MODELS (it's the
+  // tenancy boundary, not tenant-owned data — see scope-rules.ts's own
+  // list) — a tenant-scoped `db.tenant.*` call throws "not on the
+  // tenant-scoped model list". This is a plain by-id lookup of the
+  // CALLER's OWN tenant (session.user.tenantId, never a value taken from
+  // the request), so reading it via unsafeGlobalDb here is safe and not a
+  // cross-tenant read.
+  const tenant = await unsafeGlobalDb.tenant.findUnique({ where: { id: session.user.tenantId }, select: { tunnelSubnetIndex: true } });
+  const tunnelIp = tenant?.tunnelSubnetIndex != null ? gatewayTunnelIp(tenant.tunnelSubnetIndex) : null;
+
+  // New sites start UNKNOWN status regardless of transport — a site only
+  // moves to a monitored UP/DOWN/DEGRADED state once the connectivity
+  // poller actually checks it, never optimistically at creation time.
+  // Transport defaults to TAILSCALE (legacy, unmonitored) unless the
+  // caller explicitly asks for something else.
   const site = await db.gatewaySite.create({
-    data: { name: parsed.data.name, gatewayLanIp: parsed.data.gatewayLanIp, transport: "TAILSCALE", status: "UNKNOWN" } as unknown as Prisma.GatewaySiteUncheckedCreateInput,
+    data: {
+      name: parsed.data.name,
+      gatewayLanIp: parsed.data.gatewayLanIp,
+      transport: parsed.data.transport ?? "TAILSCALE",
+      status: "UNKNOWN",
+      tunnelIp,
+    } as unknown as Prisma.GatewaySiteUncheckedCreateInput,
   });
 
   await db.auditLog.create({
-    data: { action: "site.created", actorId: session.user.id, targetId: site.id, metadata: { name: site.name, gatewayLanIp: site.gatewayLanIp } } as unknown as Prisma.AuditLogUncheckedCreateInput,
+    data: {
+      action: "site.created",
+      actorId: session.user.id,
+      targetId: site.id,
+      metadata: { name: site.name, gatewayLanIp: site.gatewayLanIp, transport: site.transport, tunnelIp: site.tunnelIp },
+    } as unknown as Prisma.AuditLogUncheckedCreateInput,
   });
 
   return NextResponse.json({ site }, { status: 201 });

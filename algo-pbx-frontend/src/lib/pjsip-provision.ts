@@ -34,7 +34,17 @@ export async function regeneratePjsipConfigAndReload(): Promise<void> {
   const extensions = await unsafeGlobalDb.extension.findMany();
 
   const forPjsip: ExtensionForPjsip[] = extensions
-    .filter((e) => e.sipSecret && (e.kind === "webrtc" || e.kind === "hardware"))
+    // geoLockedAt != null (W5, plan §3.3) is filtered out here, not in
+    // renderPjsipConf itself — that function stays pure "data in, config
+    // text out" with no knowledge of the geo-lock feature at all; this is
+    // the one place that decides WHICH extensions are fed into it, per the
+    // plan's explicit instruction not to touch renderPjsipConf or the AMI
+    // reload mechanism. A geo-locked extension therefore has no PJSIP
+    // endpoint stanza at all after the next regeneration — an
+    // already-registered device is deregistered, not merely refused its
+    // next credential fetch (see GET /api/me/sip-credentials's separate,
+    // faster-acting 403 for the DB-level half of this enforcement).
+    .filter((e) => e.sipSecret && (e.kind === "webrtc" || e.kind === "hardware") && !e.geoLockedAt)
     .map((e) => ({ number: e.number, kind: e.kind as "webrtc" | "hardware", sipSecret: e.sipSecret!, dialPermission: e.dialPermission }));
 
   const rendered = renderPjsipConf(forPjsip);
@@ -61,4 +71,30 @@ export async function regeneratePjsipConfigAndReload(): Promise<void> {
       `pjsip_dynamic.conf was written and 'pjsip reload' returned OK, but ${missing.length} endpoint(s) did not load (${missing.join(", ")}). This Asterisk build sometimes needs a full restart to pick up #included config — run: docker compose restart asterisk`
     );
   }
+}
+
+/**
+ * Re-provisions pjsip_dynamic.conf and hot-reloads it, specifically
+ * because a geo-lock transition just happened (an extension's
+ * `geoLockedAt` was just set by src/lib/geo/enforce.ts, or just cleared by
+ * a platform owner's unlock-approval route — W6, not built yet as of this
+ * writing). This is NOT a separate provisioning path: it is the exact same
+ * `regeneratePjsipConfigAndReload()` every extension create/update/delete
+ * already calls, which (as of the geo-lock feature, see the filter added
+ * above) already excludes any extension with `geoLockedAt` set. It exists
+ * under its own name purely so a lock/unlock call site's intent reads
+ * clearly ("re-provision BECAUSE a lock changed"), and so W6's unlock
+ * route doesn't need to know that this is literally the same regeneration
+ * extension edits trigger.
+ *
+ * `tenantId` is accepted but currently unused: D1 (plan §1, restated in
+ * this file's own header comment) is "one pooled Asterisk stack, one
+ * pjsip_dynamic.conf" until a later wave namespaces PJSIP endpoint ids per
+ * tenant, so regeneration is always global. The parameter exists so
+ * call sites can already pass a tenantId without a future signature
+ * change once that namespacing lands.
+ */
+export async function reprovisionPjsipExcludingLocked(tenantId?: string): Promise<void> {
+  void tenantId;
+  await regeneratePjsipConfigAndReload();
 }

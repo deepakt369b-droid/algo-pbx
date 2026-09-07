@@ -28,6 +28,19 @@ function fmtDate(d: Date | null): string {
   return d ? d.toISOString().slice(0, 10) : "—";
 }
 
+// Same 3-minute freshness rule as src/components/connectivity/site-table.tsx's
+// `effectiveDot()`, so a legacy/stale Tailscale site can't read "Up" here
+// while the admin plane already shows it as degraded. A site whose status
+// is "UP" but whose last handshake is stale is NOT fresh-up — the poller
+// last saw it up more than 3 minutes ago, which is what "degraded" means on
+// the other plane.
+const HANDSHAKE_FRESH_MS = 3 * 60 * 1000;
+
+function isFreshUp(site: { status: string; lastHandshakeAt: Date | null }): boolean {
+  if (site.status !== "UP") return false;
+  return site.lastHandshakeAt !== null && Date.now() - site.lastHandshakeAt.getTime() < HANDSHAKE_FRESH_MS;
+}
+
 export default async function TenantsPage({ searchParams }: { searchParams: Search }) {
   const q = (searchParams.q ?? "").trim();
   const status = searchParams.status ?? "";
@@ -103,11 +116,13 @@ export default async function TenantsPage({ searchParams }: { searchParams: Sear
                 const tunnel =
                   sites.length === 0
                     ? { label: "No gateway", tone: "neutral" as const }
-                    : sites.some((s) => s.status === "UP")
+                    : sites.some(isFreshUp)
                       ? { label: "Up", tone: "success" as const }
                       : sites.every((s) => s.lastHandshakeAt === null)
                         ? { label: "Never connected", tone: "warning" as const }
-                        : { label: "Down", tone: "danger" as const };
+                        : sites.some((s) => s.status === "UP")
+                          ? { label: "Degraded", tone: "warning" as const }
+                          : { label: "Down", tone: "danger" as const };
                 const comp = compliance.get(t.id);
 
                 return (

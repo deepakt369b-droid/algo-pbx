@@ -36,6 +36,16 @@ declare module "next-auth" {
       // no live-verified tenantId must not silently resolve to "" and get
       // treated as some real tenant's id downstream.
       tenantId: string;
+      // W5 (plan §3.3) — mirrors `disabled`'s live-recompute pattern
+      // exactly (src/auth.ts's Node-side jwt override re-reads
+      // Extension.geoLockedAt on every request). Passive/informational
+      // only: nothing gates access on this flag the way `disabled` does —
+      // it exists so the shell can show a persistent "this extension is
+      // geo-locked" banner (a later UI node's job; not built here). GET
+      // /api/me/sip-credentials and PJSIP re-provisioning are the actual
+      // enforcement points, both independent of whatever this session
+      // field says.
+      geoLocked: boolean;
     } & DefaultSession["user"];
   }
 
@@ -45,6 +55,7 @@ declare module "next-auth" {
     disabled?: boolean;
     profileComplete?: boolean;
     tenantId?: string;
+    geoLocked?: boolean;
   }
 }
 

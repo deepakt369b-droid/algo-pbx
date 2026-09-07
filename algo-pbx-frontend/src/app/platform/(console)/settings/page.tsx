@@ -22,10 +22,11 @@ export default async function PlatformSettingsPage() {
   if ("response" in guard) notFound();
   const isOwner = guard.session.user.role === "PLATFORM_OWNER";
 
-  const [cfToken, publicDomain, subnetFlag, pki, tenants] = await Promise.all([
+  const [cfToken, publicDomain, subnetFlag, wildcardConfirmedFlag, pki, tenants] = await Promise.all([
     getSetting("CLOUDFLARE_API_TOKEN"),
     getSetting("VM_PUBLIC_DOMAIN"),
     getSetting("PROVISIONING_PER_TENANT_SUBNET_ENABLED"),
+    getSetting("WILDCARD_DNS_RECORD_CONFIRMED"),
     readPkiStatus(),
     db.tenant.findMany({
       where: { status: { not: "OFFBOARDED" } },
@@ -100,6 +101,7 @@ export default async function PlatformSettingsPage() {
             cloudflareConfigured={Boolean(cfToken)}
             publicDomain={publicDomain ?? ""}
             perTenantSubnetEnabled={subnetFlag === "true"}
+            wildcardDnsRecordConfirmed={wildcardConfirmedFlag === "true"}
             tenants={tenants}
           />
         </CardContent>

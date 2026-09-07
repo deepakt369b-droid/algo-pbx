@@ -11,6 +11,8 @@
 // MRR will be treated as MRR; if it is really an estimate, it has to say so
 // on the same screen, not in a doc nobody opens.
 
+import { PLAN_CATALOG, findPlan } from "./plan-catalog";
+
 export interface MrrTenantView {
   id: string;
   slug: string;
@@ -20,14 +22,19 @@ export interface MrrTenantView {
   status: "TRIAL" | "ACTIVE" | "SUSPENDED" | "OFFBOARDED";
 }
 
-/** Per-seat monthly list price in AED. The public website advertises a single
- * AED 500/month standard plan, which is the only price this product has ever
- * actually quoted — the others are placeholders for plans that do not exist
- * yet and are priced here only so an unknown plan string cannot silently
- * contribute zero without being noticed (see `unpricedPlans` below). */
-export const PLAN_PRICES: Record<string, number> = {
-  standard: 500,
-};
+/** Per-seat monthly list price, now sourced from `plan-catalog.ts`'s
+ * `findPlan()` instead of a private guess table kept only in this file. This
+ * used to be a hand-maintained `{ standard: 500 }` map that any OTHER module
+ * (billing's `change_plan` action in particular) had no way to validate
+ * against — a tenant could be moved to a plan string this map had never
+ * heard of, and it would silently count as AED/USD 0 forever. The catalogue
+ * is now the one place a plan's price and seat ceiling are decided; this
+ * export is kept (rather than removed) only so existing call sites/tests
+ * that import `PLAN_PRICES` directly keep compiling and see the same
+ * numbers, derived from the same source of truth. */
+export const PLAN_PRICES: Record<string, number> = Object.fromEntries(
+  PLAN_CATALOG.map((p) => [p.id, p.monthlyPriceUsd])
+);
 
 export interface MrrBreakdown {
   /** Sum over counted tenants of price(plan) x seats, in AED. */
@@ -74,7 +81,12 @@ export function computeMrr(tenants: readonly MrrTenantView[]): MrrBreakdown {
   const unpriced = new Set<string>();
 
   for (const t of counted) {
-    const price = PLAN_PRICES[t.plan];
+    // Sourced from the catalogue (findPlan), not the flat PLAN_PRICES map,
+    // per plan §5: "compute revenue from findPlan(tenant.plan)?.monthlyPriceUsd
+    // ?? 0 per seat-sold". An id absent from the catalogue behaves exactly as
+    // an unpriced plan did before — contributes 0 and is surfaced in
+    // `unpricedPlans`, not silently swallowed.
+    const price = findPlan(t.plan)?.monthlyPriceUsd;
     if (price === undefined) unpriced.add(t.plan);
     const seats = Number.isFinite(t.seats) && t.seats > 0 ? Math.floor(t.seats) : 0;
     const aed = (price ?? 0) * seats;

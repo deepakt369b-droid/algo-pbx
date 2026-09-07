@@ -101,7 +101,7 @@ export function AgentShell({
   role?: "AGENT" | "SUPERVISOR" | "ADMIN";
   signOutAction: () => Promise<void>;
 }) {
-  const { isConnected, callState, ringtoneBlocked, retryRingtone } = useSIP();
+  const { isConnected, callState, ringtoneBlocked, retryRingtone, credentialsError } = useSIP();
   const pathname = usePathname();
   // The "Admin" link below is drawn from `role`, which the server layout read
   // from a browser-wide cookie that a second sign-in can replace at any time.
@@ -277,6 +277,15 @@ export function AgentShell({
             <button onClick={retryRingtone} className="underline hover:text-warning">
               Enable call sounds
             </button>
+          </div>
+        )}
+        {/* W6: a geo-lock (or any other explained) failure to fetch SIP
+            credentials must not be a silently-unregistered softphone —
+            W5 owns the actual enforcement decision, this only shows its
+            reason. */}
+        {credentialsError && (
+          <div className="sticky top-0 z-20 flex items-center justify-center gap-2 border-b border-danger/40 bg-danger-subtle px-4 py-2 text-xs text-danger">
+            <span>Could not connect your phone: {credentialsError}</span>
           </div>
         )}
         {/* Only hidden on /agent/call — CallControls there already renders

@@ -83,7 +83,17 @@ export async function pushVpnConfig(
   host: string,
   ovpnFile: Buffer,
   ovpnFilename: string,
-  actorId: string
+  actorId: string,
+  // W2 — connectivity plan §3.2 credential-bug fix: previously omitted
+  // entirely, so getSetting() always resolved the PLATFORM-GLOBAL
+  // DINSTAR_WEBUI_USERNAME/PASSWORD row regardless of which tenant's site
+  // was being pushed to — a real bug with more than one gateway, since
+  // tenant B's push would silently authenticate with tenant A's saved
+  // credentials the moment tenant A had ever set a per-tenant override.
+  // Required (not optional) so a caller can't forget to thread it through
+  // and silently reintroduce the bug — see push-vpn-config/route.ts,
+  // which now passes `site.tenantId`.
+  tenantId: string
 ): Promise<VpnPushResult> {
   const result: VpnPushResult = {
     loggedIn: false,
@@ -93,8 +103,8 @@ export async function pushVpnConfig(
   };
 
   const [username, password] = await Promise.all([
-    getSetting("DINSTAR_WEBUI_USERNAME"),
-    getSetting("DINSTAR_WEBUI_PASSWORD"),
+    getSetting("DINSTAR_WEBUI_USERNAME", tenantId),
+    getSetting("DINSTAR_WEBUI_PASSWORD", tenantId),
   ]);
   if (!username || !password) {
     result.error = "DINSTAR_WEBUI_USERNAME/PASSWORD are not configured — set them in /admin/settings first.";

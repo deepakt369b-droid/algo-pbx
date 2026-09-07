@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { PhoneOff, ShieldOff, Ban } from "lucide-react";
+import { PhoneOff, ShieldOff, Ban, RotateCcw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConfirmActionDialog } from "@/components/platform-shell/confirm-action-dialog";
@@ -25,7 +25,7 @@ import { type SerialisedTenantDetail, type PlatformRole, fmtDateTime } from "./t
 // typing the tenant slug, and is owner-only. Offboarding likewise. Suspension
 // is comparatively routine and reversible, and its confirmation says so.
 
-type Action = "suspend" | "unsuspend" | "dialplan_cut" | "dialplan_restore" | "offboard" | null;
+type Action = "suspend" | "unsuspend" | "dialplan_cut" | "dialplan_restore" | "offboard" | "reinstate" | null;
 
 export function LifecycleTab({
   detail,
@@ -37,7 +37,10 @@ export function LifecycleTab({
   const router = useRouter();
   const { tenant, counts } = detail;
   const [action, setAction] = useState<Action>(null);
-  const [manifest, setManifest] = useState<Array<{ step: string; automated: boolean; detail: string }> | null>(null);
+  const [manifest, setManifest] = useState<{
+    kind: "offboard" | "reinstate";
+    steps: Array<{ step: string; automated: boolean; detail: string }>;
+  } | null>(null);
   const isOwner = role === "PLATFORM_OWNER";
 
   const suspended = tenant.status === "SUSPENDED";
@@ -77,9 +80,14 @@ export function LifecycleTab({
         break;
       case "offboard": {
         const json = await post("offboard", { reason, confirmSlug: tenant.slug });
-        setManifest(
-          (json?.manifest as Array<{ step: string; automated: boolean; detail: string }>) ?? null
-        );
+        const steps = json?.manifest as Array<{ step: string; automated: boolean; detail: string }> | undefined;
+        setManifest(steps ? { kind: "offboard", steps } : null);
+        break;
+      }
+      case "reinstate": {
+        const json = await post("reinstate", { reason, confirmSlug: tenant.slug });
+        const steps = json?.manifest as Array<{ step: string; automated: boolean; detail: string }> | undefined;
+        setManifest(steps ? { kind: "reinstate", steps } : null);
         break;
       }
     }
@@ -112,6 +120,16 @@ export function LifecycleTab({
       title: "Offboard tenant",
       blast: offboardBlastRadius(tenant.name, counts.users),
       confirm: "Offboard tenant",
+      typed: tenant.slug,
+    },
+    reinstate: {
+      title: "Reinstate tenant",
+      blast:
+        `This moves ${tenant.name} from OFFBOARDED to SUSPENDED — never straight to ACTIVE. ` +
+        `Login stays blocked until you separately restore it, and certificates, the OpenVPN tunnel ` +
+        `and any recording storage target need re-provisioning/re-verification first (see the manifest ` +
+        `this action returns).`,
+      confirm: "Reinstate tenant",
       typed: tenant.slug,
     },
   };
@@ -214,15 +232,27 @@ export function LifecycleTab({
                   Offboard
                 </Button>
               )}
+              {offboarded && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setAction("reinstate")}
+                  data-testid="action-reinstate"
+                >
+                  <RotateCcw size={14} className="mr-1.5 -mt-px inline" aria-hidden />
+                  Reinstate
+                </Button>
+              )}
             </div>
 
             {manifest && (
               <div className="space-y-1.5" data-testid="offboard-manifest">
                 <p className="text-[12px] font-medium text-primary">
-                  Offboarding recorded. Remaining manual steps:
+                  {manifest.kind === "reinstate" ? "Reinstatement recorded." : "Offboarding recorded."}{" "}
+                  Remaining manual steps:
                 </p>
                 <ul className="space-y-1">
-                  {manifest.map((m) => (
+                  {manifest.steps.map((m) => (
                     <li
                       key={m.step}
                       className="flex items-start gap-2 text-[12px]"

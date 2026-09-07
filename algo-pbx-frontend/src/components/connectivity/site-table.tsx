@@ -1,14 +1,18 @@
 "use client";
 
+import { CutoverButton } from "./cutover-button";
+
 interface GatewaySite {
   id: string;
   name: string;
   gatewayLanIp: string;
   tunnelIp: string | null;
-  transport: "TAILSCALE" | "OPENVPN" | "HEADSCALE";
+  transport: "TAILSCALE" | "OPENVPN" | "HEADSCALE" | "WIREGUARD";
   status: "UNKNOWN" | "UP" | "DEGRADED" | "DOWN";
   lastHandshakeAt: string | null;
   lastReachableAt: string | null;
+  priority: number;
+  enabled: boolean;
 }
 
 // Green iff status is UP *and* the last handshake was within 3 minutes —
@@ -28,6 +32,7 @@ const TRANSPORT_LABEL: Record<GatewaySite["transport"], string> = {
   TAILSCALE: "Tailscale (legacy)",
   OPENVPN: "OpenVPN (primary)",
   HEADSCALE: "Headscale (fallback)",
+  WIREGUARD: "WireGuard",
 };
 
 export function SiteTable({
@@ -76,12 +81,15 @@ export function SiteTable({
                   {site.lastHandshakeAt ? new Date(site.lastHandshakeAt).toLocaleString() : "never"}
                 </td>
                 <td className="py-2">
-                  <button onClick={() => onEdit(site)} className="mr-3 text-cyan hover:underline">
-                    Edit
-                  </button>
-                  <button onClick={() => onDelete(site)} className="text-danger hover:underline">
-                    Remove
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button onClick={() => onEdit(site)} className="text-cyan hover:underline">
+                      Edit
+                    </button>
+                    <button onClick={() => onDelete(site)} className="text-danger hover:underline">
+                      Remove
+                    </button>
+                    <CutoverButton site={site} />
+                  </div>
                 </td>
               </tr>
             );

@@ -36,6 +36,11 @@ interface SIPContextType {
   agentStatus: AgentStatus;
   incomingCallerId: string | null;
   dialError: string | null;
+  /** Non-null when GET /api/me/sip-credentials failed with an explained
+   * error (e.g. a geo-lock 403) — surfaced as a small banner so a silent
+   * registration failure isn't left unexplained. Null on success or while
+   * loading. */
+  credentialsError: string | null;
   /** Agent-facing explanation for a call that just ended abnormally — a
    * failed hold re-INVITE (see src/lib/call-termination.ts) or a
    * failed/unconfirmed transfer (see src/lib/refer-notify.ts). Rendered by
@@ -199,6 +204,12 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
   const ringtoneElementRef = useRef<HTMLAudioElement | null>(null);
 
   const [credentials, setCredentials] = useState<SipCredentials | null>(null);
+  // W6 (small, agent-facing addition): surfaces a geo-lock 403's message
+  // body from GET /api/me/sip-credentials, which this effect previously
+  // swallowed entirely (credentials just went to null with no explanation).
+  // W5 owns the actual enforcement/route; this only stops the UI staying
+  // silent about why registration never happens.
+  const [credentialsError, setCredentialsError] = useState<string | null>(null);
   const [turnCredentials, setTurnCredentials] = useState<TurnCredentials | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
   // Mirrors runtimeConfig.sipDomain for the useCallback functions below
@@ -284,13 +295,24 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
     let cancelled = false;
+    setCredentialsError(null);
     fetch("/api/me/sip-credentials")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        // Read the body before rejecting so a geo-lock 403's message (or
+        // any other explained failure) survives into the catch below
+        // instead of being discarded with the bare Response.
+        const body = await r.json().catch(() => null);
+        return Promise.reject(new Error((body as { error?: string } | null)?.error || `HTTP ${r.status}`));
+      })
       .then((data) => {
         if (!cancelled) setCredentials({ extension: data.extension, secret: data.sipSecret });
       })
-      .catch(() => {
-        if (!cancelled) setCredentials(null);
+      .catch((err) => {
+        if (!cancelled) {
+          setCredentials(null);
+          setCredentialsError(err instanceof Error ? err.message : "Could not load SIP credentials.");
+        }
       });
     // TURN credentials are fetched alongside, not blocking SIP
     // registration on them — see api/me/turn-credentials/route.ts. If this
@@ -1378,6 +1400,7 @@ export const SIPProvider = ({ children }: { children: React.ReactNode }) => {
         clearCallError,
         completeAttendedTransfer,
         consultState,
+        credentialsError,
         declineCall,
         dialError,
         hangupCall,

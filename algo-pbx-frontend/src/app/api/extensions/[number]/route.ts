@@ -36,6 +36,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { number: st
   const { session, db } = guard;
 
   const body = await req.json();
+
+  // W6 guardrail (plan §3.3): geoAllowedCountries is owner-only allocation
+  // — PATCH /api/platform/tenants/[id]/extensions/[extensionId]/geo is the
+  // ONLY route permitted to write it. PatchSchema's union below already
+  // can't express this field (each branch is a fixed-shape z.object(), and
+  // Prisma's own update calls further down never read it off `body`), so
+  // there is no live path today for it to slip through — but a request
+  // that TRIES to smuggle it in is a strong enough signal of a caller
+  // relying on a shape this route never advertises that it is rejected
+  // outright, rather than merely silently ignored the way zod's default
+  // "strip unknown keys" behavior would (and confirmingly did, when this
+  // guardrail was reviewed against the schema below).
+  if (body && typeof body === "object" && "geoAllowedCountries" in body) {
+    return NextResponse.json(
+      { error: "geoAllowedCountries is set by the platform owner only." },
+      { status: 403 }
+    );
+  }
+
   const parsed = PatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });

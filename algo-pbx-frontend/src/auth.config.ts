@@ -52,6 +52,14 @@ export default {
       }
       return token;
     },
+    // (W5, plan §3.3) — `session()` below reads `token.geoLocked` the
+    // same way it reads `token.disabled`/`token.profileComplete`: this
+    // edge-safe base config never sets or computes it (no DB access here),
+    // src/auth.ts's Node-side jwt override is the only place that does, on
+    // every real page/API request. Nothing to add to this file's own jwt()
+    // above — there is no edge-safe equivalent of a geo lookup, and there
+    // shouldn't be one (see auth.ts's own comment on why this stays a
+    // Node-only, DB-only flag).
     session: ({ session, token }) => {
       // Casts, not the augmented JWT type, because next-auth's JWT type
       // isn't reachable for augmentation from this package's dependency
@@ -90,6 +98,15 @@ export default {
       // as authoritative for tenantDb() by anything that reads it before
       // the Node-side override fires.
       session.user.tenantId = (token.tenantId as string | undefined) ?? "";
+      // (W5, plan §3.3) — same "authoritative only once the Node-side jwt
+      // override has run" caveat as disabled/profileComplete/tenantId
+      // above. Defaults false (not gated) here: this is a passive banner
+      // flag, not an access-control gate on its own — nothing in
+      // middleware.ts or auth-guard.ts reads it to deny anything, so
+      // defaulting "no banner" for a not-yet-computed token is the correct
+      // fail-safe direction (the opposite of `disabled`, which fails
+      // closed on purpose).
+      session.user.geoLocked = (token.geoLocked as boolean | undefined) ?? false;
       return session;
     },
   },

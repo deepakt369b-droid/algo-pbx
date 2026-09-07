@@ -33,6 +33,7 @@
     "firebase-admin": "^12.5.0",
     "libphonenumber-js": "^1.13.11",
     "lucide-react": "^0.446.0",
+    "maxmind": "^5.0.7",
     "next": "14.2.35",
     "next-auth": "5.0.0-beta.32",
     "ogl": "^1.0.11",

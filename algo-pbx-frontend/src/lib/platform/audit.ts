@@ -29,9 +29,16 @@ export type PlatformAuditAction =
   | "tenant.suspend"
   | "tenant.unsuspend"
   | "tenant.offboard"
+  | "tenant.reinstate"
   | "tenant.dialplan_cut"
   | "tenant.dialplan_restore"
   | "tenant.compliance_update"
+  | "tenant.update"
+  // tenant-scoped user management (§3.1 "Console UMS")
+  | "tenant.user.disable"
+  | "tenant.user.enable"
+  | "tenant.user.reset_password"
+  | "tenant.user.change_role"
   // billing (UI-access only — none of these touch telephony)
   | "billing.mark_paid"
   | "billing.extend"
@@ -58,7 +65,12 @@ export type PlatformAuditAction =
   // settings & exports
   | "settings.update"
   | "audit.export"
-  | "recording_target.update";
+  | "recording_target.update"
+  // W6 geo lock (plan §3.3)
+  | "geo.extension_unlock"
+  | "geo.unlock_denied"
+  | "tenant.geo_settings_update"
+  | "tenant.extension_geo_update";
 
 /** Actions that may never proceed without a non-empty reason. Everything
  * consequential is on this list; the passive ones (login, totp_confirmed)
@@ -68,8 +80,14 @@ export const REASON_REQUIRED_ACTIONS: readonly PlatformAuditAction[] = [
   "tenant.suspend",
   "tenant.unsuspend",
   "tenant.offboard",
+  "tenant.reinstate",
   "tenant.dialplan_cut",
   "tenant.dialplan_restore",
+  "tenant.update",
+  "tenant.user.disable",
+  "tenant.user.enable",
+  "tenant.user.reset_password",
+  "tenant.user.change_role",
   "billing.mark_paid",
   "billing.extend",
   "billing.change_plan",
@@ -83,6 +101,10 @@ export const REASON_REQUIRED_ACTIONS: readonly PlatformAuditAction[] = [
   "support_grant.revoke",
   "settings.update",
   "recording_target.update",
+  "geo.extension_unlock",
+  "geo.unlock_denied",
+  "tenant.geo_settings_update",
+  "tenant.extension_geo_update",
 ];
 
 export class MissingReasonError extends Error {

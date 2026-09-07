@@ -33,6 +33,13 @@ export const GET = withApiErrorHandler(async function GET() {
       updatedAt: true,
       userId: true,
       user: { select: { id: true, name: true, email: true, role: true } },
+      // W6 (plan §3.3) — read-only on the tenant-admin plane. The
+      // allocation itself is owner-only (see /api/extensions/[number]'s
+      // guardrail against writing geoAllowedCountries here); this tab only
+      // ever displays it and the current lock state.
+      geoAllowedCountries: true,
+      geoLockedAt: true,
+      geoLockedReason: true,
     },
   });
   return NextResponse.json({ extensions });

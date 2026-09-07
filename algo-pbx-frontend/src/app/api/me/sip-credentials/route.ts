@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth-guard";
+import { getClientIp } from "@/lib/rate-limit";
+import { enforceGeoAccess } from "@/lib/geo/enforce";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +21,10 @@ export const dynamic = "force-dynamic";
 // rather than a separate route — it's the identical pattern (a secret the
 // caller's own session, and only that session, is entitled to), and a
 // second nearly-identical route would just be duplication.
-export async function GET() {
+const GEO_LOCKED_MESSAGE =
+  "This extension is locked for a location-policy violation. Your administrator must request an unlock.";
+
+export async function GET(request: Request) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
   const { session, db } = guard;
@@ -39,9 +44,12 @@ export async function GET() {
     );
   }
 
+  // geoLockedAt/id pulled into this SAME query (W5, plan §3.3) rather than
+  // a second round-trip — this route already fetches the extension row for
+  // every caller.
   const extension = await db.extension.findUnique({
     where: { userId: session.user.id },
-    select: { number: true, sipSecret: true, voicemailPin: true },
+    select: { id: true, number: true, sipSecret: true, voicemailPin: true, geoLockedAt: true },
   });
 
   if (!extension?.sipSecret) {
@@ -49,6 +57,55 @@ export async function GET() {
       { error: "No SIP extension is linked to this account yet — contact an admin." },
       { status: 404 }
     );
+  }
+
+  // THE second decisive enforcement point (plan §3.3's node table names
+  // this route as "the actual boundary" alongside src/middleware.ts:94's
+  // own comment) — this is what makes a geo lock bite for telephony
+  // without touching Asterisk directly at this layer; PJSIP endpoint
+  // removal (src/lib/pjsip-provision.ts's reprovisionPjsipExcludingLocked,
+  // called from src/lib/geo/enforce.ts on the strike that locks) is the
+  // separate mechanism that cuts an already-registered device.
+  //
+  // Fast path: already locked -> refuse immediately, no need to spend an
+  // mmdb lookup + DB writes re-deciding something already decided.
+  if (extension.geoLockedAt) {
+    return NextResponse.json({ error: GEO_LOCKED_MESSAGE }, { status: 403 });
+  }
+
+  // NOT yet locked -> still re-run the full, live decision on every call,
+  // not just at login. The JWT session lives up to 8h (auth.config.ts);
+  // login-time geo checks alone would miss an agent who signs in cleanly
+  // and then switches a VPN on mid-shift. This is the one enforcement
+  // point that actually re-checks that.
+  const ip = getClientIp(request.headers);
+  const decision = await enforceGeoAccess(db, {
+    tenantId: session.user.tenantId,
+    extensionId: extension.id,
+    email: session.user.email ?? "",
+    userId: session.user.id,
+    ip,
+  });
+
+  if (!decision.allowed) {
+    // Mirrors src/auth.ts's "auth.signin_blocked_geo" audit shape, with
+    // telephonyAffected: true here (unlike the login-time write) — this IS
+    // the telephony credential fetch; refusing it directly stops the
+    // softphone from registering, not just the browser session.
+    await db.auditLog.create({
+      data: {
+        action: "auth.signin_blocked_geo",
+        actorId: session.user.id,
+        tenantId: session.user.tenantId,
+        metadata: {
+          outcome: decision.outcome,
+          remainingAttempts: decision.remainingAttempts,
+          telephonyAffected: true,
+          source: "sip-credentials",
+        },
+      },
+    });
+    return NextResponse.json({ error: decision.agentMessage ?? GEO_LOCKED_MESSAGE }, { status: 403 });
   }
 
   return NextResponse.json({

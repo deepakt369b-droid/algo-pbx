@@ -1,0 +1,945 @@
+// Known hosting/cloud/VPN-fronting ASNs — the only IP-based signal this
+// stack has for "this login came from a datacenter/VPN, not a residential
+// or mobile connection" (plan §3.3, W4). Deliberately NOT exhaustive: a
+// residential-proxy VPN defeats this exactly the way a country-matching
+// VPN defeats the primary country check (see geo-decision.ts's header
+// comment). This list only needs to catch the common, well-known cases —
+// AWS/GCP/Azure/DigitalOcean/Hetzner/OVH-class providers and the
+// datacenter ASNs most consumer VPN providers front through.
+//
+// GENERATED FILE (Set contents only) — do not hand-edit the DATACENTER_ASNS
+// literal below. Regenerate it by running, from algo-pbx-frontend/:
+//
+//   npx tsx scripts/update-datacenter-asns.ts
+//
+// Source: X4BNet/lists_vpn (MIT licence), input/datacenter/ASN.txt on the
+// `main` branch — https://github.com/X4BNet/lists_vpn. That file is a
+// community-curated, CI-rebuilt list of known datacenter/hosting/VPN-exit
+// ASNs; see scripts/update-datacenter-asns.ts's header for the full
+// rationale for baking it in rather than fetching it at runtime.
+//
+// Last regenerated: 2026-09-07 (907 ASNs as of that date).
+// Re-run the generator quarterly (or whenever a known gap is reported) —
+// there is no automated schedule for this file, unlike the GeoLite2-format
+// .mmdb files in this same directory, which the `geoip-refresh`
+// docker-compose service does refresh automatically.
+export const DATACENTER_ASNS: Set<number> = new Set<number>([
+  1442, // SureHosting Internet Solutions, Inc.
+  3223, // VOXILITY, RO
+  3561, // CENTURYLINK-LEGACY-SAVVIS - Savvis, US
+  3722, // Tranquil Hosting, Inc.
+  3842, // RAMNODE - RamNode LLC, US
+  4250, // ALENT-ASN-1 - Alentus Corporation, US
+  4323, // TWTC - tw telecom holdings, inc., US
+  4694, // IDC Yahoo Japan Corporation, JP
+  4851, // Host Networks
+  5435, // https://github.com/X4BNet/lists_vpn/issues/235
+  5577, // ROOT, LU
+  6188, // VPS Datacenter, LLC
+  6698, // VIRTUALSYSTEMS, UA
+  6718, // NAV DATACENTER TELECOM SRL
+  6724, // STRATO STRATO AG, DE
+  6764, // https://github.com/X4BNet/lists_vpn/issues/235
+  6870, // H1ASN, RU
+  6939, // HURRICANE - Hurricane Electric, Inc., US
+  7203, // LEASEWEB-USA-SFO-12 - Leaseweb USA, Inc., US
+  7349, // Windstream Hosted Solutions, LLC
+  7489, // HOSTUS-GLOBAL-AS HostUS, HK
+  7506, // INTERQ GMO Internet,Inc, JP
+  7595, // Readyspace Network Pte Ltd, Hosted Solutions Provider,Singapore
+  7598, // Websense Hosted Security - AsiaPac region
+  7850, // CITYLINKFIBER - iHighway.net, Inc., US
+  7979, // SERVERS - Servers.com, Inc., US
+  8075, // MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation, US
+  8100, // ASN-QUADRANET-GLOBAL - QuadraNet, Inc, US
+  8455, // ATOM86-AS ATOM86, NL
+  8556, // Levantis Hosting GmbH
+  8560, // ONEANDONE-AS / IONOS, DE
+  8560, // IONOS SE
+  8849, // MELBIKOMAS UAB, LT
+  8972, // PLUSSERVER-AS, DE
+  9009, // M247 Europe SRL
+  9166, // HostIT NV
+  9290, // GoHosting
+  9370, // SAKURA-B SAKURA Internet Inc., JP
+  9412, // Hostworks Content Delivery System
+  9667, // Hostworks Pty Ltd
+  9823, // Education Web Hosting
+  9925, // Powerbase DataCenter Services (HK) Ltd.
+  10200, // Web hosting provider and ISP connectivity.
+  10207, // Interhost Pacific Pty Ltd t/a Intervolve.
+  10297, // ENET-2 - eNET Inc., US
+  10439, // CARINET - CariNet, Inc., US
+  10532, // Rackspace Hosting
+  10929, // NETELLIGENT - Netelligent Hosting Services Inc., CA
+  11230, // Managed Hosting Services, LLC
+  11235, // Itron-Hosting
+  11274, // Adhost Internet Advertising, LLC
+  11588, // HIGHWINDS - Highwinds Network Group, Inc., US
+  11831, // ESECUREDATA - eSecureData, CA
+  11878, // TZULO - tzulo, inc., US
+  12200, // Rackspace
+  12222, // Akami - https://asn.ipinfo.app/AS12222
+  12586, // ASGHOSTNET, DE
+  12617, // Solido Hosting A/S
+  12824, // home.pl S.A.
+  12876, // AS12876, FR
+  12989, // HWNG, NL
+  13209, // Atom Hosting SRL
+  13213, // UK2NET-AS, GB
+  13378, // Qingye Cloud, US
+  13647, // Tranquil Hosting, Inc.
+  13739, // DATACENTER-IP - Datacenter IP, LLC, US
+  13909, // Techie Hosting, Inc.
+  13926, // RBLHST-NY - Strong Technology, LLC., US
+  13955, // Echostar Broadcasting Corporation
+  14061, // DIGITALOCEAN-ASN - Digital Ocean, Inc., US
+  14120, // IT Hosting Services, LLC.
+  14127, // ILAND - Iland Internet Solutions Corporation, US
+  14160, // Premium Hosting, Inc.
+  14244, // NSI Hosting
+  14384, // HOST DESIGNS, LLC
+  14415, // Host Collective, Inc.
+  14442, // Media-Hosts Inc.
+  14567, // Springs Hosting
+  14576, // Hosting Solution Ltd.
+  14618, // AMAZON-AES - Amazon.com, Inc., US
+  14708, // WebHost Chile S.A.
+  14956, // RouterHosting LLC
+  14986, // Ultra Hosting
+  14987, // Rethem Hosting LLC
+  14992, // CrystalTech Web Hosting Inc.
+  15003, // NOBIS-TECH - Nobis Technology Group, LLC, US
+  15083, // INFOLINK-MIA-US - Infolink Global Corporation, US
+  15169, // GOOGLE - Google Inc., US
+  15189, // HostVentures.com, Inc.
+  15391, // FORMAT sp. z o.o.
+  15395, // RACKSPACE-LON, GB
+  15395, // Rackspace
+  15497, // COLOCALL Internet Data Center "ColoCALL", UA
+  15510, // CWCS-PS, GB
+  15626, // ITLAS, UA
+  15694, // Atman S.A.
+  15734, // IDH, ES
+  15919, // Servicios de Hosting en Internet S.A.
+  15967, // Nazwa.pl Sp.z.o.o.
+  16125, // CHERRYSERVERS1-AS, LT
+  16262, // DELTA-LTD-AS, RU
+  16276, // OVH, FR
+  16284, // UNSPECIFIED, NG
+  16397, // EQUINIX BRASIL SP, BR
+  16509, // AMAZON-02 - Amazon.com, Inc., US
+  16535, // Echostar Holding Purchasing Corporation
+  16625, // Akami-AS - https://asn.ipinfo.app/AS16625
+  16628, // DEDICATED-FIBER-COMMUNICATIONS - DedFiberCo, US
+  16652, // Riseup Networks www.ipqualityscore.com/asn-details/AS16652/riseup-networks
+  16862, // Kansas Hosting, LLC
+  16973, // Corporacion Hostarica S.A.
+  17019, // JCHost Internet Services, LLC
+  17216, // DC74-AS - DC74 LLC, US
+  17439, // Netmagic Datacenter Mumbai
+  17669, // INFOPLEX Hosting and Managed Service Provider Asia Pacific
+  17881, // Inet Hosting Inc.
+  17918, // INFOPLEX Hosting and Managed Service Provider Asia Pacific
+  17920, // Ultra Serve Internet Pty Ltd - Transit AS - Hosting Provider
+  17971, // TM-VADS DC Hosting
+  18120, // Gemini Software Solutions (P) Ltd. Hosting Services, India
+  18450, // WEBNX - WebNX, Inc., US
+  18570, // EchoStar Broadcasting Corperation
+  18779, // EGIHOSTING - EGIHosting, US
+  18978, // ENZUINC-US - Enzu Inc, US
+  19084, // COLOUP - ColoUp, US
+  19133, // Bird Hosting Inc.
+  19148, // Leaseweb
+  19234, // Canada Web Hosting
+  19318, // NJIIX-AS-1 - NEW JERSEY INTERNATIONAL INTERNET EXCHANGE LLC,
+  19437, // SS-ASH - SECURED SERVERS LLC, US
+  19531, // NODESDIRECT - Nodes Direct, US
+  19624, // SERVERROOM - Data Room, Inc, US
+  19844, // GORACK - GoRack LLC, US
+  19871, // NETWORK-SOLUTIONS-HOSTING - Network Solutions, LLC, US
+  19969, // JOESDATACENTER - Joe's Datacenter, LLC, US
+  19994, // Rackspace
+  20021, // LNH-INC - HostMySite, US
+  20068, // Hawk Host Inc.
+  20248, // Take 2 Hosting, Inc.
+  20264, // WEBAIR-INTERNET-2 - Webair Internet Development Company Inc.
+  20401, // Hostway Corporation
+  20450, // Trojan Hosting, LLC.
+  20454, // SSASN2 - SECURED SERVERS LLC, US
+  20473, // AS-CHOOPA - Choopa, LLC, US
+  20552, // Horyzont Technologie Internetowe sp.z.o.o.
+  20598, // CYBERSPACE-AS Autonomous System number for Cyber Space, IL
+  20692, // NetGate Datacenter ASN
+  20738, // AS20738, GB
+  20773, // HOSTEUROPE-AS, DE
+  20773, // GODADDY, DE
+  20836, // CDLAN-AS Milano, IT
+  20860, // IOMART-AS, GB
+  20940, // Akami International - https://asn.ipinfo.app/AS20940
+  21100, // ITLDC-NL, UA
+  21159, // NOVOSERVE-GMBH-AS Frankfurt, Germany, NL
+  21217, // Safe Host SA
+  21321, // ARETI-AS, GB
+  21342, // Akami Internation #2 - https://asn.ipinfo.app/AS21342
+  21499, // GODADDY-SXB, DE
+  21501, // GODADDY-AMS, DE
+  21859, // ZNET - Zenlayer Inc, US
+  22152, // OC Hosting, Inc.
+  22363, // PHMGMT-AS1 - Powerhouse Management, Inc., US
+  22552, // ESITED - eSited Solutions, US
+  22611, // InMotion Hosting, Inc.
+  22720, // Rackspace Hosting
+  22781, // RBLHST - Strong Technology, LLC., US
+  22903, // Edgewebhosting.net
+  23033, // WOW - Wowrack.com, US
+  23052, // ihost Solutions, Inc.
+  23108, // Quantact Hosting Solutions, Inc.
+  23273, // Santa Barbara Web Hosting, Inc.
+  23342, // UNITEDLAYER - Unitedlayer, Inc., US
+  23352, // SERVERCENTRAL - Server Central Network, US
+  23470, // ReliableSite.Net LLC
+  23535, // HostRocket.com, Inc.
+  23881, // UDomain Web Hosting Company Ltd
+  24220, // Hostcentral
+  24319, // Akami Tokyo - https://asn.ipinfo.app/AS24319
+  24381, // Web Hosting and Colocation Services
+  24482, // SGGS-AS-AP SG.GS, SG
+  24549, // Pacificnet Hosting Ltd
+  24558, // Internet Hosting Service Provider to the Aditya
+  24611, // Datacenter Luxembourg S.A.
+  24679, // Hostway Deutschland GmbH
+  24725, // Hostmaster LLC
+  24768, // ALMOUROLTEC, PT
+  24806, // INTERNET CZ, a.s.
+  24875, // NOVOSERVE-AS, NL
+  24931, // DediPower Managed Hosting Limited
+  24940, // HETZNER-AS, DE
+  24958, // The Bunker Secure Hosting Limited
+  24961, // MYLOC-AS, DE
+  24971, // MASTER-AS Czech Republic / www.master.cz, CZ
+  24997, // AS for CDN
+  25048, // DSNet Hosting Limited
+  25128, // Hostway Deutschland GmbH
+  25163, // NG-NIGERIA-AS, NG
+  25260, // QualityHosting AG
+  25291, // SysEleven GmbH
+  25369, // BANDWIDTH-AS, GB
+  25379, // PEKITEL-AS, RU
+  25532, // masterhost autonomous system
+  25642, // Spiderhost Inc
+  25780, // HUGESERVER-NETWORKS - HugeServer Networks, LLC, US
+  25820, // IT7NET - IT7 Networks Inc, CA
+  25926, // HostUS
+  26277, // Las Vegas NV Datacenter
+  26347, // New Dream Network, LLC
+  26481, // Rebel Hosting
+  26484, // HOSTSPACE NETWORKS LLC
+  26496, // AS-26496-GO-DADDY-COM-LLC, US
+  26548, // PureVoltage https://ipinfo.io/AS26548
+  26978, // Carpathia Hosting, Inc.
+  27175, // AtNetHost LLC
+  27223, // Bare Metal Hosting
+  27229, // Webhosting.Net, Inc.
+  27257, // WEBAIR-INTERNET - Webair Internet Development Company Inc.,
+  27357, // Rackspace Hosting
+  27411, // Leaseweb
+  27589, // MOJOHOST
+  27597, // Siteserver Hosting, Inc.
+  27640, // GIGAS HOSTING USA, LLC
+  28099, // iHosting Servicios Internet Ltda.
+  28216, // Host Revenda
+  28333, // Local Datacenter Soluções em Comunicação Ltda.
+  28682, // https://github.com/X4BNet/lists_vpn/issues/235
+  28747, // Easyhost BVBA
+  28753, // LEASEWEB-, DE
+  28855, // GalacSYS is an hosting and managed services provider
+  28997, // Nedcomp Hosting B.V.
+  29066, // VELIANET-AS velia.net Internetdienste GmbH, DE
+  29067, // Hostmaster LLC
+  29073, // QUASINETWORKS, NL
+  29097, // Hostpoint AG, Switzerland
+  29119, // ServiHosting Networks S.L.
+  29140, // Autonomous System Hostserver GmbH
+  29182, // ISPSYSTEM-AS, LU
+  29302, // HSI-EUROPE, GB
+  29311, // ASP4all Hosting B.V.
+  29331, // Forsikringens Datacenter A/S
+  29354, // PCE-DE-DUS - PCE-NET GmbH, DE
+  29452, // Secura Hosting Ltd
+  29522, // H88 S.A.
+  29550, // SIMPLYTRANSIT, GB
+  29593, // WOJCIECH LOREK ENDOR COMPUTERS
+  29691, // NINE, CH
+  29713, // Reliable Hosting Services
+  29748, // Carpathia Hosting, Inc.
+  29802, // HVC-AS - HIVELOCITY VENTURES CORP, US
+  29838, // AMC - Atlantic Metro Communications, US
+  29854, // WESTHOST - WestHost, Inc., US
+  29869, // HostRocket.com, Inc.
+  29883, // Internet Hosting Servers
+  30083, // SERVER4YOU - server4you Inc., US
+  30152, // Beyond Hosting, LLC
+  30176, // AS-PRIORITYCOLO - Priority Colo Inc, CA
+  30235, // Twinservers Hosting Solutions Inc.
+  30475, // WEHOSTWEBSITES-COM - Handy Networks, LLC, US
+  30633, // LEASEWEB-USA-WDC-01 - Leaseweb USA, Inc., US
+  30633, // Leaseweb
+  30693, // SERVERHUB-PHOENIX - Eonix Corporation, US
+  30836, // 23VNet Kft
+  30849, // Research-and-production company Host Ltd
+  30900, // WEBWORLD-AS t/a Web World Ireland, IE
+  30998, // NAL-AS, NG
+  31034, // ARUBA-ASN, IT
+  31103, // KEYWEB-AS, DE
+  31240, // JSC Hosting Telesystems autonomous system
+  31242, // 3S S.A.
+  31472, // VoiceHost Ltd
+  31590, // Rackhosting.com ApS
+  31659, // Below Zero Hosting Ltd.
+  31698, // AS Number for WebHost.ie Ltd
+  31898, // Oracle cloud
+  31981, // BlueTower Hosting LLC
+  32097, // WII-KC - WholeSale Internet, Inc., US
+  32181, // ASN-GIGENET - GigeNET, US
+  32244, // LIQUID-WEB-INC - Liquid Web, L.L.C, US
+  32275, // Unified Webhosting, LLC
+  32306, // Host NIT Inc
+  32338, // Hostiserver Ltd
+  32400, // Hostway Services, Inc.
+  32475, // SINGLEHOP-LLC - SingleHop, Inc., US
+  32489, // AMANAHA-NEW - Amanah Tech Inc., CA
+  32613, // IWEB-AS - iWeb Technologies Inc., CA
+  32647, // Crucial Web Hosting, Ltd.
+  32740, // Sliqua Enterprise Hosting, Inc.
+  32780, // HOSTINGSERVICES-INC - Hosting Services, Inc., US
+  32911, // DediPower Managed Hosting
+  33070, // Rackspace
+  33083, // AXCELX-NET - AxcelX Technologies LLC, US
+  33182, // DIMENOC - HostDime.com, Inc., US
+  33251, // Windstream Hosted Solutions, LLC
+  33260, // Hostasaurus, Inc.
+  33302, // ONS-COS - Data 102, LLC, US
+  33322, // Network Data Center Host, Inc.
+  33330, // CLOUDRADIUM-ASN - CloudRadium L.L.C, US
+  33387, // DATASHACK - DataShack, LC, US
+  33438, // HIGHWINDS2 - Highwinds Network Group, Inc., US
+  33480, // WEBWERKSAS1 - Web Werks, US
+  33552, // Fluid Hosting LLC
+  33569, // ALLHOSTSHOP.COM
+  33696, // NextArray LLC
+  33724, // BIZNESSHOSTING - VOLICO, US
+  33785, // CITYNET, EG
+  33891, // CORE-BACKBONE, DE
+  33905, // Akami AMS - https://asn.ipinfo.app/AS33905
+  34011, // Host Europe GmbH
+  34164, // Akami London - https://asn.ipinfo.app/AS34164
+  34305, // BASEIP, NL
+  34432, // Profihost AG
+  34541, // Online Solutions Hosting Services
+  34649, // HOST365 LIMITED
+  34745, // TeleWare Hosted Services Ltd.
+  34927, // iFog GmbH
+  34971, // PDDA-AS, CZ
+  34989, // SERVETHEWORLD-AS, NO
+  35017, // SWIFTWAY-AS Netherlands, GB
+  35048, // BITERIKA-AS, RU
+  35278, // SPRINTHOST.RU LLC
+  35295, // PeterHost.Ru Hosting Provider at SPb
+  35366, // ISPPRO-AS EUserv / KOS-Online / Keepfree, DE
+  35415, // WEBZILLA, NL
+  35470, // XL-AS, NL
+  35540, // OVH SAS
+  35662, // REDSTATION European Network, GB
+  35908, // VPLSNET - Krypt Technologies, US
+  35913, // DediPath
+  35914, // FireHost, Inc.
+  35916, // MULTA-ASN1 - MULTACOM CORPORATION, US
+  35974, // Carpathia Hosting, Inc.
+  35994, // Akami AS - https://asn.ipinfo.app/AS35994
+  36007, // Kamatera
+  36024, // COLO4-CO - Colo4, LLC, US
+  36114, // VERSAWEB-ASN - Versaweb, LLC, US
+  36183, // Akami AS - https://asn.ipinfo.app/AS36183
+  36236, // Host Virtual, Inc
+  36290, // THECABLE-STKITTS-01 - The Cable of St. Kitts, KN
+  36351, // SOFTLAYER - SoftLayer Technologies Inc., US
+  36352, // AS-COLOCROSSING - ColoCrossing, US
+  36408, // CDNetworks Inc.
+  36536, // Enterhost
+  36666, // GTCOMM - GloboTech Communications, CA
+  36791, // Portland Internet Hosting LLC
+  36887, // DOPC-AS, NG
+  36970, // interswitch, NG
+  37018, // GALAXYBB-AS, NG
+  37088, // VDT-AS, NG
+  37153, // HETZNER, ZA
+  37170, // UNILAG, NG
+  37209, // HYPERIA, NG
+  37230, // SWIFTTALK, NG
+  37248, // PHASE3TEL, NG
+  37269, // ICSL, NG
+  37280, // BCL, NG
+  37308, // COOLLINK, NG
+  37347, // NGCOM, NG
+  37377, // Futurecom, NG
+  37472, // NIGCOMSAT, NG
+  37506, // Zinox, NG
+  37518, // Fiber Grid INC
+  37521, // Internet-Solutions-, NG
+  37540, // WINROCK-, NG
+  37643, // Ambion-AS, NG
+  37661, // NRaE1-AS, NG
+  37692, // NetStack-AS, ZA
+  37714, // BITFLUX, NG
+  38001, // NEWMEDIAEXPRESS-AS-AP NewMedia Express Pte Ltd, SG
+  38107, // CDNetworks
+  38279, // IOMNET-AS ISP/Hosting service Provider Manila
+  38894, // manageNET Pty Ltd hosting services
+  39020, // COMVIVE-AS Madrid - Spain, ES
+  39326, // HSO-GROUP, GB
+  39351, // ESAB-AS, SE
+  39392, // SUPERNETWORK-AS Bilejova 407, CZ
+  39451, // Melbourne Server Hosting Ltd.
+  39458, // Real Hosts Limited
+  39486, // HOSTROYALE, IN
+  39566, // Smarthost sp. z o.o.
+  39572, // ADVANCEDHOSTERS-AS, NL
+  39704, // CJ2 Hosting B.V.
+  39756, // HOSTWAY ROMANIA SRL
+  39832, // Opera Software AS
+  39839, // DK Hostmaster A/S
+  40156, // THEOPT-HOU - The Optimal Link Corporation, US
+  40244, // TURNKEY-INTERNET - Turnkey Internet Inc., US
+  40281, // QWK.net Hosting, L.L.C.
+  40374, // High Density Hosting, Inc.
+  40438, // Canhost Inc.
+  40476, // Scala Hosting LLC
+  40539, // Hosting Consulting, Inc
+  40676, // Psychz Networks, US
+  40715, // DataCenter.BZ, LLC
+  40728, // GearHost, Inc.
+  40819, // VPS Datacenter, LLC
+  40824, // WZCOM-US - WZ Communications Inc., US
+  40861, // PARAD-40-ASN - Paradise Networks LLC, US
+  41062, // ProstoHosting LTD
+  41079, // SuperHost.pl sp. z o.o.
+  41369, // DataCenter Finland Oy
+  41406, // Atman S.A.
+  41427, // DataCenter d.o.o.
+  41562, // Host4all Sarl
+  41653, // AQUARAY, FR
+  41665, // HOSTING-AS hosting.ua, UA
+  41828, // https://github.com/X4BNet/lists_vpn/issues/235
+  42120, // MODIT Datacenter Informatikai es Szolgaltato KFT
+  42160, // LCPDCO LCP AS dc oostkamp, BE
+  42210, // Host Virtual, Inc
+  42244, // Hosting Operator eServer.ru Ltd.
+  42311, // PGHOSTING-DRESDEN-BACKBONE
+  42331, // FREEHOST, UA
+  42399, // Hosting Center LLC
+  42400, // Multihost IT AS
+  42418, // Hostnordic A/S
+  42442, // Adacor Hosting GmbH
+  42465, // Websense Hosted Security - Anycast network
+  42473, // ANEXIA-AS A-9020 # Klagenfurt, AT
+  42532, // SIA VEESP
+  42612, // ASN de Dinahosting SL
+  42622, // Teknik i Media Datacenter Stockholm AB
+  42675, // https://obe.net/hosting
+  42695, // CNHAB, SE
+  42699, // AS managedhosting.de GmbH
+  42705, // Talia provides VSAT network and hosting services worldwide.
+  42708, // PORTLANE www.portlane.com, SE
+  42730, // EVANZOAS, DE
+  42776, // Hostel Ltd.
+  42831, // UKSERVERS-AS UK Dedicated Servers, Hosting and Co-Location,
+  42927, // S-NET Sp. z o.o.
+  43021, // Certit Hosting Handelsbolag
+  43128, // https://github.com/X4BNet/lists_vpn/issues/235
+  43146, // Agava ltd, RU
+  43198, // Outsourcery Hosting LTD
+  43289, // TRABIA trabia network, MD
+  43317, // FISHNET-AS, RU
+  43350, // NFORCE, NL
+  43472, // HostingMax Ltd
+  43541, // VSHosting s.r.o.
+  43620, // Syan Limited Hosting
+  43962, // INTEN J. Granat
+  44050, // PIN-AS, RU
+  44066, // DE-FIRSTCOLO www.first-colo.net, DE
+  44144, // OMEGASOFT, IN
+  44398, // TDC Hosting
+  44477, // Stark Industries (kerbs)
+  44803, // Webdock.io
+  44901, // BelCloud Hosting Corporation
+  45090, // Tencent cloud computing, they dont really monitor their network
+  45102, // CNNIC-ALIBABA-CN-NET-AP Alibaba (China) Technology Co., Ltd.
+  45152, // Zone Networks Pty Ltd, Managed Hosting Solutions
+  45179, // SiteHost New Zealand
+  45187, // RACKSPACE-AP Rackspace IT Hosting AS IT Hosting Provider Hon
+  45201, // BlueCentral Pty Ltd Hosting Solutions.
+  45470, // SG-8-TO-SG 8 - Infinity Pte Ltd, SG
+  45481, // Digital Sense Data Centre Hosting Brisbane
+  45486, // HostCorp Internet
+  45577, // Interhost Pacific Pty Ltd t/a Intervolve.
+  45671, // AS45671-NET-AU Wholesale Services Provider, AU
+  45693, // INDIAGAMES TRANSIT AS Content hosting serivce India
+  45815, // HOSTCOIN-AS-IN-AP ESDS Software Solution Pvt. Ltd., IN
+  45887, // GPLHost LLC
+  46177, // SimpleCDN Technologies, Inc.
+  46260, // MEDHOST, Inc.
+  46261, // QUICKPACKET - QuickPacket, LLC, US
+  46430, // ASN-VICTON - VICTON, Inc., CA
+  46433, // EBOUNDHOST.com
+  46475, // LIMESTONENETWORKS - Limestone Networks, Inc., US
+  46516, // GLOBEIX, US
+  46562, // TOTAL-SERVER-SOLUTIONS - Total Server Solutions L.L.C., US
+  46606, // Unified Layer
+  46664, // VOLUMEDRIVE - VolumeDrive, US
+  46805, // CACHED - CachedNet LLC, US
+  46816, // DSNETWORKS-001 - DirectSpace Networks, LLC., US
+  46844, // ST-BGP - Sharktech, US
+  46873, // Host Color
+  46945, // Elite Hosts, Inc.
+  47143, // Todayhost Limited
+  47161, // KosmoHost IT Technologies LTD
+  47172, // Mart Jaco van Santen trading as Greenhost VOF
+  47205, // UAB HOSTEX
+  47223, // Lukman Multimedia Sp. z o.o
+  47328, // TRI-AS, ES
+  47385, // Hosting center Ltd.
+  47447, // TTM, DE
+  47544, // IQ PL Sp. z o.o.
+  47549, // Hosting Systems Ltd
+  47577, // Righthosting Ltd
+  47583, // Hostinger International Limited
+  47588, // TELENETRONICS-AS, RS
+  47625, // Paul David Hughes trading as Hosting Systems
+  48031, // PE Ivanov Vitaliy Sergeevich
+  48093, // Webland Hosting AB
+  48282, // VDSINA
+  48446, // Hostersi Sp. z o.o.
+  48505, // Kylos sp. z o.o.
+  48812, // DataCenter Noord BV
+  48825, // Fast2host Ltd
+  48894, // https://github.com/X4BNet/lists_vpn/issues/235
+  48896, // dhosting.pl Sp. z o.o.
+  49313, // Seva-Host Ltd
+  49349, // DOTSI, PT
+  49367, // ASSEFLOW Amsterdam Internet Exchange (AMS-IX), IT
+  49453, // GLOBALLAYER, NL
+  49485, // High Availability Hosting Limited
+  49505, // OOO Network of data-centers Selectel
+  49532, // SERVERHUB-, DE
+  49544, // I3DNET, NL
+  49693, // Best-Hoster Group Co. Ltd
+  49815, // Host2 Ltd
+  49834, // Best Hosting Company Ltd
+  49949, // 24 Solutions AB
+  49981, // WORLDSTREAM, NL
+  50297, // INFIUM, UA
+  50465, // IQHost Ltd
+  50608, // Ventelo Hosting AS
+  50613, // THORDC-AS, IS
+  50655, // Its Hosted
+  50673, // SERVERIUS-AS, NL
+  50835, // Eancenter Telecom LLC
+  50872, // LOCALHOST D.O.O.
+  50915, // S.C. Everhost S.R.L.
+  50926, // Infortelecom Hosting, S.L.
+  50968, // Hostmaster, Ltd.
+  50986, // Excellent Hosting Sweden AB
+  51050, // H4Hosting B.V.
+  51109, // CAMELHOST SIA
+  51159, // THINKSYSTEMSUK-ASN, GB
+  51167, // Contabo GmbH
+  51191, // XIRRA, DE
+  51241, // Iran Post Company-Tehran DataCenter
+  51248, // Host-Telecom.com s.r.o.
+  51290, // HOSTEAM S.C. TOMASZ GROSZEWSKI BARTOSZ WASZAK LUKASZ GROSZEWSKI
+  51294, // HUBARA hosting solutions S.L.
+  51395, // AS-SOFTPLUS, CH
+  51430, // ALTUSHOST-NET, NL
+  51698, // Activehost RU Ltd.
+  51731, // GTT-AS, CZ
+  51765, // ASEUHOST, FI
+  51790, // https://github.com/X4BNet/lists_vpn/issues/235
+  51852, // PLI-AS, CH
+  51862, // IONOS SE
+  52000, // MIRholding https://ipinfo.io/AS52000
+  52048, // DATACLUB, LV
+  52173, // MAKONIX, LV
+  52219, // ROUTERNETWORKS, US
+  52236, // G2KHosting S.A.
+  52270, // X-Host SRL
+  52321, // Fideicomiso de Administración Datacenter Capitalinas
+  52335, // Colombia Hosting
+  52347, // HOSTCLICK, de DUCA GRACIELA MIRTA
+  52465, // WNet Internet y Hosting
+  52468, // UFINET
+  52674, // DATACENTER LTDA
+  52925, // Ascenty DataCenters Locacao e Servicos LTDA
+  53013, // WIX NET DO BRASIL LTDA, BR
+  53055, // HostDime.com.br Data Center
+  53057, // RedeHost Internet Ltda.
+  53101, // Datacenter e Provedores Ltda-ME
+  53221, // INTERNET DATACENTER
+  53225, // DATACENTER
+  53281, // Clearpath Hosting
+  53332, // C2Hosting, LLC
+  53340, // FIBERHUB - VegasNAP, LLC, US
+  53342, // All Nine Hosting, Inc.
+  53370, // dotCOM host
+  53559, // ANONYMIZER - Anonymizer Inc., US
+  53589, // PlanetHoster
+  53597, // HOYOS-CONSULTING-LLC - Hoyos Consulting LLC, US
+  53667, // PONYNET - FranTech Solutions, US
+  53667, // FranTech Solutions
+  53755, // IOFLOOD - Input Output Flood LLC, US
+  53850, // GORILLASERVERS - GorillaServers, Inc., US
+  53889, // MICFO - Micfo, LLC., US
+  53914, // Genesis Hosting Solutions, LLC
+  53918, // Host Hotels and Resorts, L.P.
+  54104, // AS-NETDNA - netDNA, US
+  54203, // RBLHST-FL - Strong Technology, LLC., US
+  54290, // Hostwinds LLC.
+  54334, // Roya Hosting LLC
+  54455, // MADEIT - MadeIT inc., US
+  54489, // CORESPACE-DAL - CoreSpace, Inc., US
+  54500, // 18779 - EGIHosting, US
+  54527, // Astute Hosting Inc.
+  54540, // INCERO - Incero LLC, US
+  54555, // Host Duplex, LLC
+  54641, // InMotion Hosting, Inc.
+  54817, // ALDEN HOSTING LLC
+  54825, // Packet Host, Inc.
+  54839, // Lowest Host/Empire Technology LLC
+  55051, // EBOUNDHOST.com
+  55225, // ILIKA - velia.net (USA) Inc., US
+  55229, // White Sands Hosting
+  55286, // SERVER-MANIA - B2 Net Solutions Inc., CA
+  55286, // SERVER-MANIA, CA
+  55293, // A2 Hosting, Inc.
+  55536, // PSWITCH-HK PACSWITCH IP NETWORK, HK
+  55720, // Gigabit Hosting Sdn Bhd
+  55761, // Colocation Hosting Sdn Bhd
+  55799, // Hostemo Technology Sdn Bhd
+  55933, // CLOUDIE-AS-AP Cloudie Limited, HK
+  55967, // CNNIC-BAIDU-AP Beijing Baidu Netcom Science and Technology C
+  55990, // Huawei
+  56106, // DEDICATEDGAMING.COM.AU - Hosting Provider AUSTRALIA
+  56110, // HostRightNow Technologies India Pvt Ltd
+  56322, // SERVERASTRA-AS, HU
+  56617, // SIA VPS Hosting
+  56630, // MELBICOM-EU-AS, NL
+  56635, // https://github.com/X4BNet/lists_vpn/issues/235
+  56732, // Hostinet AS
+  56784, // Limited liability company MultiHOST MSK
+  56799, // Jordens Datacenter NV
+  56934, // SOLOGIGABIT-AS, ES
+  57043, // HOSTKEY-AS, NL
+  57169, // EDIS-AS-EU, AT
+  57230, // ARIAWEBCO-AS, GB
+  57286, // Gigas Hosting S.A.
+  57345, // ADM-HOST di Ratti Alessandro
+  57363, // CDNvideo LLC
+  57367, // Atman S.A.
+  57433, // Intercolo
+  57669, // DediPower Managed Hosting Limited
+  57682, // TOV HOST VDS
+  57752, // NORMHOST SARL
+  57773, // HOSTINGBIT SRL
+  57858, // AS57858, EE
+  57879, // sfip84 # Hosting und mehr UG haftungsbeschraenkt
+  58065, // Fiber Grid/PacketExchange
+  58073, // YISP-AS, NL
+  58113, // LIR DATACENTER TELECOM SRL
+  58305, // SYN, GB
+  58667, // SmartNet Hosting and connectivity
+  58683, // Rackspace
+  58797, // Carpathia Hosting
+  58922, // Microchannel Hosting Pty Ltd
+  58936, // Managed Hosted Applications Limited
+  59135, // PT Dapur Hosting
+  59253, // LSW-SG Leaseweb Asia Pacific pte. ltd., SG
+  59253, // Leaseweb
+  59349, // GMO-Z-COM GMO-Z.COM PTE. LTD., SG
+  59432, // GINERNET, ES
+  59472, // Sinersio Polska Sp. z o.o.
+  59504, // CYBERTECH-AS, RU
+  59554, // Datacenter Groningen B.V.
+  59615, // CLOUD HOSTING LLC
+  59632, // SC Pidgin Host SRL
+  59677, // LLC Kras-Host
+  59705, // POBOX Hosting Limited
+  59711, // HZ Hosting Ltd
+  59729, // ITL-, BG
+  59764, // ATLANTIC-NET, GB
+  59787, // https://github.com/X4BNet/lists_vpn/issues/238
+  59791, // Linqhost B.V.
+  59795, // SecurityLayer Hosting Solutions SRL
+  59816, // SAFE HOSTS INTERNET LLP
+  59854, // Top Level Hosting SRL
+  60011, // BHOST, GB
+  60068, // CDN77, GB (Datacamp)
+  60117, // Host Sailor Ltd.
+  60118, // ALISTAR-AS, RO
+  60253, // GODADDY-CGN, DE
+  60362, // ALWAYSDATA SARL
+  60362, // ALWAYSDATA SARL https://ipinfo.io/AS60362
+  60404, // LITESERVER, NL
+  60435, // https://github.com/X4BNet/lists_vpn/issues/235
+  60476, // MRG Hosting B.V.
+  60485, // AS-60485, EE
+  60505, // TELENET-SLJUDJANKA-AS, RU
+  60558, // SECUREDSERVERS-, EU
+  60567, // DATACLUB-, SE
+  60713, // Agnat Sp. z o.o. - EXEA Sp. z o.o.
+  60729, // Zwiebelfreunde e.V.
+  60739, // Server Centre Hosting Ltd
+  60781, // LEASEWEB-NL Netherlands, NL
+  60781, // Leaseweb
+  60800, // Netwise Hosting Ltd.
+  60973, // https://github.com/X4BNet/lists_vpn/issues/235
+  61046, // HZ Hosting Ltd
+  61102, // INTERHOST, IL
+  61107, // UNIVERSAL CDN (CYPRUS) LTD
+  61138, // Zappie Host LLC
+  61147, // CallHosted B.V.
+  61157, // PLUSSERVER-ASN1, DE
+  61280, // By Hosting B.V.
+  61317, // ASDETUK host1plus.com, GB
+  61412, // BunkerInfra Datacenters BV
+  61440, // Digital Energy Technologies Chile SpA, CL
+  62005, // BlueVPS OU
+  62026, // SkyparkCDN Ltd.
+  62049, // Penta Corporate Hosting Ltd
+  62071, // Datahost SRL
+  62082, // Hostland LTD
+  62088, // Sinarohost LTD
+  62217, // VOOSERVERS, GB
+  62240, // CLOUVIDER London, United Kingdom, GB
+  62282, // RACKRAY UAB Rakrejus, LT
+  62310, // managedhosting.de GmbH
+  62370, // SNEL, NL
+  62471, // SWITCHDATASOLUTIONS-AS - SupremeBytes, LLC, US
+  62540, // DRAKE-AS - Drake Holdings LLC, US
+  62563, // GLOBALTELEHOST Corp.
+  62567, // DIGITALOCEAN-ASN-NY2 # - Digital Ocean, Inc., US
+  62605, // Brain Host, LLC
+  62651, // Reliablehosting.com
+  62756, // HostRocket.com, Inc.
+  62838, // Reprise Hosting
+  62899, // Clarity Web Hosting Inc.
+  62904, // Eonix Corporation
+  63008, // CONTINA - Contina, US
+  63018, // USDEDICATED - US Dedicated, US
+  63119, // AS-63119 - netirons, US
+  63128, // RBLHST-TOR - Strong Technology, LLC., US
+  63129, // DL Host
+  63199, // CDSC-AS1 - Capitalonline Data Service Co.,LTD, US
+  63213, // Astute Hosting Inc.
+  63473, // HOSTHATCH-ASN - HostHatch, Inc, US
+  63567, // Suqian Pugongying Network Service Co Ltd, CN
+  63916, // RSH Hosting Network
+  63949, // LINODE-AP Linode, LLC, US
+  64022, // Kamatera
+  64245, // AS-DIGITALFYRE - DigitalFyre Internet Solutions, LLC., US
+  64249, // endoffice.com
+  64286, // LogicWeb
+  64484, // ASDMZHOST, NL
+  132070, // Interhost Pacific Pty Ltd t/a Intervolve.
+  132071, // Interhost Pacific Pty Ltd t/a Intervolve
+  132203, // Tencent
+  132225, // Hosted Continuity Pty Ltd
+  132425, // APC Hosting Pte Ltd
+  132509, // DIGIWEB ADVANCED HOSTING LIMITED
+  132717, // NxtGen Datacenter &amp; Cloud Technologies Pvt. Ltd.
+  132779, // RackBank Datacenters Private Ltd
+  132816, // SIMPLERCLOUD-AS-AP SimplerCloud Pte Ltd, SG
+  132869, // Dedicated-Hosting Solutions
+  133120, // Hosted Network Pty. Ltd.
+  133143, // Medihost Solutions Pty Ltd
+  133229, // Host Palace Internet Services
+  133296, // WEBWERKS-AS-IN Web Werks India Pvt. Ltd., IN
+  133393, // Naki Host Limited
+  133480, // INTERGRID-AS-AP Intergrid Group Pty Ltd, AU
+  133499, // HOSTROYALETECHNOLOGIES-AS-AP HostRoyale Technologies Pvt Ltd, NZ
+  133752, // LSW-HK Leaseweb Asia Pacific pte. ltd., HK
+  133752, // Leaseweb
+  134351, // Leaseweb
+  134450, // HOSTROYALETECHNOLOGIES-AS-AP HostRoyale Technologies Pvt Ltd, IN
+  134451, // NME-INDONESIA-AS-AP NewMedia Express Pte Ltd, ID
+  134963, // Alibaba
+  135377, // https://github.com/X4BNet/lists_vpn/issues/236
+  135822, // Ovi Hosting Pvt Ltd
+  136052, // IDNIC-IDCLOUDHOST-AS-ID PT Cloud Hosting Indonesia, ID
+  136258, // ONEPROVIDER-AS BrainStorm Network, Inc, CA
+  136557, // Host Universal Pty Ltd
+  136907, // HUAWEI CLOUDS
+  136988, // Leaseweb
+  137373, // https://github.com/X4BNet/lists_vpn/issues/252
+  137409, // Global Secure Layer Data Center
+  138608, // CLOUDHOST-AS-AP Cloud Host Pte Ltd, SG
+  141039, // PacketHub
+  141995, // CAPL-AS-AP Contabo Asia Private Limited https://asn.ipinfo.app/AS141995
+  142036, // Hosteons
+  147049, // PacketHub
+  149020, // WebHorizon Internet Services
+  152390, // https://github.com/X4BNet/lists_vpn/issues/213
+  196645, // Hostpro Ltd.
+  196678, // OOO Hosterov
+  196745, // Datacenta Hosting Ltd
+  196827, // Credocom Hosting ApS
+  197155, // ARTNET, PL
+  197155, // Artnet
+  197226, // SPRINT S.A.
+  197328, // INETLTD, TR
+  197372, // NMA Hosting Solutions BV
+  197395, // Ark B Hosting BV
+  197439, // Sylon Hosting GmbH
+  197450, // https://github.com/X4BNet/lists_vpn/issues/256
+  197540, // NetCup - https://asn.ipinfo.app/AS197540
+  197648, // MEGA HOST LIMITED
+  197706, // Keminet SHPK
+  197902, // Hostnet B.V.
+  197914, // Stockho Hosting SARL
+  198047, // UK Webhosting Ltd
+  198153, // AS SEIDOR DATACENTER SANTANDER
+  198171, // HOSTING90 systems s.r.o.
+  198310, // PALLADA-AS, RU
+  198313, // SystemHOST Limited
+  198347, // Game-Hosting GH AB
+  198414, // Biznes-Host.pl sp. z o.o.
+  198432, // Ipcore Datacenters S.L
+  198524, // https://github.com/X4BNet/lists_vpn/issues/235
+  198605, // AVAST Software s.r.o., CZ
+  198651, // HOSTLINE, UAB
+  198968, // Cyberneticos Hosting SL
+  199129, // Next point Host EOOD.
+  199213, // Venzo Hosting A/S
+  199481, // K3 # Hosting Limited
+  199653, // ARUBAFR-AS, FR
+  199733, // Extrahost GmbH
+  199785, // Cloud Hosting Solutions, Limited
+  199847, // SORTA-HOSTING-SMLLC
+  199883, // ARUBACLOUDLTD-ASN, GB
+  199990, // LOCALHOST AS
+  199997, // Ippon Hosting SARL
+  200000, // Hosting Ukraine LTD
+  200019, // ASCLOUDATA, ALEXHOST, MD
+  200039, // HYDRACOM-AS, GB
+  200088, // Artnet Sp. z o.o.
+  200088, // Artnet
+  200147, // Hosting Techniques Limited
+  200350, // Yandex
+  200532, // LLP Kompaniya Hoster.KZ
+  200904, // Foxcloud Llp
+  201011, // NETZBETRIEB-GMBH, DE
+  201200, // SuperHosting.BG Ltd.
+  201449, // Digital Absolut Business - Servidor, Virtualizacao, Cluster, Datacenters e Telecomunicacoes
+  201525, // HZ-CA-AS, BG
+  201553, // Excom cloud S.L.
+  201597, // NE-IT Hosting B.V.
+  201630, // QHOSTER LTD.
+  201634, // Ingram Micro Hosting B.V.
+  201670, // Novahosting Ltd.
+  201702, // skHosting.eu s.r.o.
+  201709, // HanDS Hanse Datacenter Services GmbH
+  201814, // Meverywhere sp. z o.o.
+  201862, // VMhosts Ltd
+  201983, // Ansluten Hosting i Sverige AB
+  202015, // HZ Hosting Ltd
+  202023, // LLHost Inc
+  202053, // UPCLOUD, FI
+  202118, // Go Hosting S.P.R.L.
+  202276, // IBOSS, INC
+  202448, // MVPS LTD
+  202836, // -Reserved AS-, ZZ
+  203020, // HOSTROYALE, IN
+  203417, // LH.pl Sp. z o.o.
+  203523, // VIRTONO-NETWORKS, RO
+  203629, // TERRAHOST_AS, NO
+  203758, // eugamehost.com
+  204196, // ABELOHOST, NL
+  204287, // HOSTROYALE_TECHNOLOGIES, IN
+  204601, // Zomro B.V.
+  204957, // https://github.com/X4BNet/lists_vpn/issues/230
+  205016, // Opera Software AS
+  205053, // Asimia Damaskou, GR
+  205544, // Leaseweb
+  206092, // internet.lv (XS Usenet, ExpressVPN, etc)
+  206216, // Advin Services LLC
+  206246, // REACH MEDIA SKY LLP
+  206589, // NSIX Data Center sp. z o.o.
+  206898, // Server Hosting Pty Ltd
+  207990, // HR-CUSTOMER, IN
+  208323, // Foundation for Applied Privacy
+  208566, // Rozetka Sp. z o.o.
+  208795, // Yandex
+  208969, // BITERIKA-BY-AS, RU
+  210329, // Kamatera Inc
+  210329, // Kamatera
+  210558, // 1337 Services GmbH
+  210731, // Forening for DotSrc, DE
+  210779, // BREEZLE LLC
+  211619, // MAXKO, HR
+  212238, // CDNEXT, GB
+  212317, // Hetzner Cloud3, DE
+  212861, // Intercolo
+  213010, // GigaHostingServices OU
+  213230, // Hetzner Cloud2, DE
+  213887, // https://github.com/X4BNet/lists_vpn/issues/247
+  214036, // Ultrahost
+  214574, // BITERIKA-ZEL-AS, RU
+  215859, // Hetzner Cloud4, DE
+  216071, // VDSINA
+  262170, // Visualhosting.net
+  262287, // Maxihost Hospedagem de Sites Ltda
+  262603, // INTERNET E WEB HOSTING SERV DE INFORMATICA LTDA
+  262978, // Centro de Tecnologia Armazem Datacenter Ltda.
+  262990, // CENTER HOSTING TECNOLOGIA EIRELI
+  263032, // Empire Host
+  263093, // Hostgator Brasil Hospedagem e suporte tecnico LTDA
+  263237, // HOST E.I.R.L.
+  265620, // UFINET
+  327705, // FUTA, NG
+  327784, // FIDELITY-BANK, NG
+  327813, // Web4Africa, ZA
+  327942, // LANDMARK-UNIVERSITY, NG
+  328035, // Zeta-Web-Nigeria-AS, NG
+  329184, // Host Africa (Pty) Ltd https://ipinfo.io/AS329184
+  393326, // Hosting4Biz
+  393886, // Leaseweb
+  394256, // CLOUDSINGULARITY - Tech Futures Interactive Inc., CA
+  394330, // LTDBROADBAND - LTD Broadband LLC, US
+  394380, // LEASEWEB-USA-DAL-10 - Leaseweb USA, Inc., US
+  394380, // Leaseweb
+  394474, // WhiteLabelColo
+  395089, // HEXTET - Hextet Systems, CA
+  395111, // KVCNET-2009 - KVCHOSTING.COM LLC, US
+  395954, // Leaseweb
+  395978, // SANTA CLARA VALLEY WATER DISTRICT PUBLIC FACILITIES FINANCING CORPORATION, US
+  396190, // Leaseweb
+  396356, // https://github.com/X4BNet/lists_vpn/issues/272
+  396362, // Leaseweb
+  396931, // HOSTROYALE-TECHNOLOGIES-02, US
+  396982, // Google Cloud Platform, US
+  397373, // h4y.us
+  398101, // GO-DADDY-COM-LLC, US
+  398787, // GO-DADDY-COM-LLC, US
+  399804, // Hostodo
+  400754, // GO-DADDY-COM-LLC, US
+]);
+
+export function isDatacenterAsn(asn: number): boolean {
+  return DATACENTER_ASNS.has(asn);
+}
+
+const DATACENTER_ORG_KEYWORDS = /hosting|vpn|cloud|datacenter|data center|server|colo|proxy/i;
+
+export function isDatacenterOrgName(org: string): boolean {
+  if (!org) return false;
+  return DATACENTER_ORG_KEYWORDS.test(org);
+}
