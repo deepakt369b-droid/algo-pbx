@@ -27,8 +27,19 @@ export const WILDCARD_DNS_RECORD = `*.${TENANT_BASE_DOMAIN}`;
 // the host→tenant resolver must handle both shapes from day one — see the
 // approved plan §6's migration note. This is the documented exception, not
 // a special case to be quietly generalised later.
+//
+// Fixed 2026-09-07: this slug was "saharatechs", but the real Tenant row
+// created in production has slug "sahara" (confirmed live against the
+// database) — the domain and the slug are two different strings, and this
+// constant had the domain's name where the slug belongs. Because the
+// comparison in workspaceHost()/isLegacyCustomDomainTenant() below never
+// matched, the Identity tab's "Workspace URL" was silently showing the
+// generic wildcard pattern (`sahara.algopbx.com`, a hostname nothing
+// serves — algopbx.com has no DNS/Caddy/cert wired up at all yet, see this
+// file's header) instead of the tenant's real, working URL
+// (`pbx.saharatechs.com`). Corrected to the actual slug.
 export const LEGACY_TENANT_ONE_DOMAIN = "saharatechs.com";
-export const LEGACY_TENANT_ONE_SLUG = "saharatechs";
+export const LEGACY_TENANT_ONE_SLUG = "sahara";
 
 /** The workspace hostname for a tenant. Tenant #1 keeps its custom domain;
  * everyone else lives under the wildcard. Pure — no DB, no env. */

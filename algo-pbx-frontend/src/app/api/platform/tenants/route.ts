@@ -107,6 +107,17 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
         status: "TRIAL",
         billingStatus: "TRIAL",
         provisioningState: state as object,
+        // Owner policy (set 2026-09-07): every NEW tenant starts in geo-lock
+        // MONITOR mode by default — never straight to `enforce`. Monitor
+        // mode records what would have happened (GeoLoginEvent rows) without
+        // ever blocking a real sign-in, so the false-positive rate is
+        // visible before an owner opts a tenant into `enforce` from its
+        // Geo tab. Deliberately NOT a schema-level column default: this is
+        // a decision about how new tenants get created, made explicitly
+        // here alongside the other creation defaults, not a hidden DB
+        // behavior. Existing tenants created before this policy are
+        // unaffected — this only applies going forward.
+        geoLockMode: "monitor",
       },
       select: { id: true, slug: true, name: true, plan: true, seats: true, status: true },
     });

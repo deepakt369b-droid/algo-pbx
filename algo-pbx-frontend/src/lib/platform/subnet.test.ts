@@ -111,7 +111,11 @@ describe("telephony namespace", () => {
 
 describe("isLegacyPooledTenant", () => {
   it("flags the tenant that predates the scheme", () => {
-    expect(isLegacyPooledTenant("saharatechs", 0)).toBe(true);
+    // "sahara" is the real production slug of tenant #1 — corrected
+    // 2026-09-07, see domain-constants.ts's LEGACY_TENANT_ONE_SLUG comment;
+    // this test previously asserted against "saharatechs" (the domain
+    // name, not the slug), which matched the bug rather than reality.
+    expect(isLegacyPooledTenant("sahara", 0)).toBe(true);
     expect(isLegacyPooledTenant("acme", 0)).toBe(true);
     expect(isLegacyPooledTenant("acme", 3)).toBe(false);
   });

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Pencil } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
@@ -36,14 +37,26 @@ function Row({
   value,
   mono = true,
   hint,
+  onEdit,
 }: {
   label: string;
   value: string | null;
   mono?: boolean;
   hint?: string;
+  /** When set, the row itself opens the editor on click — not just the
+   * "Edit name & notes" button above the card. Only the Tenant name row
+   * gets this; every other row here is genuinely immutable (see this
+   * file's header comment) and clicking it should do nothing. */
+  onEdit?: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b py-2 last:border-0 [border-color:rgb(var(--hairline))]">
+    <div
+      className={`flex flex-wrap items-baseline justify-between gap-2 border-b py-2 last:border-0 [border-color:rgb(var(--hairline))] ${onEdit ? "-mx-2 cursor-pointer rounded-[var(--radius)] px-2 hover:bg-surface-hover" : ""}`}
+      role={onEdit ? "button" : undefined}
+      tabIndex={onEdit ? 0 : undefined}
+      onClick={onEdit}
+      onKeyDown={onEdit ? (e) => (e.key === "Enter" || e.key === " ") && onEdit() : undefined}
+    >
       <span className="text-[12px] text-tertiary">{label}</span>
       <span className="text-right">
         <span
@@ -96,8 +109,21 @@ export function IdentityTab({
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <h2 className="text-[15px] font-semibold text-primary">Identity</h2>
             {isOwner && !editing && (
-              <Button size="sm" variant="ghost" onClick={() => setEditing(true)} data-testid="action-edit-identity">
-                Edit
+              // Was `variant="ghost"` + bare "Edit" — easy to miss next to a
+              // card full of plain read-only rows that look identical to
+              // this one. `secondary` gives it a visible border/background
+              // instead of relying on hover to reveal it, the icon makes
+              // "this opens an editor" legible without reading the label,
+              // and the label itself says what it actually does (only name
+              // + notes — everything else on this card stays immutable).
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setEditing(true)}
+                data-testid="action-edit-identity"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                Edit name &amp; notes
               </Button>
             )}
           </div>
@@ -150,10 +176,19 @@ export function IdentityTab({
               </div>
             </div>
           ) : (
-            <Row label="Tenant name" value={tenant.name} mono={false} />
+            <Row
+              label="Tenant name"
+              value={tenant.name}
+              mono={false}
+              onEdit={isOwner ? () => setEditing(true) : undefined}
+            />
           )}
 
-          <Row label="Slug" value={tenant.slug} />
+          <Row
+            label="Slug"
+            value={tenant.slug}
+            hint="Immutable — it's the OpenVPN cert CN root and the workspace hostname; changing it after provisioning would desync both."
+          />
           <Row
             label="Workspace URL"
             value={identity.workspaceHost}

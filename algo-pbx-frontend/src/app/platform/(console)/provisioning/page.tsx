@@ -95,12 +95,25 @@ export default async function ProvisioningPage() {
             </p>
             <ul className="space-y-1.5" data-testid="provisioning-not-started">
               {notStarted.map((r) => (
-                <li key={r.id} className="flex items-center justify-between gap-2 text-[13px]">
-                  <span>
-                    <span className="font-mono text-primary">{r.slug}</span>
-                    <span className="ml-2 text-secondary">{r.name}</span>
-                  </span>
-                  <Badge tone="neutral">Not started</Badge>
+                <li key={r.id}>
+                  {/* Was a static, unclickable list item — a tenant landing
+                     here (created outside the wizard, like the pre-console
+                     production tenant) had no way to actually start or
+                     resume the pipeline from this page. The advance route's
+                     first two steps are no-ops for an already-existing
+                     tenant (they just mark themselves complete — see
+                     provisioning/advance/route.ts), so this is safe to
+                     enter from any tenant, at any time, not just new ones. */}
+                  <Link
+                    href={`/platform/provisioning/${r.id}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius)] border p-3 hover:bg-surface-hover [border-color:rgb(var(--hairline))]"
+                  >
+                    <span>
+                      <span className="font-mono text-[13px] text-primary">{r.slug}</span>
+                      <span className="ml-2 text-[12px] text-secondary">{r.name}</span>
+                    </span>
+                    <Badge tone="neutral">Not started</Badge>
+                  </Link>
                 </li>
               ))}
             </ul>
