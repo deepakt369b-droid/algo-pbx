@@ -887,6 +887,15 @@ services:
     restart: unless-stopped
     logging: *default-logging
     entrypoint: ["/bin/sh", "/scripts/geoip-refresh.sh"]
+    # curlimages/curl's default image user is non-root (uid 100), but a
+    # freshly-created named Docker volume is root:root 0755 — the fetch
+    # script's `curl -o`/`mv` into /geoip fails with "client returned
+    # ERROR on write" (curl exit 23) under the image's own default user
+    # (confirmed live on 2026-09-07: both files failed to write on first
+    # boot). Running as root fixes it; this container does nothing but
+    # download two public read-only files onto its own dedicated volume,
+    # so root here carries no meaningful extra risk.
+    user: "0:0"
     environment:
       DEST_DIR: /geoip
       POLL_INTERVAL_SECS: "86400"
