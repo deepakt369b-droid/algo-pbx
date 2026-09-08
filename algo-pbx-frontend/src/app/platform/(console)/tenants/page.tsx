@@ -6,6 +6,7 @@ import { workspaceHost } from "@/lib/platform/domain-constants";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TenantFilters } from "@/components/platform/tenant-filters";
+import { TenantRows, type TenantRowData } from "@/components/platform/tenant-row-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,50 @@ export default async function TenantsPage({ searchParams }: { searchParams: Sear
 
   const compliance = new Map(tenants.map((t) => [t.id, evaluateCompliance(t)]));
 
+  const rows: TenantRowData[] = tenants.map((t) => {
+    const access = evaluateBillingAccess(t);
+    // "Tunnel" summarises every gateway this tenant owns. A tenant with no
+    // gateway row at all is not "down" — nothing has been provisioned yet,
+    // and saying "down" would send an operator hunting a network fault that
+    // does not exist.
+    const sites = t.gatewaySites;
+    const tunnel =
+      sites.length === 0
+        ? { label: "No gateway", tone: "neutral" as const }
+        : sites.some(isFreshUp)
+          ? { label: "Up", tone: "success" as const }
+          : sites.every((s) => s.lastHandshakeAt === null)
+            ? { label: "Never connected", tone: "warning" as const }
+            : sites.some((s) => s.status === "UP")
+              ? { label: "Degraded", tone: "warning" as const }
+              : { label: "Down", tone: "danger" as const };
+    const comp = compliance.get(t.id);
+
+    return {
+      id: t.id,
+      slug: t.slug,
+      workspaceHost: workspaceHost(t.slug),
+      name: t.name,
+      complianceLabel: comp && !comp.complete ? `${comp.missing.length} compliance` : null,
+      complianceSummary: comp?.summary ?? null,
+      plan: t.plan,
+      extensionsUsed: t._count.extensions,
+      seats: t.seats,
+      billingStatus: t.billingStatus,
+      billingTone: STATUS_TONE[t.billingStatus] ?? "neutral",
+      billingNote:
+        access.rung !== "ok"
+          ? access.rung === "warning"
+            ? `${access.graceDaysRemaining}d grace`
+            : "login blocked"
+          : null,
+      paidUntil: fmtDate(t.paidUntil),
+      tunnelLabel: tunnel.label,
+      tunnelTone: tunnel.tone,
+      createdAt: fmtDate(t.createdAt),
+    };
+  });
+
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -106,77 +151,7 @@ export default async function TenantsPage({ searchParams }: { searchParams: Sear
               </tr>
             </thead>
             <tbody>
-              {tenants.map((t) => {
-                const access = evaluateBillingAccess(t);
-                // "Tunnel" summarises every gateway this tenant owns. A
-                // tenant with no gateway row at all is not "down" — nothing
-                // has been provisioned yet, and saying "down" would send an
-                // operator hunting a network fault that does not exist.
-                const sites = t.gatewaySites;
-                const tunnel =
-                  sites.length === 0
-                    ? { label: "No gateway", tone: "neutral" as const }
-                    : sites.some(isFreshUp)
-                      ? { label: "Up", tone: "success" as const }
-                      : sites.every((s) => s.lastHandshakeAt === null)
-                        ? { label: "Never connected", tone: "warning" as const }
-                        : sites.some((s) => s.status === "UP")
-                          ? { label: "Degraded", tone: "warning" as const }
-                          : { label: "Down", tone: "danger" as const };
-                const comp = compliance.get(t.id);
-
-                return (
-                  <tr
-                    key={t.id}
-                    data-testid="tenant-row"
-                    data-slug={t.slug}
-                    className="border-b transition-colors last:border-0 hover:bg-surface-hover [border-color:rgb(var(--hairline))]"
-                  >
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/platform/tenants/${t.id}`}
-                        className="font-mono text-accent underline-offset-2 hover:underline"
-                      >
-                        {t.slug}
-                      </Link>
-                      <span className="block text-[11px] text-tertiary">{workspaceHost(t.slug)}</span>
-                    </td>
-                    <td className="px-4 py-3 text-primary">
-                      {t.name}
-                      {comp && !comp.complete && (
-                        <span
-                          title={comp.summary}
-                          data-testid="compliance-warning"
-                          className="ml-2 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning"
-                        >
-                          {comp.missing.length} compliance
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-secondary">{t.plan}</td>
-                    <td className="px-4 py-3 tabular-nums text-secondary">
-                      {t._count.extensions}/{t.seats}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge tone={STATUS_TONE[t.billingStatus] ?? "neutral"}>
-                        {t.billingStatus}
-                      </Badge>
-                      {access.rung !== "ok" && (
-                        <span className="ml-1.5 text-[11px] text-tertiary">
-                          {access.rung === "warning"
-                            ? `${access.graceDaysRemaining}d grace`
-                            : "login blocked"}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-secondary">{fmtDate(t.paidUntil)}</td>
-                    <td className="px-4 py-3">
-                      <Badge tone={tunnel.tone}>{tunnel.label}</Badge>
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-tertiary">{fmtDate(t.createdAt)}</td>
-                  </tr>
-                );
-              })}
+              <TenantRows rows={rows} />
               {tenants.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center text-tertiary">

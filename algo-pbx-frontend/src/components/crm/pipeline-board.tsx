@@ -12,11 +12,12 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button, Skeleton, Badge, Dialog, Input, Label, Select } from "@/components/ui";
+import { ContactPicker, CompanyPicker, type ContactRef, type CompanyRef } from "@/components/crm/contact-picker";
+import { NoteThread } from "@/components/crm/note-thread";
 
 type Stage = { id: string; name: string; sortOrder: number; isWon: boolean; isLost: boolean; color: string | null };
-type ContactRef = { id: string; displayName: string | null; numberE164: string };
 type Deal = {
   id: string;
   name: string;
@@ -26,6 +27,7 @@ type Deal = {
   owner: { id: string; name: string | null } | null;
   company: { id: string; name: string } | null;
   primaryContact: ContactRef | null;
+  expectedCloseAt: string | null;
 };
 
 function money(v: number, ccy: string) {
@@ -36,90 +38,6 @@ function money(v: number, ccy: string) {
   }
 }
 
-// Search-as-you-type contact picker shared by the New deal and Edit deal
-// dialogs. `apiBase` is "/api/admin/crm" or "/api/agent/crm" — the agent
-// contact search lives under that same prefix (/api/agent/crm/contacts),
-// but the admin one doesn't (/api/admin/contacts, not /api/admin/crm/contacts)
-// since it predates the CRM API namespace, hence the branch below.
-function ContactPicker({ apiBase, value, onChange, inputId }: {
-  apiBase: string;
-  value: ContactRef | null;
-  onChange: (contact: ContactRef | null) => void;
-  inputId?: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<ContactRef[]>([]);
-  const [open, setOpen] = useState(false);
-  const contactsUrl = apiBase.includes("/admin/") ? "/api/admin/contacts" : "/api/agent/crm/contacts";
-
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setResults([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      fetch(`${contactsUrl}?q=${encodeURIComponent(q)}&limit=8`, { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-        .then((data) => setResults(data.contacts ?? []))
-        .catch(() => setResults([]));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [query, contactsUrl]);
-
-  if (value) {
-    return (
-      <div className="flex items-center justify-between rounded-[var(--radius)] border bg-surface px-3 py-2 text-sm [border-color:rgb(var(--hairline))]">
-        <span className="truncate text-primary">{value.displayName || value.numberE164}</span>
-        <button
-          type="button"
-          aria-label="Remove linked contact"
-          className="text-tertiary hover:text-danger"
-          onClick={() => onChange(null)}
-        >
-          <X size={14} />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative">
-      <Input
-        id={inputId}
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="Search contacts by name or number..."
-      />
-      {open && results.length > 0 && (
-        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-[var(--radius)] border bg-surface shadow-xl [border-color:rgb(var(--hairline))]">
-          {results.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className="block w-full truncate px-3 py-2 text-left text-sm text-primary hover:bg-canvas"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onChange(c);
-                setQuery("");
-                setResults([]);
-                setOpen(false);
-              }}
-            >
-              {c.displayName || c.numberE164}
-              {c.displayName && <span className="ml-1.5 text-[11px] text-tertiary">{c.numberE164}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function DealCard({ deal, stages, onMove, onOpen, draggable }: {
   deal: Deal;
@@ -207,7 +125,14 @@ function Column({ stage, deals, stages, onMove, onOpen, draggable }: {
 // "/api/admin/crm" or "/api/agent/crm". Desktop: @dnd-kit drag-drop across
 // columns. Mobile (<768px): a horizontal snap-scroll strip and a stage
 // <Select> on each card instead of drag.
+// Admin-only staff picked from GET /api/admin/users for the deal Owner
+// select — the agent plane has no equivalent endpoint and doesn't get this
+// field (see the `isAdminBase` gate below).
+type OwnerOption = { id: string; name: string | null; email: string };
+
 export function PipelineBoard({ apiBase }: { apiBase: string }) {
+  const isAdminBase = apiBase.includes("/admin/");
+
   const [stages, setStages] = useState<Stage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -215,17 +140,37 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
   const [error, setError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [owners, setOwners] = useState<OwnerOption[]>([]);
+
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
   const [newContact, setNewContact] = useState<ContactRef | null>(null);
+  const [newCompany, setNewCompany] = useState<CompanyRef | null>(null);
+  const [newStageId, setNewStageId] = useState<string | null>(null);
+  const [newCurrency, setNewCurrency] = useState("AED");
+  const [newOwnerId, setNewOwnerId] = useState<string | null>(null);
+  const [newExpectedCloseAt, setNewExpectedCloseAt] = useState("");
   const [creating, setCreating] = useState(false);
 
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [editName, setEditName] = useState("");
   const [editValue, setEditValue] = useState("");
   const [editContact, setEditContact] = useState<ContactRef | null>(null);
+  const [editCompany, setEditCompany] = useState<CompanyRef | null>(null);
+  const [editStageId, setEditStageId] = useState<string | null>(null);
+  const [editCurrency, setEditCurrency] = useState("AED");
+  const [editOwnerId, setEditOwnerId] = useState<string | null>(null);
+  const [editExpectedCloseAt, setEditExpectedCloseAt] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isAdminBase) return;
+    fetch("/api/admin/users", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data) => setOwners(data.users ?? []))
+      .catch(() => setOwners([]));
+  }, [isAdminBase]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -291,12 +236,22 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
           name: newName.trim(),
           value: Number(newValue) || 0,
           contactId: newContact?.id ?? undefined,
+          companyId: newCompany?.id ?? undefined,
+          stageId: newStageId ?? undefined,
+          currency: newCurrency || undefined,
+          ownerId: newOwnerId ?? undefined,
+          expectedCloseAt: newExpectedCloseAt ? new Date(newExpectedCloseAt).toISOString() : undefined,
         }),
       });
       if (!res.ok) throw new Error(String(res.status));
       setNewName("");
       setNewValue("");
       setNewContact(null);
+      setNewCompany(null);
+      setNewStageId(null);
+      setNewCurrency("AED");
+      setNewOwnerId(null);
+      setNewExpectedCloseAt("");
       setShowCreate(false);
       load();
     } catch {
@@ -311,6 +266,11 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
     setEditName(deal.name);
     setEditValue(String(deal.value));
     setEditContact(deal.primaryContact);
+    setEditCompany(deal.company ? { ...deal.company, domain: null } : null);
+    setEditStageId(deal.stageId);
+    setEditCurrency(deal.currency);
+    setEditOwnerId(deal.owner?.id ?? null);
+    setEditExpectedCloseAt(deal.expectedCloseAt ? deal.expectedCloseAt.slice(0, 10) : "");
   };
 
   const saveDeal = async () => {
@@ -324,6 +284,11 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
           name: editName.trim(),
           value: Number(editValue) || 0,
           contactId: editContact?.id ?? null,
+          companyId: editCompany?.id ?? null,
+          stageId: editStageId ?? undefined,
+          currency: editCurrency || undefined,
+          ownerId: editOwnerId ?? undefined,
+          expectedCloseAt: editExpectedCloseAt ? new Date(editExpectedCloseAt).toISOString() : null,
         }),
       });
       if (!res.ok) throw new Error(String(res.status));
@@ -426,12 +391,60 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
             <Label htmlFor="deal-contact">Contact</Label>
             <ContactPicker apiBase={apiBase} value={newContact} onChange={setNewContact} inputId="deal-contact" />
           </div>
+          {isAdminBase && (
+            <div>
+              <Label htmlFor="deal-company">Company</Label>
+              <CompanyPicker value={newCompany} onChange={setNewCompany} inputId="deal-company" />
+            </div>
+          )}
+          <div>
+            <Label htmlFor="deal-stage">Stage</Label>
+            <Select
+              aria-label="Stage"
+              value={newStageId ?? stages[0]?.id ?? null}
+              onChange={setNewStageId}
+              options={stages.map((s) => ({ value: s.id, label: s.name }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="deal-currency">Currency</Label>
+              <Input
+                id="deal-currency"
+                value={newCurrency}
+                maxLength={3}
+                onChange={(e) => setNewCurrency(e.target.value.toUpperCase())}
+              />
+            </div>
+            <div>
+              <Label htmlFor="deal-expected-close">Expected close</Label>
+              <Input
+                id="deal-expected-close"
+                type="date"
+                value={newExpectedCloseAt}
+                onChange={(e) => setNewExpectedCloseAt(e.target.value)}
+              />
+            </div>
+          </div>
+          {isAdminBase && owners.length > 0 && (
+            <div>
+              <Label htmlFor="deal-owner">Owner</Label>
+              <Select
+                aria-label="Owner"
+                value={newOwnerId}
+                onChange={setNewOwnerId}
+                placeholder="Unassigned (defaults to you)"
+                options={owners.map((o) => ({ value: o.id, label: o.name || o.email }))}
+              />
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="secondary"
               onClick={() => {
                 setShowCreate(false);
                 setNewContact(null);
+                setNewCompany(null);
               }}
             >
               Cancel
@@ -457,6 +470,53 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
             <Label htmlFor="edit-deal-contact">Contact</Label>
             <ContactPicker apiBase={apiBase} value={editContact} onChange={setEditContact} inputId="edit-deal-contact" />
           </div>
+          {isAdminBase && (
+            <div>
+              <Label htmlFor="edit-deal-company">Company</Label>
+              <CompanyPicker value={editCompany} onChange={setEditCompany} inputId="edit-deal-company" />
+            </div>
+          )}
+          <div>
+            <Label htmlFor="edit-deal-stage">Stage</Label>
+            <Select
+              aria-label="Stage"
+              value={editStageId}
+              onChange={setEditStageId}
+              options={stages.map((s) => ({ value: s.id, label: s.name }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="edit-deal-currency">Currency</Label>
+              <Input
+                id="edit-deal-currency"
+                value={editCurrency}
+                maxLength={3}
+                onChange={(e) => setEditCurrency(e.target.value.toUpperCase())}
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-deal-expected-close">Expected close</Label>
+              <Input
+                id="edit-deal-expected-close"
+                type="date"
+                value={editExpectedCloseAt}
+                onChange={(e) => setEditExpectedCloseAt(e.target.value)}
+              />
+            </div>
+          </div>
+          {isAdminBase && owners.length > 0 && (
+            <div>
+              <Label htmlFor="edit-deal-owner">Owner</Label>
+              <Select
+                aria-label="Owner"
+                value={editOwnerId}
+                onChange={setEditOwnerId}
+                placeholder="Unassigned"
+                options={owners.map((o) => ({ value: o.id, label: o.name || o.email }))}
+              />
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setEditingDeal(null)}>
               Cancel
@@ -465,6 +525,14 @@ export function PipelineBoard({ apiBase }: { apiBase: string }) {
               {saving ? "Saving…" : "Save"}
             </Button>
           </div>
+          {isAdminBase && editingDeal && (
+            <div className="border-t pt-3 [border-color:rgb(var(--hairline))]">
+              <Label>Notes</Label>
+              <div className="mt-1.5">
+                <NoteThread endpoint={`/api/admin/crm/deals/${editingDeal.id}/notes`} />
+              </div>
+            </div>
+          )}
         </div>
       </Dialog>
     </div>

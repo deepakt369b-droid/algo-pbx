@@ -9,6 +9,9 @@ import {
   platformUserDisableBlastRadius,
   platformOwnerCreateBlastRadius,
   TELEPHONY_UNAFFECTED_NOTE,
+  extensionAssignBlastRadius,
+  extensionUnassignBlastRadius,
+  extensionDialPermissionBlastRadius,
 } from "./blast-radius";
 
 describe("suspendBlastRadius", () => {
@@ -123,5 +126,25 @@ describe("platform user copy", () => {
     const copy = platformOwnerCreateBlastRadius("ops@example.com");
     expect(copy).toMatch(/cut any tenant's dialplan/);
     expect(copy).toMatch(/Type the email below/);
+  });
+});
+
+describe("extension assignment copy", () => {
+  it("states the extension assign consequence exactly", () => {
+    expect(extensionAssignBlastRadius("101", "agent@example.com")).toBe(
+      "This assigns extension 101 to agent@example.com. They can place and receive calls on it immediately."
+    );
+  });
+
+  it("states the extension unassign consequence exactly", () => {
+    expect(extensionUnassignBlastRadius("101", "agent@example.com")).toBe(
+      "This unassigns extension 101 from agent@example.com. It becomes unassigned and unreachable until reassigned."
+    );
+  });
+
+  it("states the dial permission change exactly", () => {
+    expect(extensionDialPermissionBlastRadius("101", "INTERNATIONAL")).toBe(
+      "This changes extension 101's dial permission to INTERNATIONAL."
+    );
   });
 });

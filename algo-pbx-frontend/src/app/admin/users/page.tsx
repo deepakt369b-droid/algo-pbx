@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/client/api";
 
 interface UserRow {
@@ -392,6 +393,9 @@ export default function UsersPage() {
                     <span className={u.disabled ? "text-tertiary line-through" : ""}>{u.name}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-tertiary">{u.role}</span>
+                      <Link href={`/admin/users/${u.id}`} className="text-xs text-cyan hover:underline">
+                        VPN
+                      </Link>
                       <button onClick={() => (editing === u.id ? setEditing(null) : beginEdit(u))} className="text-xs text-cyan hover:underline">
                         {editing === u.id ? "Close" : "Edit"}
                       </button>

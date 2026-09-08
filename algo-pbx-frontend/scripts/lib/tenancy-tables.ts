@@ -57,6 +57,13 @@ export const TENANCY_TABLES: readonly string[] = [
   // and the geo-lock migration's header for why.
   "GeoLoginEvent",
   "ExtensionUnlockRequest",
+  // Per-user VPN profile + company notes (2026-09-08, owner-page
+  // enchanted-sphinx plan). Kept in sync with
+  // src/lib/tenancy/scope-rules.ts's TENANT_SCOPED_MODELS. Both tables
+  // are created AFTER the tenancy backfill migration, so they start life
+  // with a NOT NULL tenantId and need no backfill of their own.
+  "UserVpnProfile",
+  "CompanyNote",
 ];
 
 // Platform-global tables (plan §1/§7) — never get a tenantId. Listed here

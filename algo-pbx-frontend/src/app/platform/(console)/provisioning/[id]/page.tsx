@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { access } from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +9,8 @@ import { certCn } from "@/lib/platform/subnet";
 import { canAdvance } from "@/lib/platform/provisioning-machine";
 import { buildEasyRsaCommand } from "@/lib/platform/manual-cert-command";
 import { ProvisioningWizard } from "@/components/platform/provisioning-wizard";
+import { ProvisioningOverview } from "@/components/platform/provisioning-overview";
+import { progress as provisioningProgress } from "@/lib/platform/provisioning-machine";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +25,13 @@ async function certExists(cn: string): Promise<boolean> {
   }
 }
 
-export default async function ProvisioningRunPage({ params }: { params: { id: string } }) {
+export default async function ProvisioningRunPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { mode?: string };
+}) {
   const guard = await requirePlatformSetupSession();
   if ("response" in guard) notFound();
 
@@ -40,17 +49,44 @@ export default async function ProvisioningRunPage({ params }: { params: { id: st
 
   const verdict = canAdvance(detail.provisioning.state, prereqs);
 
+  // Overview is the default landing view (W2); the wizard only renders when
+  // explicitly requested via ?mode=edit, so a click into a run always shows
+  // progress/prereqs/blockers before any editable control.
+  if (searchParams.mode !== "edit") {
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-5">
+        <ProvisioningOverview
+          tenantId={detail.tenant.id}
+          tenantName={detail.tenant.name}
+          tenantSlug={detail.tenant.slug}
+          completed={detail.provisioning.state.completed}
+          lastError={detail.provisioning.state.lastError ?? null}
+          verdict={JSON.parse(JSON.stringify(verdict))}
+          progress={provisioningProgress(detail.provisioning.state)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-5">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight text-primary">
-          Provisioning {detail.tenant.name}
-        </h1>
-        <p className="text-[13px] text-secondary">
-          <span className="font-mono">{detail.tenant.slug}</span> ·{" "}
-          {detail.provisioning.progress.completed} of {detail.provisioning.progress.total} steps
-          complete
-        </p>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-primary">
+            Provisioning {detail.tenant.name}
+          </h1>
+          <p className="text-[13px] text-secondary">
+            <span className="font-mono">{detail.tenant.slug}</span> ·{" "}
+            {detail.provisioning.progress.completed} of {detail.provisioning.progress.total} steps
+            complete
+          </p>
+        </div>
+        <Link
+          href={`/platform/provisioning/${detail.tenant.id}`}
+          className="text-[13px] text-secondary hover:text-primary"
+        >
+          Back to overview
+        </Link>
       </header>
 
       <ProvisioningWizard

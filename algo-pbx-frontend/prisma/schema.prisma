@@ -215,6 +215,8 @@ model Tenant {
   recordingDeliveries     RecordingDelivery[]
   geoLoginEvents          GeoLoginEvent[]
   extensionUnlockRequests ExtensionUnlockRequest[]
+  userVpnProfiles         UserVpnProfile[]
+  companyNotes            CompanyNote[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -424,6 +426,8 @@ model User {
   ownedCompanies                 Company[]                @relation("CompanyOwner")
   ownedDeals                     Deal[]                   @relation("DealOwner")
   dealNotes                      DealNote[]               @relation("DealNoteAuthor")
+  vpnProfile                     UserVpnProfile?          @relation("UserVpnProfile")
+  companyNotes                   CompanyNote[]            @relation("CompanyNoteAuthor")
   activities                     Activity[]               @relation("ActivityActor")
   // "light" | "dark" | "system"; NULL = system. Persisted per user so the
   // theme survives a device change; the client still writes localStorage
@@ -1214,6 +1218,9 @@ model ContactTask {
   dealId      String?
   deal        Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
   title       String
+  // Free-text notes/description for the task (2026-09-08, owner-page
+  // enchanted-sphinx plan, D2/D3). Nullable so existing rows stay valid.
+  description String?
   dueAt       DateTime?
   completedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -1270,6 +1277,7 @@ model Company {
   owner     User?     @relation("CompanyOwner", fields: [ownerId], references: [id])
   contacts  Contact[] @relation("CompanyContacts")
   deals     Deal[]
+  notes     CompanyNote[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -1352,6 +1360,27 @@ model DealNote {
   createdAt DateTime @default(now())
 
   @@index([dealId])
+  @@index([tenantId])
+}
+
+// Company-level threaded notes (2026-09-08, owner-page enchanted-sphinx
+// plan, D3) — exact mirror of DealNote above. A company note has no
+// Activity column to hang on (Activity has no companyId); the API layer
+// attaches the accompanying Activity row to the company's primary contact
+// when one exists, and writes only the note when it doesn't (see
+// src/app/api/admin/crm/companies/[id]/notes/route.ts's header).
+model CompanyNote {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("CompanyNoteAuthor", fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
   @@index([tenantId])
 }
 
@@ -1841,6 +1870,40 @@ model GatewaySite {
   updatedAt DateTime @updatedAt
 
   @@index([status])
+  @@index([tenantId])
+}
+
+// Per-user VPN profile (2026-09-08, owner-page enchanted-sphinx plan, W3).
+// One profile per tenant User (1:1, userId is unique) — distinct from
+// GatewaySite above, which is the per-TENANT gateway tunnel. Administered
+// only from the tenant admin console (/admin/users/[id]); the guard
+// (requireAdminSession()), not the nav, is what keeps this out of the
+// agent console — see src/app/api/admin/users/[id]/vpn/route.ts.
+model UserVpnProfile {
+  id              String                 @id @default(cuid())
+  tenantId        String
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id])
+  userId          String                 @unique
+  user            User                   @relation("UserVpnProfile", fields: [userId], references: [id], onDelete: Cascade)
+  transport       SiteTransport          @default(WIREGUARD)
+  label           String?
+  tunnelIp        String?
+  publicKey       String?
+  // At rest via the existing settings encryption helper
+  // (src/lib/settings/crypto.ts's encryptSetting/decryptSetting) — same
+  // scheme as GatewaySite.configEncrypted, not a new one. Null for
+  // transports with no generated config (Tailscale/OpenVPN — see
+  // src/lib/connectivity/user-vpn-config.ts's supportsGeneratedConfig()).
+  configEncrypted String?
+  status          SiteConnectivityStatus @default(UNKNOWN)
+  lastHandshakeAt DateTime?
+  lastReachableAt DateTime?
+  // Non-null = revoked. Revoke never hard-deletes the row (audit trail).
+  revokedAt       DateTime?
+  createdById     String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
   @@index([tenantId])
 }
 

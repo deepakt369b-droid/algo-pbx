@@ -70,7 +70,11 @@ export type PlatformAuditAction =
   | "geo.extension_unlock"
   | "geo.unlock_denied"
   | "tenant.geo_settings_update"
-  | "tenant.extension_geo_update";
+  | "tenant.extension_geo_update"
+  // extension assignment (owner tenant-management modal, W1)
+  | "tenant.extension.assign"
+  | "tenant.extension.unassign"
+  | "tenant.extension.dial_permission";
 
 /** Actions that may never proceed without a non-empty reason. Everything
  * consequential is on this list; the passive ones (login, totp_confirmed)
@@ -105,6 +109,9 @@ export const REASON_REQUIRED_ACTIONS: readonly PlatformAuditAction[] = [
   "geo.unlock_denied",
   "tenant.geo_settings_update",
   "tenant.extension_geo_update",
+  "tenant.extension.assign",
+  "tenant.extension.unassign",
+  "tenant.extension.dial_permission",
 ];
 
 export class MissingReasonError extends Error {

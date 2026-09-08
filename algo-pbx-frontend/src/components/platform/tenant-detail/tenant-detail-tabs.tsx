@@ -9,6 +9,7 @@ import { GatewayTab } from "./gateway-tab";
 import { SupportTab } from "./support-tab";
 import { UsersTab } from "./users-tab";
 import { GeoTab } from "./geo-tab";
+import { ExtensionsTab } from "./extensions-tab";
 import { TAB_SLUGS, type SerialisedTenantDetail, type PlatformRole, type TabSlug } from "./types";
 
 // Tab container. The order matters: identity first (what IS this tenant),
@@ -37,6 +38,12 @@ function buildTabs(
     { slug: "support", label: "Support access", content: <SupportTab detail={detail} /> },
     { slug: "users", label: "Users", ownerOnly: true, content: <UsersTab detail={detail} role={role} /> },
     { slug: "geo", label: "Geo", ownerOnly: true, content: <GeoTab detail={detail} role={role} /> },
+    {
+      slug: "extensions",
+      label: "Extensions",
+      ownerOnly: true,
+      content: <ExtensionsTab detail={detail} role={role} />,
+    },
   ];
 }
 

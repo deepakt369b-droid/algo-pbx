@@ -71,6 +71,12 @@ export const TENANT_SCOPED_MODELS: readonly string[] = [
   // scope decision, not an oversight).
   "GeoLoginEvent",
   "ExtensionUnlockRequest",
+  // Per-user VPN profile + company notes (2026-09-08, owner-page
+  // enchanted-sphinx plan). Both carry a tenantId and go through this
+  // scoping the same as every other tenant-owned model — kept in sync
+  // with scripts/lib/tenancy-tables.ts's TENANCY_TABLES.
+  "UserVpnProfile",
+  "CompanyNote",
 ];
 
 // AppSetting is the one model that does not fit the simple pattern (plan

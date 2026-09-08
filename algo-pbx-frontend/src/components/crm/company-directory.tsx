@@ -16,6 +16,7 @@ import {
   Label,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { NoteThread } from "@/components/crm/note-thread";
 
 type CompanyRow = {
   id: string;
@@ -224,6 +225,15 @@ export function CompanyDirectory() {
                     ))}
                   </ul>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Notes</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <NoteThread endpoint={`/api/admin/crm/companies/${detail.id}/notes`} />
               </CardContent>
             </Card>
           </div>

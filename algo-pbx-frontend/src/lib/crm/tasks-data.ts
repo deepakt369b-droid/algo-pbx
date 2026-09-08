@@ -1,11 +1,14 @@
 import type { Prisma } from "@prisma/client";
 import type { TenantClient } from "@/lib/db-tenant";
+import { recordActivity } from "@/lib/crm/activity";
+import type { NormalizedTaskInput } from "@/lib/crm/task-input";
 
 export type TaskFilter = "open" | "today" | "overdue" | "completed" | "all";
 
 export type CrmTaskDto = {
   id: string;
   title: string;
+  description: string | null;
   dueAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -69,6 +72,7 @@ export async function loadTasks(
   return rows.map((t) => ({
     id: t.id,
     title: t.title,
+    description: t.description,
     dueAt: t.dueAt ? t.dueAt.toISOString() : null,
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
@@ -76,4 +80,55 @@ export async function loadTasks(
     contact: t.contact,
     deal: t.deal,
   }));
+}
+
+// New task creation (owner-page enchanted-sphinx plan, W4 — the task board
+// previously had no create path at all). Mirrors crm/deals.ts's
+// createDeal(): DI'd TenantClient, no `tenantId` in the create data (the
+// extension force-injects it), and a matching Activity row so the task
+// shows up on the contact's/deal's unified timeline.
+export async function createTask(
+  db: TenantClient,
+  input: NormalizedTaskInput,
+  callerId: string
+): Promise<CrmTaskDto> {
+  const task = await db.contactTask.create({
+    data: {
+      title: input.title,
+      description: input.description,
+      contactId: input.contactId,
+      assigneeId: input.assigneeId ?? callerId,
+      dealId: input.dealId,
+      dueAt: input.dueAt,
+    } as unknown as Prisma.ContactTaskUncheckedCreateInput,
+    include: {
+      assignee: { select: { id: true, name: true } },
+      contact: { select: { id: true, displayName: true, numberE164: true } },
+      deal: { select: { id: true, name: true } },
+    },
+  });
+
+  await recordActivity(
+    {
+      type: "TASK",
+      summary: `Task: ${task.title}`,
+      refId: task.id,
+      contactId: task.contactId,
+      dealId: task.dealId,
+      actorId: callerId,
+    },
+    db
+  );
+
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    dueAt: task.dueAt ? task.dueAt.toISOString() : null,
+    completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+    createdAt: task.createdAt.toISOString(),
+    assignee: task.assignee,
+    contact: task.contact,
+    deal: task.deal,
+  };
 }

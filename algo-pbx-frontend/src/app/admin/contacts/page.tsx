@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Combobox } from "@/components/ui";
 import { COUNTRY_OPTIONS } from "@/lib/countries";
+import { NoteThread } from "@/components/crm/note-thread";
 
 interface Contact {
   id: string;
@@ -595,6 +596,13 @@ export default function ContactsAdminPage() {
               Cancel
             </button>
           </div>
+
+          {editingId && (
+            <div className="border-t border-border pt-3">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-secondary">Notes</h3>
+              <NoteThread endpoint={`/api/admin/contacts/${editingId}/notes`} />
+            </div>
+          )}
         </div>
       )}
 

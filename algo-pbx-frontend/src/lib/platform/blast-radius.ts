@@ -93,3 +93,23 @@ export function platformOwnerCreateBlastRadius(email: string): string {
  * without a full blast-radius paragraph. Single source so it cannot drift. */
 export const TELEPHONY_UNAFFECTED_NOTE =
   "Billing enforcement affects web login only. Calls are never stopped automatically — inbound or outbound.";
+
+/**
+ * Extension assignment — owner tenant-management modal (W1). States the
+ * consequence in the operator's terms: an assignment changes who can place
+ * and receive calls on that extension, immediately.
+ */
+export function extensionAssignBlastRadius(extensionNumber: string, userEmail: string): string {
+  return `This assigns extension ${extensionNumber} to ${userEmail}. They can place and receive calls on it immediately.`;
+}
+
+export function extensionUnassignBlastRadius(extensionNumber: string, userEmail: string): string {
+  return `This unassigns extension ${extensionNumber} from ${userEmail}. It becomes unassigned and unreachable until reassigned.`;
+}
+
+export function extensionDialPermissionBlastRadius(
+  extensionNumber: string,
+  dialPermission: "LOCAL" | "NATIONAL" | "INTERNATIONAL"
+): string {
+  return `This changes extension ${extensionNumber}'s dial permission to ${dialPermission}.`;
+}

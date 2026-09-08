@@ -117,6 +117,7 @@ export const TAB_SLUGS = [
   "support",
   "users",
   "geo",
+  "extensions",
 ] as const;
 
 export type TabSlug = (typeof TAB_SLUGS)[number];

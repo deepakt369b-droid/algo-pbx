@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { InterventionControls } from "@/components/intervention-controls";
 import { Wallboard } from "@/components/wallboard";
+import { AdminDashboardCrmPanel } from "@/components/reports/admin-dashboard-crm-panel";
 
 export default async function AdminDashboard() {
   // Middleware already blocks non-ADMIN/SUPERVISOR from reaching this route;
@@ -28,6 +29,7 @@ export default async function AdminDashboard() {
           </a>
           .
         </div>
+        <AdminDashboardCrmPanel />
       </>
     );
   }
@@ -36,6 +38,7 @@ export default async function AdminDashboard() {
     <>
       <Wallboard />
       <InterventionControls supervisorExtension={session.user.extension} />
+      <AdminDashboardCrmPanel />
     </>
   );
 }
