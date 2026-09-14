@@ -1,3 +1,98 @@
+# Handoff — Owner plan upgrade/downgrade + caller-routing rules — **BOTH BUILT AND GATED GREEN, NOT LIVE-TESTED, NOT COMMITTED** (2026-09-14, same day, follow-up to the AI escalation work below)
+
+Two features, both complete. Full detail in `LLM.md` §35 (§35.1 plan upgrade/downgrade, §35.2 caller routing) — read that, not this summary, before continuing.
+
+**Plan upgrade/downgrade**: closed the three real gaps the existing `change_plan` billing action left open — plan ranking (`comparePlans`/`describePlanChange` in `plan-catalog.ts`), a downgrade-below-seats-in-use blocker (409 before the write), and AI-agent locking (not deleting) when a tenant loses the `aiAgents` feature. AI stays on **premium only** — confirmed explicitly, not moved to pro. The billing route's own "never touch telephony" rule now has one named, documented exception for this, audited with `telephonyAffected: true`. Fixed the tenant-creation form's free-text plan bug along the way (off-catalogue plans could exist and get priced at $0).
+
+**Caller-routing rules**: independently built after inspecting `github.com/Dpro-at/Tel-Agent` (AGPL-3.0) for ideas — **zero code or schema copied**, this needed direct correction mid-session since "fork their code" and "give no source to anyone" can't coexist under AGPL; the user confirmed the real goal was gap-analysis + independent reimplementation once that was flagged. New `CallerRoutingRule` model (pass/block/ai per caller pattern), a new `func_odbc.conf` ODBC function consulted before the existing AI routing decision, and a new admin page mirroring `/admin/dnc`'s shape.
+
+**Gates, all green:** `npm run typecheck` clean, `npm run test` **1074/1074** (93 files, 39 new), `npm run lint` clean, `npm run build` clean production build (`/admin/caller-routing` + both new API routes confirmed in the manifest). New migration `20260914140000_add_caller_routing_rules`, hand-written, same standing no-reachable-Postgres caveat every migration here carries. **Neither feature live-tested** — the caller-routing dialplan change specifically needs one real call per outcome (BLOCK/PASS/no-rule) before production trust.
+
+**Known gap, stated not hidden**: caller-routing's `PASS` action does not yet respect business hours (Tel-Agent's own rule bends `pass` outside business hours since nobody's at the desk) — Asterisk's native `GotoIfTime()` was the intended mechanism but wasn't wired into the `PASS` branch this pass.
+
+---
+
+# Handoff — AI → human escalation, ALL 7 WORKSTREAMS BUILT — **CODE-COMPLETE, GATED GREEN, NOT LIVE-TESTED, NOT COMMITTED** (2026-09-14, same day)
+
+Full plan at `~/.claude/plans/we-have-succeesfully-forked-crispy-petal.md` (A–tool-calling, F–schema/API/UI, D–Asterisk dialplan/ConfBridge, C–Next.js AMI orchestration, B–state machine/session continuity, G–compliance gate, E–CRM callback — **all ✅**). Full detail in `LLM.md` §34.2–§34.6 — read those, not this summary, before doing anything else with this feature.
+
+**Owner's ask:** when an AI voice agent's caller insists on a human, the AI holds the call, dials a phone number configured for that agent **out over the GSM trunk from its own extension** (not an extension transfer), merges into a 3-way conference, and stays in the call until both the caller and the human hang up. No human available → offer wait-or-callback.
+
+**Read this before anything else: it is code-complete but has NEVER been tested against real Asterisk.** That has been true and flagged at every step since the design pass, and remains the single blocking item before this touches a real tenant. Live-test the ConfBridge-merge mechanism against an internal-extension target (needs no GSM capacity) before doing anything else with this feature.
+
+**Gating finding, confirmed with the owner: only 1 Dinstar SIM is active today.** `src/lib/transfer-guard.ts:1-14` records a live-confirmed SIP trace of a second outbound call through the same trunk getting a 503. `escalate/route.ts` enforces this as a real, tested guard (`GSM_TRUNK_CAPACITY`, default 1) — a `NUMBER` escalation target is refused before anything touches AMI if the trunk is already at capacity.
+
+**Three real bugs found and fixed incidentally while building this:**
+1. `docker-compose.yml`'s `web` service never set `AI_SIDECAR_SHARED_SECRET` — every request the sidecar has ever sent to `/api/internal/ai/*` was 401ing since §34's original build. Fixed.
+2. The plan assumed Next.js could POST directly to the sidecar's `127.0.0.1:9091/register` — it can't (`web` is bridge-networked, the sidecar's pre-reg server is loopback-only). Fixed by having `[ai-conference-leg]` do its own `CURL()` pre-registration, threading everything through the AMI `Originate`'s `Variable:` field instead.
+3. The cascade turn loop used to unconditionally end the AI's participation after ANY escalation attempt, success or failure — a *failed* transfer silently ended the call even though the caller was still there. Fixed: only a real merge ends the loop; a failure clears state and the conversation continues.
+
+**All seven workstreams, in build order (full detail per section in LLM.md):**
+- **A** (§34.2) — real LLM tool-calling across OpenAI-compatible/Gemini/OpenAI Realtime.
+- **F** (§34.3) — `AiAgent` schema fields, validated admin API, the "Escalation to a human" UI card.
+- **D** (§34.4) — `[ai-conference]`/`[ai-conference-leg]`/`[ai-queue-fallback]` dialplan contexts + `ai_conf_*` ConfBridge profiles, `end_marked=yes` doing all the teardown work.
+- **C** (§34.4) — `escalate/route.ts`'s `check`/`merge` actions: AI leg joins first, caller only moves once that's proven, human dialed via `Local/…@from-agent-<tier>/n` (never straight at the trunk).
+- **B** (§34.5) — `escalation.py`'s `EscalationController` actually drives the flow; `main.py`'s `LiveSession` registry gives the resumed conference leg the same config/transcript/conversation, with exactly-once reporting under the original `cdr_unique_id`.
+- **G** (§34.6) — `checkEscalationDial()`, a compliance gate genuinely separate from `outboundEnabled` (different risk shape, no call-hours check), wired into `check`/`merge` for real. **Needs explicit owner sign-off before a real tenant uses a NUMBER target** — built and enforced in code, but that's not the same as the business decision being approved.
+- **E** (§34.6) — the `callback` action creates a real CRM `ContactTask` (find-or-create Contact, definite assignee, matching Activity row). The interactive "wait or callback?" moment is a **second LLM tool** (`request_callback`, offered only after a handoff has already failed once) rather than scripted dialogue — the model itself decides when the caller has agreed, which closes a gap earlier sessions had left explicitly open.
+
+**Also closed:** the AI conference leg's own phantom `Cdr` event no longer shows up in call history (`cdr-mapper.ts` filters it by channel name). **Deliberately NOT fixed:** wallboard concurrency will still count a 3-way escalation as more channels than a normal call — no clearly-correct fix without seeing a real wallboard during a real escalation, so left as a documented risk rather than guessed at.
+
+**Gates, all green:** `ai-voice-agent`: **78/78**. Frontend: `npm run typecheck` clean, `npm run test` **1035/1035** (90 files), `npm run lint` clean, `npm run build` clean production build.
+
+**NOT done, not glossed over:**
+- **Still never live-tested against real Asterisk** — see above, this is the whole ballgame now.
+- **No chained second escalation** — a resumed leg is architecturally terminal.
+- **REALTIME mode can't narrate its own progress** (no provider exposes a "say this text" hook) — the merge itself works identically, only spoken narration during the wait is missing.
+- **`handoff.py`** (old unused sidecar AMI client) **still sitting there, still not deleted** — flagged every session, never actioned.
+- **Workstream G needs owner sign-off** before going live with a NUMBER target.
+
+## ▶ "claude continue" — next steps for this feature
+
+1. **Live-test the ConfBridge-merge mechanism** against an internal-extension target. Everything else is done; this is the only thing standing between "code complete" and "actually usable." Confirm: the `ConfbridgeJoin` gate fires, the caller is never silent, `end_marked` tears the AI leg down correctly, the resumed leg's audio picks up cleanly and continues the conversation.
+2. Get the owner's explicit sign-off on Workstream G's compliance judgment before enabling a NUMBER target for any real tenant.
+3. Decide on `handoff.py` — delete it, or give a reason to keep it.
+4. Only after live verification: commit, review the full diff against the plan's file list, and start on `DEPLOYMENT.md`/`GO_LIVE_CHECKLIST.md` entries for this feature.
+
+---
+
+# Handoff — Premium "Hybrid AI + Human" plan built as a task graph + fix round + per-GSM-port assignment — **BUILT AND VERIFIED, NOT COMMITTED, NOT DEPLOYED** (2026-09-14)
+
+Full breakdown in `LLM.md` §34 and §34.1 — this is the short version. User asked for a new AED 800/mo plan where a tenant admin allocates each of 4 default ports to a human agent or an admin-managed, no-login AI voice agent (GSM-gateway-only, no Telnyx). Built as a task graph: 1 sequential root (schema/contracts) → 5 parallel builders → 2 more chained off those → 3 independent fresh-context verifiers → 1 fix round for what they found → a follow-up round adding per-GSM-port agent assignment. Forked `ictinnovations/asterisk-ai-voice-agent` (MIT, AudioSocket), not Dograh (BSD-2, needs ARI — would have broken the locked AMI-only decision).
+
+**What shipped:** `Tenant.seats` default 4 (enforced, 409 past the limit); premium plan on the landing page; a new `ai-voice-agent/` Python sidecar with pluggable STT/LLM/TTS/realtime providers (OpenAI, Anthropic, Gemini, Groq, Deepgram, ElevenLabs, Cartesia, Sarvam, more) and automatic model-list fetching from a pasted API key; AI agent admin UI merged into the existing users/settings/CDR/reports/CRM pages (no separate AI pages); India-TRAI/UAE-TDRA compliance logic (`checkOutbound()`, unit-tested); confirmed AI extensions are correctly outside the human geo-lock path (no login = nothing to geo-check); confirmed (and it was already true) that the AI-agent creation form never asks for a username/password — just a name and extension number.
+
+**Verification found and I fixed real bugs before calling any of this done — not glossed over:** the dialplan never actually invoked the sidecar's pre-registration endpoint (every AI call sat in dead air); the sidecar was reachable from the public internet with zero authentication on that same endpoint; a tenant admin could point a provider's `baseUrl` at internal infrastructure (SSRF) with no plan gate stopping them; a failed Gemini key validation leaked the plaintext key back into the admin's error message; env-var names disagreed between `docker-compose.yml` and the Python code. All fixed and re-verified.
+
+**User's follow-up ask this session, addressed:** "assign a Dinstar GSM port to an AI agent, so 2 AI agents can run on 2 different ports for one tenant." Added `AiAgent.dinstarPort` (1-4, `@@unique([tenantId, dinstarPort])`), a port picker in the agent editor showing which agent already holds each port, and `func_odbc.conf`'s `AI_INBOUND_EXTENSION()` now takes the port as an argument. **One piece of this is honestly NOT done, not glossed over: `extensions.conf` sets `${DINSTAR_PORT}` to an empty placeholder** — today all 4 Dinstar GSM ports arrive through one shared "Port Group" → one trunk with no live-confirmed per-port signal visible to Asterisk (LLM.md §25.1). Making this real needs either reconfiguring the gateway's `PortCfg`/`SipAccN` per port (API + field names already known, see §25.1) so each port registers as its own SIP identity, or a live trace of what the gateway actually sends per port today. Until that's done, every AI-assigned port silently falls through to the human queue — which is the safe failure mode, not a broken one, but it means the "2 AI agents on 2 ports" workflow is built end-to-end in software and NOT yet wired to real hardware.
+
+**Also this session:** installed the `dograh-plugins` Claude Code plugin (`dograh-hq/dograh-plugins` — a Claude Code/Codex plugin for setting up and troubleshooting a self-hosted *Dograh* deployment, unrelated to our own fork; useful only as agent tooling if we ever want a reference Dograh instance to compare against, not application code). `claude plugin marketplace list`/`claude plugin install dograh@dograh-plugins`/`claude plugin list` all confirm it: marketplace registered, plugin installed at user scope, status enabled. **Start a new session for the `dograh-setup` skill and `/dograh-setup`/`/dograh-doctor` commands to load** — a plugin install takes effect on the next session, not the current one.
+
+**Gates run, all green, nothing committed:** `npx prisma generate` clean; `npm run typecheck` clean; `npm run test` — 978/978 passing; `npm run build` — clean production build; `ai-voice-agent`: `python -m pytest tests` — 45/45 passing. `git status` shows the full diff staged nowhere, matching exactly the task-graph's file-ownership map plus the two follow-up rounds — nothing touched outside it, and a stray `rm -rf .agents` that briefly deleted an unrelated tracked file (`.agents/rules/agent.md`) was caught and restored via `git checkout` before it went anywhere.
+
+---
+
+## ▶ "claude continue" — the remaining work, in order
+
+Updated 2026-09-14 (Hybrid AI + Human plan session). Remaining, in order:
+
+1. ~~Install the `dograh-plugins` Claude Code plugin.~~ **DONE 2026-09-14** — `claude plugin install dograh@dograh-plugins` succeeded, status enabled. Start a new session for the `dograh-setup` skill/`/dograh-setup`/`/dograh-doctor` commands to load, then re-read whether this repo actually needs it before spending time on it — it's setup/troubleshooting tooling for a *live Dograh deployment*, and we deliberately did NOT fork Dograh (ARI conflict, LLM.md §34); it only earns its keep if you want a real Dograh instance running somewhere to compare provider UX/latency against our own fork.
+
+2. **Live-verify Dinstar per-GSM-port routing, then wire it for real.** `extensions.conf`'s `${DINSTAR_PORT}` is currently an empty placeholder (see LLM.md §34.1). Two ways to close this, pick one:
+   - Reconfigure each GSM port's `SipAccN`/`AuthenticateIDN`/`RegisterN` via the gateway's `POST /goform/PortCfg` (API and field names already discovered live, LLM.md §25.1) so each port registers as its own distinct SIP identity to Asterisk, landing in its own dialplan context instead of the shared `dinstar-trunk`.
+   - Or: place a real inbound call on each port and trace what Asterisk actually sees in the SIP INVITE (To/Request-URI/custom headers) that could distinguish the port, then extract that into `${DINSTAR_PORT}` instead of the empty placeholder.
+   Either way, place one real call per assigned port afterward and confirm it reaches the right AI agent, and that an un-assigned port still falls through to the human queue.
+
+3. ~~Wire `ai-voice-agent/pipeline/registry.py` into `main.py`'s AudioSocket connection handler.~~ **DONE 2026-09-14** — added `pipeline/runner.py` (`PipelineRunner`: REALTIME mode drives `build_realtime` directly against the audio stream; CASCADE mode does silence-endpointed STT→LLM→TTS turns, speaking the greeting via TTS first) and wired `runner.push_audio()`/`runner.stop()` into `main.py`'s AudioSocket loop. 49/49 `ai-voice-agent` tests passing (4 new). **Not done, flagged not glossed over**: no mid-turn barge-in cancellation for the cascade path (audio arriving mid-turn just queues into the next utterance rather than interrupting); nothing here has touched a live AudioSocket connection or a real STT/LLM/TTS vendor — unit-tested against fakes only. See LLM.md §7's updated bullet for detail.
+
+4. **Do not flip any `AiAgent.outboundEnabled` to true** until `checkOutbound()` (`src/lib/ai/compliance.ts` — India TRAI 140/1600 + DND, UAE TDRA DNCR + 09:00–18:00 window, fully unit-tested) is wired into whatever code eventually originates an AI outbound call. Nothing calls it today because nothing originates outbound AI calls yet.
+
+5. **Review the full working-tree diff** (`git status`/`git diff` — it should match LLM.md §34/§34.1's file lists exactly) **and commit**, once you're satisfied. Nothing has been committed this session — this was all built and left in the working tree deliberately, per the explicit "before committing, address the gap" instruction.
+
+6. **Deploy** per `DEPLOYMENT.md`'s new "Premium Hybrid AI + Human plan" note (`AI_SIDECAR_SHARED_SECRET`), then work `GO_LIVE_CHECKLIST.md`'s new Gate 2b top to bottom before selling this plan to any real tenant — it is NOT live-verified against a real Asterisk/Dinstar pairing, only built, unit-tested, and reviewed.
+
+---
+
 # Handoff — Owner tenant-management modal, provisioning overview, per-user VPN profiles, and CRM completion (deals/tasks/notes/dashboard) — **DEPLOYED AND LIVE on production** (2026-09-08)
 
 Plan: `~/.claude/plans/objective-the-owner-page-enchanted-sphinx.md` (task-graph shape: G0 shared migration → parallel W1/W2/W6 → W3 → W4 → W5). Full breakdown in `LLM.md` §33 — this is the short version.
