@@ -77,6 +77,21 @@ export const TENANT_SCOPED_MODELS: readonly string[] = [
   // with scripts/lib/tenancy-tables.ts's TENANCY_TABLES.
   "UserVpnProfile",
   "CompanyNote",
+  // Premium "Hybrid AI + Human" plan (2026-09-14). All three carry a
+  // tenantId and go through this scoping the same as every other
+  // tenant-owned model — kept in sync with scripts/lib/tenancy-tables.ts's
+  // TENANCY_TABLES.
+  "AiAgent",
+  "AiProviderCredential",
+  "AiCallSession",
+  // Caller-ID routing rules (2026-09-14 Tel-Agent gap analysis — independent
+  // design, no third-party code; see prisma/schema.prisma's own header on
+  // this model). Carries a tenantId, scoped here the same as DoNotCallEntry
+  // right above it in the schema. Deliberately NOT added to the RLS policy
+  // set in 20260904120000_add_rls, same considered-not-oversight reasoning
+  // as GeoLoginEvent/ExtensionUnlockRequest above — no reachable Postgres in
+  // this environment to write and verify a new RLS policy migration against.
+  "CallerRoutingRule",
 ];
 
 // AppSetting is the one model that does not fit the simple pattern (plan

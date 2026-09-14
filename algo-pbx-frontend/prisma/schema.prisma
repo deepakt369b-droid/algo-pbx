@@ -86,7 +86,13 @@ model Tenant {
 
   // --- Billing: manual-first, owner-overridable (plan §5 / Requirement B) ---
   plan            String        @default("standard")
-  seats           Int           @default(5)
+  // Default lowered 5 -> 4 for the "Hybrid AI + Human" premium plan
+  // (LLM.md decision, 2026-09-14): a port is a port whether it's staffed by
+  // a human or an AI agent, and 4 is what's quoted on the landing page.
+  // Existing tenant rows are NOT backfilled by the migration — only new
+  // tenants get 4; a tenant already provisioned with 5 keeps 5 until an
+  // owner explicitly changes it via the billing tab.
+  seats           Int           @default(4)
   billingStatus   BillingStatus @default(TRIAL)
   paidUntil       DateTime?
   // Set when a gateway/processor is added later; null = manual invoicing.
@@ -184,6 +190,7 @@ model Tenant {
   auditLogs               AuditLog[]
   callQualitySamples      CallQualitySample[]
   doNotCallEntries        DoNotCallEntry[]
+  callerRoutingRules      CallerRoutingRule[]
   invites                 Invite[]
   otpChallenges           OtpChallenge[]
   trustedDevices          TrustedDevice[]
@@ -217,6 +224,9 @@ model Tenant {
   extensionUnlockRequests ExtensionUnlockRequest[]
   userVpnProfiles         UserVpnProfile[]
   companyNotes            CompanyNote[]
+  aiAgents                AiAgent[]
+  aiProviderCredentials   AiProviderCredential[]
+  aiCallSessions          AiCallSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -574,6 +584,14 @@ model Extension {
   tenant         Tenant         @relation(fields: [tenantId], references: [id])
   number         String // e.g. "1001" — matches the PJSIP endpoint id generated into pjsip_dynamic.conf. Was globally @unique; now tenant-composite (plan §1).
   kind           String         @default("webrtc") // "webrtc" | "hardware"
+  // "HUMAN" | "AI" — premium "Hybrid AI + Human" plan (LLM.md decision,
+  // 2026-09-14). An AI extension has no User (userId stays null: no
+  // login/password/account is ever created for it — src/lib/ai/seat-guard
+  // still counts it as an occupied seat) and no sipSecret/voicemailPin;
+  // instead it has exactly one AiAgent, and Asterisk routes to it via
+  // AudioSocket rather than PJSIP registration. Plain String, matching
+  // `kind` above, so ops can flip it without a migration.
+  agentType      String         @default("HUMAN")
   user           User?          @relation(fields: [userId], references: [id])
   userId         String?        @unique
   status         AgentStatus    @default(OFFLINE)
@@ -633,9 +651,168 @@ model Extension {
 
   unlockRequests ExtensionUnlockRequest[]
   geoLoginEvents GeoLoginEvent[]
+  aiAgent        AiAgent?
+  // Other tenants' AI agents that point at THIS (human) extension as their
+  // escalation target — see AiAgent.handoffExtension's comment. Plural
+  // because more than one AI agent may share a human extension as the
+  // fallback a caller gets transferred to.
+  aiHandoffTargets AiAgent[] @relation("AiAgentHandoffExtension")
 
   @@unique([tenantId, number])
   @@index([tenantId])
+}
+
+// --- Premium "Hybrid AI + Human" plan (LLM.md decision, 2026-09-14) --------
+// One AiAgent per AI-kind Extension (1:1, enforced by @unique below — an
+// extension is either a human's or an AI's, never shared). Config here is
+// what the forked asterisk-ai-voice-agent sidecar fetches over
+// GET /api/internal/ai/agent-config?ext= (shared-secret auth) instead of its
+// upstream YAML personas; the tenant admin edits it, never the sidecar.
+model AiAgent {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  extensionId  String    @unique
+  extension    Extension @relation(fields: [extensionId], references: [id])
+  name         String
+  language     String    @default("en") // BCP-47-ish tag: "en", "hi", "ar", "hi-en" (codemix)
+  greeting     String // played first, always includes the automated-call disclosure (compliance requirement)
+  systemPrompt String    @db.Text
+
+  // "REALTIME" (one speech-to-speech model, e.g. OpenAI Realtime, Gemini
+  // Live) or "CASCADE" (separate STT -> LLM -> TTS legs below). Determines
+  // which of the provider fields the sidecar actually reads.
+  pipelineMode String @default("CASCADE")
+
+  realtimeProviderId String?
+  realtimeModel      String?
+  sttProviderId      String?
+  sttModel           String?
+  llmProviderId      String?
+  llmModel           String?
+  ttsProviderId      String?
+  ttsModel           String?
+  ttsVoice           String?
+
+  tools Json? // webhook/tool-calling definitions, shape owned by the sidecar contract
+
+  // --- Compliance / geo policy (LLM.md decision: AI agents are NOT
+  // geo-locked like human logins — they have no login location. What's
+  // locked instead lives here, per-agent.) ---
+  allowedDestinations String[] @default([]) // E.164 prefixes; empty = inbound-answer only, no outbound dialing
+  callHoursStart      Int? // local hour 0-23; null = no restriction
+  callHoursEnd        Int?
+  outboundEnabled     Boolean  @default(false) // ships off — see LLM.md geo/compliance note on GSM-gateway marketing risk
+
+  // Follow-up to §34 (LLM.md, 2026-09-14): which Dinstar UC2000 GSM SIM
+  // port this agent answers inbound calls on. Nullable = "not assigned to
+  // a GSM port yet" (internal-dial-only via [ai-agent-internal]; never
+  // reached by [from-dinstar]'s inbound path). 1-4, matching
+  // WaInstance.simPort's exact numbering convention/hardware ceiling
+  // ("the Dinstar hardware ceiling is 4" — WaInstance's own doc comment) —
+  // deliberately reused rather than inventing a second port-numbering
+  // scheme for the same physical hardware. The @@unique below is what lets
+  // more than one AiAgent be enabled per tenant (one per port) without
+  // reopening the cross-tenant single-enabled-agent guard in
+  // api/admin/ai/agents/route.ts — Postgres unique indexes treat multiple
+  // NULLs as non-conflicting, so any number of not-yet-port-assigned
+  // agents coexist fine; only a real port collision on the same tenant is
+  // rejected at the DB layer (caught and turned into a 409 in the API).
+  dinstarPort Int?
+
+  // --- AI -> human escalation (2026-09-14 follow-up to §34/§34.1) ---------
+  // Ships OFF, same polarity as outboundEnabled/dinstarPort above: an agent
+  // must be explicitly opted in before the sidecar is ever told it may
+  // escalate. See ~/.claude/plans/we-have-succeesfully-forked-crispy-petal.md
+  // (LLM.md §34.2) for the full design — this is Workstream F only, the
+  // schema/API/UI half; the AMI orchestration that actually performs the
+  // hold/dial/conference-merge (Workstream C/D) does not exist yet, so
+  // flipping this on today enables the LLM to call request_human_handoff
+  // (logged, per main.py) but nothing acts on it until that lands.
+  escalationEnabled Boolean @default(false)
+  // "NUMBER" | "EXTENSION" | null (no target configured). NUMBER is the
+  // owner's primary requirement (dial out over the GSM trunk from the AI's
+  // own extension, never a PJSIP extension transfer) but is gated live by a
+  // real hardware limit: only 1 Dinstar SIM is active today, and a second
+  // outbound call on the same trunk gets a 503 (src/lib/transfer-guard.ts's
+  // live-confirmed SIP trace) — see the plan's GSM_TRUNK_CAPACITY guard.
+  // EXTENSION costs no GSM channel and always works; it exists precisely as
+  // the safe path while SIM capacity is unresolved.
+  handoffTargetKind String?
+  // E.164, validated at the API layer. Populated only when
+  // handoffTargetKind = "NUMBER".
+  handoffNumberE164 String?
+  // Must resolve to a same-tenant Extension with agentType = "HUMAN" —
+  // validated in api/admin/ai/agents/[id]/route.ts, mirroring the existing
+  // CREDENTIAL_ID_FIELDS cross-tenant/typo check in that same file.
+  // Populated only when handoffTargetKind = "EXTENSION". Named relation
+  // because Extension already has an unnamed 1:1 back-relation to AiAgent
+  // (its OWN extension, `extension`/`extensionId` above) — this is a
+  // different, optional many-to-one relation (many agents may point at the
+  // same human extension as their escalation target).
+  handoffExtensionId String?
+  handoffExtension   Extension? @relation("AiAgentHandoffExtension", fields: [handoffExtensionId], references: [id])
+
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions AiCallSession[]
+
+  @@unique([tenantId, dinstarPort])
+  @@index([tenantId])
+  @@index([handoffExtensionId])
+}
+
+// One row per tenant+provider credential. The key is encrypted at rest with
+// the same AES-256-GCM scheme as AppSetting (src/lib/settings/crypto.ts) —
+// reused rather than reinvented; see that file's header for the stored
+// format and failure mode. Never returned to the browser after creation.
+model AiProviderCredential {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  provider     String // "openai" | "anthropic" | "gemini" | "groq" | "deepgram" | "elevenlabs" | "cartesia" | "sarvam" | "assemblyai" | "azure" | "ultravox" | "openai_compatible" | ...
+  label        String // admin-facing name, e.g. "Production OpenAI key"
+  apiKeyCipher String // iv:tag:ciphertext, see src/lib/settings/crypto.ts
+  region       String? // data-residency pin, e.g. "asia-south1", "me-central1" (LLM.md geo/compliance note)
+  baseUrl      String? // for the generic OpenAI-compatible adapter (OpenRouter, Together, Azure OpenAI, Sarvam-M)
+  cachedModels Json? // last successful listModels() result, shape {id, kind, capabilities}[]
+  fetchedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, provider, label])
+  @@index([tenantId])
+}
+
+// One row per AI-handled call. Linked to the existing CDR by Asterisk's
+// uniqueId rather than a hard FK — the CDR listener (scripts/ami-cdr-listener.mjs)
+// and the sidecar's session POST are two independent writers racing on the
+// same call, and neither should block on the other's row existing yet.
+model AiCallSession {
+  id                 String  @id @default(cuid())
+  tenantId           String
+  tenant             Tenant  @relation(fields: [tenantId], references: [id])
+  aiAgentId          String
+  aiAgent            AiAgent @relation(fields: [aiAgentId], references: [id])
+  cdrUniqueId        String // matches CallDetailRecord.uniqueId once the CDR listener catches up
+  transcript         Json? // ordered [{role, text, at}]
+  summary            String? @db.Text
+  latencyMsP50       Int?
+  latencyMsP95       Int?
+  costTokensInput    Int?
+  costTokensOutput   Int?
+  outcome            String? // "completed" | "handed_off" | "dropped" | "error"
+  handoffExtensionId String? // set when the AI transferred to a human extension
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([cdrUniqueId])
+  @@index([aiAgentId])
 }
 
 model Queue {
@@ -724,6 +901,45 @@ model DoNotCallEntry {
   createdAt  DateTime @default(now())
 
   @@unique([tenantId, numberE164])
+  @@index([tenantId])
+}
+
+// Caller-ID routing rules — independently designed (not derived from any
+// third-party project's schema or code) equivalent of "known callers always
+// reach a human, known-bad callers are always refused, everyone else meets
+// the AI" for inbound Dinstar calls. See func_odbc.conf's
+// [CALLER_ROUTING_ACTION] and extensions.conf's [from-dinstar] `s` extension
+// for where this is actually consulted, ahead of AI_INBOUND_EXTENSION().
+//
+// Three outcomes, not just DoNotCallEntry's implicit "block" — PASS routes
+// straight to the human queue even on a Dinstar port an AI agent would
+// otherwise answer; BLOCK refuses the call outright, independent of and in
+// addition to DNC (a DNC entry is about outbound compliance, not "will not
+// answer this inbound caller"); AI is the explicit opt-in that behaves
+// exactly like having no rule at all (kept as a real action, not just
+// "absence of a rule", so an admin can override a broader-prefix rule for
+// one specific number without deleting it).
+enum CallerRoutingAction {
+  PASS
+  BLOCK
+  AI
+}
+
+model CallerRoutingRule {
+  id        String              @id @default(cuid())
+  tenantId  String
+  tenant    Tenant              @relation(fields: [tenantId], references: [id])
+  // E.164, or a prefix ending in "*" (e.g. "+9715*") — same convention
+  // DoNotCallEntry's numberE164 field family already uses elsewhere in this
+  // schema, so an admin who has used the DNC list already knows the syntax.
+  // Longest-prefix-wins matching lives in src/lib/caller-routing.ts (pure,
+  // unit-tested) and is mirrored in the ODBC function's SQL ORDER BY.
+  pattern   String
+  action    CallerRoutingAction
+  note      String?
+  createdAt DateTime            @default(now())
+
+  @@unique([tenantId, pattern])
   @@index([tenantId])
 }
 
@@ -1266,20 +1482,20 @@ model CallDisposition {
 // ===========================================================================
 
 model Company {
-  id        String    @id @default(cuid())
+  id        String        @id @default(cuid())
   tenantId  String
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  tenant    Tenant        @relation(fields: [tenantId], references: [id])
   name      String
   domain    String?
   phone     String?
   address   String?
   ownerId   String?
-  owner     User?     @relation("CompanyOwner", fields: [ownerId], references: [id])
-  contacts  Contact[] @relation("CompanyContacts")
+  owner     User?         @relation("CompanyOwner", fields: [ownerId], references: [id])
+  contacts  Contact[]     @relation("CompanyContacts")
   deals     Deal[]
   notes     CompanyNote[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   @@index([ownerId])
   @@index([name])

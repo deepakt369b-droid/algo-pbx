@@ -64,6 +64,18 @@ export const TENANCY_TABLES: readonly string[] = [
   // with a NOT NULL tenantId and need no backfill of their own.
   "UserVpnProfile",
   "CompanyNote",
+  // Premium "Hybrid AI + Human" plan (2026-09-14). Kept in sync with
+  // src/lib/tenancy/scope-rules.ts's TENANT_SCOPED_MODELS. All three are
+  // created AFTER the tenancy backfill migration, so they start life with
+  // a NOT NULL tenantId and need no backfill of their own.
+  "AiAgent",
+  "AiProviderCredential",
+  "AiCallSession",
+  // Caller-ID routing rules (2026-09-14). Kept in sync with
+  // src/lib/tenancy/scope-rules.ts's TENANT_SCOPED_MODELS. Created AFTER the
+  // tenancy backfill migration, so it starts life with a NOT NULL tenantId
+  // and needs no backfill of its own.
+  "CallerRoutingRule",
 ];
 
 // Platform-global tables (plan §1/§7) — never get a tenantId. Listed here
