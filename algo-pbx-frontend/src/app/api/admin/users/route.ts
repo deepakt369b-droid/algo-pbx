@@ -13,6 +13,7 @@ import { withApiErrorHandler } from "@/lib/api-handler";
 import { normalizeToE164 } from "@/lib/phone-normalize";
 import { getAmiClient } from "@/lib/ami-client";
 import { addQueueMember } from "@/lib/queue-membership";
+import { assertSeatAvailable, SeatLimitError } from "@/lib/platform/seat-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -180,6 +181,20 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     extensionNumber = (await nextFreeExtensionNumber(db)) ?? undefined;
     if (!extensionNumber) {
       return NextResponse.json({ error: `No free extension number in ${AUTO_EXTENSION_RANGE.start}-${AUTO_EXTENSION_RANGE.end}.` }, { status: 409 });
+    }
+  }
+
+  // Seat guard (hybrid AI + human plan) — only relevant when this request
+  // will actually provision an Extension row; a plain user-with-no-extension
+  // create never consumes a seat.
+  if (extensionNumber) {
+    try {
+      await assertSeatAvailable(guard.session.user.tenantId);
+    } catch (err) {
+      if (err instanceof SeatLimitError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      throw err;
     }
   }
 

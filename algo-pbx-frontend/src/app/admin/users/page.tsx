@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/client/api";
+import { isSeatMeterFull } from "@/app/admin/ai-agents/agent-eligibility";
+
+interface SeatUsage {
+  seatsTotal: number;
+  seatsUsed: number;
+  seatsAvailable: number;
+}
 
 interface UserRow {
   id: string;
@@ -36,9 +44,26 @@ interface WaInstanceOption {
 // exist). Either path can also allocate an extension and a WhatsApp SIM
 // port in the same request.
 export default function UsersPage() {
+  const router = useRouter();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [waInstances, setWaInstances] = useState<WaInstanceOption[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Hybrid AI + Human plan (W7) — the Human|AI chooser only shows when the
+  // tenant's plan includes `aiAgents` (src/lib/platform/plan-catalog.ts).
+  // Both `plan` and `seatUsage` come from GET /api/admin/ai/agents (this
+  // pass's new route — see its header): that route already computes
+  // getSeatUsage() server-side for its own seat meter, and reusing it here
+  // avoids adding a second endpoint just to answer "does this tenant's
+  // plan allow AI agents". A SUPERVISOR viewing this page (requireStaffSession
+  // allows it, but /api/admin/ai/agents is requireAdminSession-only) simply
+  // never sees the AI option — same fail-closed behavior as a load error.
+  const [accountType, setAccountType] = useState<"HUMAN" | "AI">("HUMAN");
+  const [planHasAiAgents, setPlanHasAiAgents] = useState(false);
+  const [seatUsage, setSeatUsage] = useState<SeatUsage | null>(null);
+  const [aiName, setAiName] = useState("");
+  const [aiExtensionNumber, setAiExtensionNumber] = useState("");
+  const [creatingAi, setCreatingAi] = useState(false);
 
   const [mode, setMode] = useState<"invite" | "password">("invite");
   const [email, setEmail] = useState("");
@@ -66,11 +91,44 @@ export default function UsersPage() {
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "Could not load users.");
     }
+    // Best-effort, separate from the load above: a SUPERVISOR session (or
+    // any failure here) just leaves the AI chooser hidden rather than
+    // failing this page's main user list.
+    try {
+      const ai = await apiFetch<{ planHasAiAgents: boolean; seatUsage: SeatUsage }>("/api/admin/ai/agents");
+      setPlanHasAiAgents(ai.planHasAiAgents);
+      setSeatUsage(ai.seatUsage);
+    } catch {
+      setPlanHasAiAgents(false);
+      setSeatUsage(null);
+    }
   };
 
   useEffect(() => {
     load();
   }, []);
+
+  const createAiAgent = async () => {
+    setCreatingAi(true);
+    setMessage(null);
+    try {
+      const data = await apiFetch<{ agent: { id: string } }>("/api/admin/ai/agents", {
+        method: "POST",
+        body: { name: aiName, extensionNumber: aiExtensionNumber },
+      });
+      setAiName("");
+      setAiExtensionNumber("");
+      // The quick-create form only collects a name + extension — everything
+      // else (prompt, providers, compliance fields) is configured in the
+      // agent editor, so send the admin straight there.
+      router.push(`/admin/ai-agents/${data.agent.id}`);
+    } catch (err) {
+      setMessageKind("error");
+      setMessage(err instanceof ApiError ? err.message : "Could not create this AI agent.");
+    } finally {
+      setCreatingAi(false);
+    }
+  };
 
   const freePorts = waInstances.filter((w) => !w.assignedUser);
   // ADMIN accounts don't get an extension/SIM port/WhatsApp OTP and are
@@ -234,6 +292,57 @@ export default function UsersPage() {
         </div>
       )}
 
+      {planHasAiAgents && (
+        <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
+          <div className="flex gap-2 text-xs">
+            {(["HUMAN", "AI"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setAccountType(t)}
+                className={`flex-1 rounded-lg border px-2 py-1.5 ${accountType === t ? "border-cyan text-cyan" : "border-border text-secondary"}`}
+              >
+                {t === "HUMAN" ? "Human agent" : "AI agent"}
+              </button>
+            ))}
+          </div>
+          {seatUsage && (
+            <p className="text-xs text-tertiary" data-testid="seat-meter">
+              Seats: {seatUsage.seatsUsed} / {seatUsage.seatsTotal} used
+              {isSeatMeterFull(seatUsage) && <span className="text-danger"> — no seats available</span>}
+            </p>
+          )}
+        </div>
+      )}
+
+      {accountType === "AI" && planHasAiAgents ? (
+        <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">New AI agent</h2>
+          <p className="text-xs text-tertiary">
+            AI extensions have no login/password — just a name and an extension number. Prompt, providers,
+            and compliance settings are configured next, in the agent editor.
+          </p>
+          <input
+            value={aiName}
+            onChange={(e) => setAiName(e.target.value)}
+            placeholder="Agent name, e.g. Riya (Support Bot)"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
+          />
+          <input
+            value={aiExtensionNumber}
+            onChange={(e) => setAiExtensionNumber(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            placeholder="Extension, e.g. 1050"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyan"
+          />
+          <button
+            onClick={createAiAgent}
+            disabled={creatingAi || !aiName.trim() || !/^[12]\d{3}$/.test(aiExtensionNumber) || (seatUsage ? isSeatMeterFull(seatUsage) : false)}
+            className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
+          >
+            {creatingAi ? "Creating…" : "Create AI agent"}
+          </button>
+          {message && <p className={`text-xs ${messageKind === "error" ? "text-danger" : "text-tertiary"}`}>{message}</p>}
+        </div>
+      ) : (
       <div className="glass-card flex w-full max-w-md flex-col gap-3 p-6">
         <div className="flex gap-2 text-xs">
           <button
@@ -344,7 +453,13 @@ export default function UsersPage() {
 
         <button
           onClick={create}
-          disabled={creating || !email.trim() || !name.trim() || (mode === "password" && password.length < 12)}
+          disabled={
+            creating ||
+            !email.trim() ||
+            !name.trim() ||
+            (mode === "password" && password.length < 12) ||
+            (extensionMode !== "none" && seatUsage ? isSeatMeterFull(seatUsage) : false)
+          }
           className="rounded-lg bg-cyan px-4 py-2 text-sm font-medium text-accent-fg disabled:opacity-50"
         >
           {creating ? "Creating…" : "Create user"}
@@ -371,6 +486,7 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+      )}
 
       <div className="glass-card w-full max-w-md p-6">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-secondary">

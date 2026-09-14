@@ -13,6 +13,13 @@ secrets*.txt
 # Local Docker overrides (per-machine ports, etc.)
 docker-compose.override.yml
 
+# Python bytecode cache (ai-voice-agent/) — machine/interpreter-specific,
+# never meant to be committed. Caught once already (2026-09-14) when a
+# `git add` on the whole ai-voice-agent/ tree swept these up alongside the
+# real source.
+__pycache__/
+*.pyc
+
 # Asterisk runtime data
 recordings/*
 !recordings/.gitkeep

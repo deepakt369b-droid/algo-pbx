@@ -135,10 +135,33 @@ function toIso(asteriskTimestamp: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+// AI -> human escalation (LLM.md §34.2): the AI's own conference-leg media
+// channel is a Local channel Originated as `Local/ai@ai-conference-leg/n`
+// (src/app/api/internal/ai/escalate/route.ts) - Asterisk emits its own Cdr
+// event for that Local channel pair, same as it does for every channel, but
+// it is not a real call a human ever placed or answered and would show up
+// as a phantom row in call history/reports if ingested. Filtered by the
+// resolved channel-name prefix (the one part of this we fully control,
+// since we chose it in the Originate action) rather than dcontext - which
+// half of the Local pair reports which dcontext value is exactly the kind
+// of AMI-event-field assumption this file's own header already flags as
+// "probable, not proven" for ordinary calls, so it's not a foundation worth
+// building a filter on.
+const AI_CONFERENCE_LEG_CHANNEL_PREFIX = "Local/ai@ai-conference-leg";
+
+function isAiConferenceLegChannel(event: Pick<AmiCdrEvent, "Channel" | "DestinationChannel">): boolean {
+  return (
+    (event.Channel ?? "").startsWith(AI_CONFERENCE_LEG_CHANNEL_PREFIX) ||
+    (event.DestinationChannel ?? "").startsWith(AI_CONFERENCE_LEG_CHANNEL_PREFIX)
+  );
+}
+
 export function mapCdrEventToIngestPayload(
   event: AmiCdrEvent,
   opts: { sourceContext?: string; recordingUrlBase?: string } = {}
 ): CdrIngestPayload | null {
+  if (isAiConferenceLegChannel(event)) return null;
+
   const uniqueId = event.UniqueID;
   const startedAt = toIso(event.StartTime);
   if (!uniqueId || !startedAt) return null; // can't ingest a row with no key or no start time

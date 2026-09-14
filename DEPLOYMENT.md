@@ -102,6 +102,19 @@ fully non-interactive deploy — every one of those is configurable from
 `/admin/settings` after first login, and takes effect immediately with no
 restart when set there.
 
+**Premium "Hybrid AI + Human" plan (LLM.md §34, not yet go-live verified —
+see GO_LIVE_CHECKLIST.md's Gate 2b before selling it):** add
+`AI_SIDECAR_SHARED_SECRET` (`openssl rand -hex 32`) — it authenticates BOTH
+directions between the Next.js app and the new `ai-voice-agent` sidecar
+service (`x-internal-secret` header). The sidecar binds `127.0.0.1:9091`/
+`9092` by default under `network_mode: host`; do not change those defaults
+to `0.0.0.0` without also adding your own auth/firewalling — the shared
+secret alone is what stands between the pre-registration endpoint and the
+public internet on a host-networked container. Tenant admins bring their
+own AI provider API keys (OpenAI, Anthropic, Gemini, etc.) from
+`/admin/settings` after login; nothing AI-related needs to go in `.env`
+beyond the shared secret.
+
 ### TLS certificates (required before any call or HTTPS works)
 
 One certificate pair serves everything: Caddy (443), Asterisk WSS (8089),

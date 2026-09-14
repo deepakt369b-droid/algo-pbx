@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AiProvidersSection } from "./ai-providers-section";
 
 interface SettingRow {
   key: string;
@@ -210,6 +211,8 @@ export default function SettingsPage() {
           )}
         </div>
       ))}
+
+      <AiProvidersSection />
     </div>
   );
 }

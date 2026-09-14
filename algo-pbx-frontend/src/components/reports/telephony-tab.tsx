@@ -127,6 +127,45 @@ function AgentHours() {
   );
 }
 
+// AI-handled call count for the shared filter range — see
+// GET /api/admin/ai/call-sessions's "summary" mode (new for W7's CDR/reports
+// merge). Deliberately its own tiny fetch rather than routed through
+// useReportQuery, which expects a `{ rows: T[] }` shape; this endpoint
+// returns a single `{ count }`.
+function AiCallsCard({ filters }: { filters: ReportFilterState }) {
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams({ summary: "1" });
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    fetch(`/api/admin/ai/call-sessions?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled) setCount(data?.count ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.from, filters.to]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>AI-handled calls</CardTitle>
+        <p className="text-[13px] text-secondary">Calls answered by an AI agent in this range.</p>
+      </CardHeader>
+      <CardContent>
+        {count === null ? <Skeleton className="h-8 w-16" /> : <p className="text-2xl font-semibold text-primary">{count}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function TelephonyTab({ filters }: { filters: ReportFilterState }) {
   const { rows, loading } = useReportQuery<VolumeRow>(
     "/api/admin/reports/call-volume",
@@ -136,6 +175,7 @@ export function TelephonyTab({ filters }: { filters: ReportFilterState }) {
   return (
     <div className="flex flex-col gap-4">
       <AgentHours />
+      <AiCallsCard filters={filters} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>

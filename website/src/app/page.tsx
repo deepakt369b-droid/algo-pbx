@@ -66,32 +66,40 @@ export default function HomePage() {
 
       {/* Pricing */}
       <Section id="pricing">
-        <SectionHeading eyebrow="Pricing" title="One plan, no surprises" />
-        <div className="mx-auto mt-12 max-w-md">
-          <div className="card p-8">
-            <h3 className="text-lg font-semibold text-primary">{pricing.planName}</h3>
-            <p className="mt-4 flex items-baseline gap-1">
-              <span className="text-4xl font-semibold text-primary">
-                AED {pricing.priceAed}
-              </span>
-              <span className="text-secondary">/ month</span>
-            </p>
-            <p className="mt-1 text-sm text-tertiary">{pricing.billingNote}</p>
-            <ul className="mt-6 space-y-3">
-              {pricing.bullets.map((b) => (
-                <li key={b} className="flex items-start gap-2 text-sm text-secondary">
-                  <Check size={16} className="mt-0.5 shrink-0 text-accent" />
-                  {b}
-                </li>
-              ))}
-            </ul>
-            <a
-              href={`mailto:${contactEmail}`}
-              className="mt-8 block rounded-[var(--radius)] bg-accent px-6 py-3 text-center text-sm font-medium text-accent-fg hover:bg-accent-hover"
+        <SectionHeading eyebrow="Pricing" title="Plans for human and hybrid AI teams" />
+        <div className="mx-auto mt-12 grid max-w-4xl gap-8 sm:grid-cols-2">
+          {pricing.map((plan) => (
+            <div
+              key={plan.planName}
+              className={`card p-8 ${plan.highlighted ? "border-accent ring-1 ring-accent" : ""}`}
             >
-              Contact to onboard
-            </a>
-          </div>
+              <h3 className="text-lg font-semibold text-primary">{plan.planName}</h3>
+              {plan.tagline ? (
+                <p className="mt-1 text-sm font-medium text-accent">{plan.tagline}</p>
+              ) : null}
+              <p className="mt-4 flex items-baseline gap-1">
+                <span className="text-4xl font-semibold text-primary">
+                  AED {plan.priceAed}
+                </span>
+                <span className="text-secondary">/ month</span>
+              </p>
+              <p className="mt-1 text-sm text-tertiary">{plan.billingNote}</p>
+              <ul className="mt-6 space-y-3">
+                {plan.bullets.map((b) => (
+                  <li key={b} className="flex items-start gap-2 text-sm text-secondary">
+                    <Check size={16} className="mt-0.5 shrink-0 text-accent" />
+                    {b}
+                  </li>
+                ))}
+              </ul>
+              <a
+                href={`mailto:${contactEmail}`}
+                className="mt-8 block rounded-[var(--radius)] bg-accent px-6 py-3 text-center text-sm font-medium text-accent-fg hover:bg-accent-hover"
+              >
+                Contact to onboard
+              </a>
+            </div>
+          ))}
         </div>
       </Section>
 

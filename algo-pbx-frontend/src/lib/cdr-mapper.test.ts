@@ -143,4 +143,33 @@ describe("mapCdrEventToIngestPayload", () => {
     });
     expect(payload?.callerNumber).toBe("1002");
   });
+
+  // AI -> human escalation (LLM.md §34.2) - the AI's own conference-leg
+  // Local channel must never surface as a phantom call-history row.
+  it("filters out the AI conference leg's own Cdr event by Channel", () => {
+    const payload = mapCdrEventToIngestPayload({
+      UniqueID: "1.1",
+      Channel: "Local/ai@ai-conference-leg-00000001;1",
+      StartTime: "2026-08-24 10:00:00",
+    });
+    expect(payload).toBeNull();
+  });
+
+  it("filters out the AI conference leg's own Cdr event by DestinationChannel", () => {
+    const payload = mapCdrEventToIngestPayload({
+      UniqueID: "1.1",
+      DestinationChannel: "Local/ai@ai-conference-leg-00000001;2",
+      StartTime: "2026-08-24 10:00:00",
+    });
+    expect(payload).toBeNull();
+  });
+
+  it("does not filter a real call whose channel merely contains 'ai' elsewhere", () => {
+    const payload = mapCdrEventToIngestPayload({
+      UniqueID: "1.1",
+      Channel: "PJSIP/1002-00000001",
+      StartTime: "2026-08-24 10:00:00",
+    });
+    expect(payload).not.toBeNull();
+  });
 });

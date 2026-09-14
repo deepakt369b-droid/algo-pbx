@@ -33,18 +33,36 @@ export const features = [
   },
 ];
 
-export const pricing = {
-  planName: "Standard",
-  priceAed: 500,
-  seatsIncluded: 4,
-  billingNote: "Manual invoicing — no card required, no self-serve checkout.",
-  bullets: [
-    "4 agent seats included",
-    "Full PBX, CRM, and WhatsApp/SMS inbox",
-    "Call recording with configurable retention",
-    "Additional seats available on request",
-  ],
-};
+export const pricing = [
+  {
+    planName: "Standard",
+    priceAed: 500,
+    seatsIncluded: 4,
+    billingNote: "Manual invoicing — no card required, no self-serve checkout.",
+    highlighted: false,
+    bullets: [
+      "4 agent seats included",
+      "Full PBX, CRM, and WhatsApp/SMS inbox",
+      "Call recording with configurable retention",
+      "Additional seats available on request",
+    ],
+  },
+  {
+    planName: "Premium",
+    tagline: "Hybrid AI + Human",
+    priceAed: 800,
+    seatsIncluded: 4,
+    billingNote: "Manual invoicing — no card required, no self-serve checkout.",
+    highlighted: true,
+    bullets: [
+      "4 ports included — each can be a human agent or an AI voice agent",
+      "AI voice agents are managed by the admin, no login needed",
+      "Bring your own AI provider keys (OpenAI, Gemini, Sarvam, Deepgram, ElevenLabs, and more)",
+      "Calls placed over your GSM gateway — no cloud phone numbers needed",
+      "AI call transcripts land in the same reports and CRM as human calls",
+    ],
+  },
+];
 
 export const faq = [
   {
@@ -57,7 +75,7 @@ export const faq = [
   },
   {
     q: "How does the pricing work?",
-    a: "One plan: AED 500 per month, including 4 seats, invoiced manually. There is no self-serve signup yet — contact us and we'll get you onboarded.",
+    a: "Two plans, both invoiced manually with no self-serve signup: Standard is AED 500 per month for 4 agent seats. Premium (Hybrid AI + Human) is AED 800 per month for 4 ports, where each port can be a human agent or an AI voice agent you configure with your own AI provider keys. Contact us and we'll get you onboarded.",
   },
   {
     q: "How do you access our data or system for support?",

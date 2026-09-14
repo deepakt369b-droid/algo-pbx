@@ -117,6 +117,41 @@ So, with a live stack:
 - [ ] Sensitive-SMS flow: an inbound OTP-shaped SMS hides its body from
       agents; request→approve reveals it time-boxed.
 
+## Gate 2b — Hybrid AI + Human plan (LLM.md §34) — NOT live-verified, do not sell yet
+
+Built as a task graph with a post-build fix round (dead-air dialplan wiring,
+sidecar exposed with no auth, SSRF via provider baseUrl — see §34 for the
+full list). Two things are honest gaps, not oversights:
+
+- [ ] **BLOCKER** Wire `ai-voice-agent/pipeline/registry.py` into
+      `main.py`'s AudioSocket connection handler. Today a call answers and
+      produces silence — the providers exist and are unit-tested, but
+      nothing calls them per-call yet.
+- [ ] **BLOCKER** Place one real inbound call to an AI-enabled extension
+      against a LIVE Asterisk instance. Verify: `CURL()`/`AudioSocket()`
+      dialplan syntax actually works (never tested against a live
+      instance — same caveat this file already carries for `DNC_CHECK`);
+      the greeting plays with the automated-call disclosure; a transcript
+      lands in the CDR drawer and CRM timeline; a mid-call handoff reaches
+      the human queue.
+- [ ] **BLOCKER** Stop the `ai-voice-agent` sidecar and place an inbound
+      GSM call to the same route. Confirm it falls through to the normal
+      human queue (the fail-open-to-human dialplan design) rather than
+      dropping the call.
+- [ ] Confirm only one tenant across this Asterisk instance has an enabled
+      AI agent (`POST/PATCH /api/admin/ai/agents` enforces this — verify
+      it actually rejects a second tenant, don't just trust the code).
+      There is no per-DID routing yet; this is a hard product limit until
+      that's built, not a bug to route around.
+- [ ] **Do not flip any `AiAgent.outboundEnabled` to true** until
+      `checkOutbound()` (India TRAI 140/1600 + DND, UAE TDRA DNCR +
+      09:00–18:00 window) is actually wired into whatever originates the
+      outbound call. It is unit-tested but currently uncalled by any real
+      code path.
+- [ ] Create a 5th extension on a 4-seat tenant and confirm it 409s.
+- [ ] Paste a real OpenAI and a real Groq key into Settings → AI providers
+      and confirm their model lists populate (live model-fetch smoke test).
+
 ## Gate 3 — Compliance sign-offs (human decisions, carried unresolved)
 
 - [ ] **DNC fail-open**: dialplan allows calls if ODBC errors. Accepted?
@@ -130,6 +165,11 @@ So, with a live stack:
       the chosen UAE carrier.
 - [ ] WhatsApp unofficial-engine ban risk acknowledged; `OTP_WA_INSTANCE_ID`
       isolation decided (dedicate one SIM to OTP or not).
+- [ ] **AI automated marketing calls via a GSM gateway** (LLM.md §34):
+      confirm this is never enabled for outbound before India
+      TRAI/UAE TDRA sign-off — sending automated calls through consumer
+      SIMs risks the numbers being blocked or breaching carrier/telecom
+      rules in either jurisdiction.
 
 ## Gate 4 — Operations
 

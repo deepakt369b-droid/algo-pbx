@@ -6,6 +6,7 @@ import { requireStaffSession } from "@/lib/auth-guard";
 import { regeneratePjsipConfigAndReload } from "@/lib/pjsip-provision";
 import { regenerateVoicemailConfigAndReload } from "@/lib/voicemail-provision";
 import { withApiErrorHandler } from "@/lib/api-handler";
+import { assertSeatAvailable, SeatLimitError } from "@/lib/platform/seat-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,11 @@ export const GET = withApiErrorHandler(async function GET() {
       id: true,
       number: true,
       kind: true,
+      // "HUMAN" | "AI" — read-only here. Included so callers like the AI
+      // agent editor's escalation-target picker (LLM.md §34.2) can filter
+      // to HUMAN extensions client-side without a second endpoint; this
+      // route already returns every tenant extension regardless of type.
+      agentType: true,
       status: true,
       dialPermission: true,
       lastSeenAt: true,
@@ -76,6 +82,18 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
   const parsed = CreateExtensionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  // Seat guard (hybrid AI + human plan) — this route provisions an Extension
+  // unconditionally, so the check runs on every request rather than being
+  // gated on a flag (contrast with /api/admin/users's conditional check).
+  try {
+    await assertSeatAvailable(guard.session.user.tenantId);
+  } catch (err) {
+    if (err instanceof SeatLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
   }
 
   // A digest-usable secret, NOT the same concept as a user's bcrypt-hashed

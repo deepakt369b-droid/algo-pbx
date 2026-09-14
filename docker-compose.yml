@@ -256,6 +256,22 @@ services:
       # on the listener's own service block) isAuthorizedIngest() reads
       # undefined and every ingest 401s.
       GATEWAY_INGEST_SECRET: "${GATEWAY_INGEST_SECRET}"
+      # Auth for src/app/api/internal/ai/** — isAuthorizedInternalAiRequest()
+      # checks incoming `x-internal-secret` headers against this. Found
+      # missing here during the AI-escalation work (LLM.md §34.2): the
+      # `ai-voice-agent` service below already sets this same value (its own
+      # comment on that line explains why the two must match), but `web`
+      # never had it in ITS OWN environment block — so every request the
+      # sidecar sent to /api/internal/ai/agent-config and
+      # /api/internal/ai/sessions was 401ing (isAuthorizedInternalAiRequest
+      # fails closed on an unset var), same class of bug the
+      # GATEWAY_INGEST_SECRET comment above already warns about for a
+      # different route. Same value, set on both services.
+      AI_SIDECAR_SHARED_SECRET: "${AI_SIDECAR_SHARED_SECRET}"
+      # AI -> human escalation's GSM capacity guard (LLM.md §34.2) — see
+      # .env.example's comment. Only src/app/api/internal/ai/escalate/route.ts
+      # reads this.
+      GSM_TRUNK_CAPACITY: "${GSM_TRUNK_CAPACITY:-1}"
       # Unattended cron auth for POST /api/admin/messaging/sms/poll — see
       # .env.example's crontab line.
       SMS_POLL_SECRET: "${SMS_POLL_SECRET}"
@@ -471,6 +487,57 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - algo-net
+    depends_on:
+      web:
+        condition: service_healthy
+
+  # 5e. ai-voice-agent — Hybrid AI + Human plan sidecar (LLM.md decision,
+  # 2026-09-14). Speaks Asterisk's AudioSocket protocol
+  # (extensions.conf's [from-dinstar-ai]/[ai-agent-internal] contexts) plus
+  # an HTTP pre-registration API, on the fixed 9092/9091 ports declared in
+  # .agents/hybrid-ai/contracts.md — do not renumber. Builds from
+  # ai-voice-agent/Dockerfile (this node's skeleton; the Python source
+  # itself is W4's, landing in parallel — see that Dockerfile's header).
+  #
+  # network_mode: host, NOT the algo-net bridge — same reasoning as
+  # `asterisk`/`coturn`/`openvpn-server` above and the hard constraint in
+  # CLAUDE.md/LLM.md §2 (Asterisk's networking is never containerized):
+  # this sidecar must reach 127.0.0.1:9092/9091, the SAME loopback address
+  # `asterisk` (also network_mode: host) binds AudioSocket on — a bridge
+  # network would only ever give this container a private 172.x address
+  # with no route to Asterisk's actual host-namespace loopback.
+  #
+  # Talks to `web`'s internal AI-config/session-report API
+  # (.agents/hybrid-ai/contracts.md's GET /api/internal/ai/agent-config,
+  # POST /api/internal/ai/sessions) over the SAME 127.0.0.1:3000 `web`'s
+  # own `ports:` block publishes — host networking makes that directly
+  # reachable here, identical to how gateway-syslog-listener (also
+  # network_mode: host) reaches `web` below, rather than algo-net DNS.
+  # AI_SIDECAR_SHARED_SECRET must equal whatever `web` checks incoming
+  # `x-internal-secret` headers against for those routes.
+  ai-voice-agent:
+    build:
+      context: ./ai-voice-agent
+      dockerfile: Dockerfile
+    container_name: algo-ai-voice-agent
+    restart: always
+    logging: *default-logging
+    network_mode: host
+    environment:
+      # Post-verification fix round (finding #3): these keys previously
+      # didn't match what main.py/config_client.py/session_reporter.py
+      # actually read via os.environ.get(...) — was AUDIOSOCKET_BIND_HOST,
+      # PREREGISTER_HTTP_PORT, NEXT_INTERNAL_API_BASE_URL. Coincidentally-
+      # matching defaults on both sides masked the mismatch; renamed here to
+      # the Python code's real names so a real reconfiguration (e.g.
+      # widening the bind host, or pointing at a non-default Next.js port)
+      # actually takes effect instead of silently no-op'ing.
+      AUDIOSOCKET_HOST: "127.0.0.1"
+      AUDIOSOCKET_PORT: "9092"
+      PREREG_HOST: "127.0.0.1"
+      PREREG_PORT: "9091"
+      NEXTJS_BASE_URL: "http://127.0.0.1:3000"
+      AI_SIDECAR_SHARED_SECRET: "${AI_SIDECAR_SHARED_SECRET}"
     depends_on:
       web:
         condition: service_healthy
