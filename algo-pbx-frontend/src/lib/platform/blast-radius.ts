@@ -113,3 +113,41 @@ export function extensionDialPermissionBlastRadius(
 ): string {
   return `This changes extension ${extensionNumber}'s dial permission to ${dialPermission}.`;
 }
+
+/**
+ * Plan change — owner plan upgrade/downgrade feature. Unlike suspend/cut
+ * above, the actual risk here varies per change (a same-tier seat bump is
+ * nothing; losing aiAgents locks live agents), so this builds the sentence
+ * from `describePlanChange`'s own result rather than being a single fixed
+ * string. Mirrors that function's fields exactly — see plan-catalog.ts. */
+export function planChangeBlastRadius(
+  tenantName: string,
+  fromLabel: string,
+  toLabel: string,
+  change: {
+    direction: "upgrade" | "downgrade" | "same";
+    priceDeltaUsd: number;
+    featuresLost: string[];
+    aiAgentsToLock: number;
+  }
+): string {
+  const verb = change.direction === "upgrade" ? "Upgrades" : change.direction === "downgrade" ? "Downgrades" : "Changes";
+  const priceLine =
+    change.priceDeltaUsd === 0
+      ? "no price change"
+      : `${change.priceDeltaUsd > 0 ? "+" : "-"}$${Math.abs(change.priceDeltaUsd)}/mo`;
+  const base = `${verb} ${tenantName} from ${fromLabel} to ${toLabel} (${priceLine}).`;
+
+  if (change.featuresLost.includes("aiAgents") && change.aiAgentsToLock > 0) {
+    return (
+      `${base} This plan does not include AI agents: ${change.aiAgentsToLock} AI agent` +
+      `${change.aiAgentsToLock === 1 ? "" : "s"} will be locked (disabled) immediately — ` +
+      `their inbound calls fall through to the human queue, nothing is deleted, and re-enabling ` +
+      `them after a future upgrade is a manual step for the tenant admin.`
+    );
+  }
+  if (change.featuresLost.includes("aiAgents")) {
+    return `${base} This plan does not include AI agents — none are currently configured, so nothing is locked.`;
+  }
+  return base;
+}

@@ -5,7 +5,9 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { validateTenantSlug } from "@/lib/tenant/slug";
+import { PLAN_CATALOG, findPlan, isValidPlanChange } from "@/lib/platform/plan-catalog";
 
 // Create-tenant form.
 //
@@ -20,14 +22,16 @@ export function NewTenantForm({ baseDomain, reserved }: { baseDomain: string; re
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [plan, setPlan] = useState("standard");
-  const [seats, setSeats] = useState(5);
+  const [seats, setSeats] = useState(4);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const validation = slug ? validateTenantSlug(slug) : null;
   const slugError = validation && !validation.ok ? validation.error : null;
-  const canSubmit = Boolean(slug && name && reason.trim() && !slugError && !submitting);
+  const canSubmit = Boolean(
+    slug && name && reason.trim() && !slugError && !submitting && isValidPlanChange(plan, seats)
+  );
 
   async function submit() {
     if (!canSubmit) return;
@@ -93,7 +97,19 @@ export function NewTenantForm({ baseDomain, reserved }: { baseDomain: string; re
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="tplan">Plan</Label>
-            <Input id="tplan" value={plan} onChange={(e) => setPlan(e.target.value)} />
+            <Select
+              value={plan as (typeof PLAN_CATALOG)[number]["id"] | null}
+              onChange={(v) => {
+                setPlan(v);
+                const next = findPlan(v);
+                if (next) setSeats(Math.min(seats, next.seatCeiling) || next.seatCeiling);
+              }}
+              options={PLAN_CATALOG.map((p) => ({
+                value: p.id,
+                label: `${p.label} · up to ${p.seatCeiling} seats · $${p.monthlyPriceUsd}/seat/mo`,
+              }))}
+              aria-label="Plan"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tseats">Seats</Label>
@@ -101,9 +117,13 @@ export function NewTenantForm({ baseDomain, reserved }: { baseDomain: string; re
               id="tseats"
               type="number"
               min={1}
+              max={findPlan(plan)?.seatCeiling}
               value={seats}
               onChange={(e) => setSeats(Number(e.target.value))}
             />
+            {findPlan(plan) && (
+              <p className="text-[11px] text-tertiary">Ceiling for {findPlan(plan)!.label}: {findPlan(plan)!.seatCeiling} seats.</p>
+            )}
           </div>
         </div>
 

@@ -1,14 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ConfirmActionDialog } from "@/components/platform-shell/confirm-action-dialog";
-import { TELEPHONY_UNAFFECTED_NOTE } from "@/lib/platform/blast-radius";
-import { PLAN_CATALOG, findPlan } from "@/lib/platform/plan-catalog";
+import { TELEPHONY_UNAFFECTED_NOTE, planChangeBlastRadius } from "@/lib/platform/blast-radius";
+import { PLAN_CATALOG, findPlan, describePlanChange } from "@/lib/platform/plan-catalog";
 import { type SerialisedTenantDetail, type PlatformRole, fmtDate } from "./types";
 
 // Billing — manual-first, owner-overridable.
@@ -56,6 +56,25 @@ export function BillingTab({
   const [plan, setPlan] = useState(tenant.plan);
   const [seats, setSeats] = useState(tenant.seats);
 
+  // AI usage (Hybrid AI + Human plan, W7 task 5) — not part of
+  // SerialisedTenantDetail, so fetched separately from the small read-only
+  // route this pass added (see that route's own header for why).
+  const [aiUsage, setAiUsage] = useState<{ sessionCount: number; agentCount: number; periodDays: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/platform/tenants/${tenant.id}/ai-usage`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled) setAiUsage(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAiUsage(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant.id]);
+
   async function submit(reason: string) {
     const body: Record<string, unknown> = { action, reason };
     if (action === "mark_paid") body.paidUntil = new Date(`${paidUntil}T00:00:00.000Z`).toISOString();
@@ -79,6 +98,21 @@ export function BillingTab({
 
   const rung = RUNG_COPY[billing.rung];
 
+  // Best-effort client-side preview of what the server will actually decide —
+  // the authoritative check (and the real AiAgent lock) happens in the route,
+  // which has a real `aiAgent.count`. `aiUsage?.agentCount` is the closest
+  // number already being fetched on this tab; using it here is fine for
+  // messaging purposes even though it is not guaranteed to be the exact
+  // current row count.
+  const planChangePreview = describePlanChange({
+    fromPlanId: tenant.plan,
+    toPlanId: plan,
+    newSeats: seats,
+    extensionsInUse: detail.counts.extensions,
+    aiAgentCount: aiUsage?.agentCount ?? 0,
+  });
+  const seatsBelowUsage = seats < detail.counts.extensions;
+
   const dialogCopy: Record<Exclude<Action, null>, { title: string; blast: string; confirm: string }> = {
     mark_paid: {
       title: "Mark as paid",
@@ -92,7 +126,12 @@ export function BillingTab({
     },
     change_plan: {
       title: "Change plan and seats",
-      blast: `Changes ${tenant.name} from ${tenant.plan}/${tenant.seats} seats to ${plan}/${seats} seats. This changes what they are invoiced. It does not provision or remove any extension, and calls are NOT affected.`,
+      blast: planChangeBlastRadius(
+        tenant.name,
+        findPlan(tenant.plan)?.label ?? tenant.plan,
+        findPlan(plan)?.label ?? plan,
+        planChangePreview
+      ),
       confirm: "Change plan",
     },
     comp: {
@@ -129,6 +168,15 @@ export function BillingTab({
                 {tenant.paidUntil ? fmtDate(tenant.paidUntil) : "Not set (comped or trial)"}
               </dd>
             </div>
+            {aiUsage && (aiUsage.agentCount > 0 || aiUsage.sessionCount > 0) && (
+              <div className="flex justify-between border-b py-1.5 [border-color:rgb(var(--hairline))]">
+                <dt className="text-tertiary">AI usage (last {aiUsage.periodDays}d)</dt>
+                <dd className="text-primary" data-testid="ai-usage">
+                  {aiUsage.sessionCount} session{aiUsage.sessionCount === 1 ? "" : "s"} · {aiUsage.agentCount} agent
+                  {aiUsage.agentCount === 1 ? "" : "s"}
+                </dd>
+              </div>
+            )}
           </dl>
 
           {/* The ladder's current rung, stated explicitly rather than left
@@ -191,7 +239,14 @@ export function BillingTab({
                     <Label htmlFor="plan-select">Plan</Label>
                     <Select
                       value={plan as (typeof PLAN_CATALOG)[number]["id"] | null}
-                      onChange={(v) => setPlan(v)}
+                      onChange={(v) => {
+                        setPlan(v);
+                        // Auto-fill to the new plan's ceiling — still editable
+                        // below. Removes the prior trap of changing plan and
+                        // forgetting to also adjust seats.
+                        const next = findPlan(v);
+                        if (next) setSeats(next.seatCeiling);
+                      }}
                       options={PLAN_CATALOG.map((p) => ({
                         value: p.id,
                         label: `${p.label} · up to ${p.seatCeiling} seats · $${p.monthlyPriceUsd}/seat/mo`,
@@ -202,6 +257,16 @@ export function BillingTab({
                       <p className="text-[11px] text-warning">
                         Current plan &quot;{tenant.plan}&quot; is not in the catalogue — pick one below
                         to bring it in line.
+                      </p>
+                    )}
+                    {plan !== tenant.plan && planChangePreview.direction !== "same" && (
+                      <p
+                        className={`text-[11px] font-medium ${planChangePreview.direction === "upgrade" ? "text-success" : "text-warning"}`}
+                        data-testid="plan-change-direction"
+                      >
+                        {planChangePreview.direction === "upgrade" ? "↑ Upgrade" : "↓ Downgrade"}
+                        {planChangePreview.featuresLost.includes("aiAgents") && " · loses AI agents"}
+                        {planChangePreview.featuresGained.includes("aiAgents") && " · gains AI agents"}
                       </p>
                     )}
                   </div>
@@ -220,6 +285,12 @@ export function BillingTab({
                         Ceiling for {findPlan(plan)!.label}: {findPlan(plan)!.seatCeiling} seats.
                       </p>
                     )}
+                    {seatsBelowUsage && (
+                      <p className="text-[11px] text-danger" data-testid="seats-below-usage">
+                        {detail.counts.extensions} extension{detail.counts.extensions === 1 ? "" : "s"} in use —
+                        seats can&apos;t go below that. Remove extensions first, or raise seats.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -233,8 +304,9 @@ export function BillingTab({
                   <Button
                     size="sm"
                     variant="secondary"
-                    disabled={!findPlan(plan) || seats < 1 || seats > (findPlan(plan)?.seatCeiling ?? 0)}
+                    disabled={!findPlan(plan) || seats < 1 || seats > (findPlan(plan)?.seatCeiling ?? 0) || seatsBelowUsage}
                     onClick={() => setAction("change_plan")}
+                    data-testid="action-change-plan"
                   >
                     Change plan
                   </Button>

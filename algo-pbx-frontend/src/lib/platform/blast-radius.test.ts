@@ -12,6 +12,7 @@ import {
   extensionAssignBlastRadius,
   extensionUnassignBlastRadius,
   extensionDialPermissionBlastRadius,
+  planChangeBlastRadius,
 } from "./blast-radius";
 
 describe("suspendBlastRadius", () => {
@@ -146,5 +147,61 @@ describe("extension assignment copy", () => {
     expect(extensionDialPermissionBlastRadius("101", "INTERNATIONAL")).toBe(
       "This changes extension 101's dial permission to INTERNATIONAL."
     );
+  });
+});
+
+describe("planChangeBlastRadius", () => {
+  it("states a plain upgrade with no feature loss", () => {
+    const text = planChangeBlastRadius("Acme", "Standard", "Premium", {
+      direction: "upgrade",
+      priceDeltaUsd: 300,
+      featuresLost: [],
+      aiAgentsToLock: 0,
+    });
+    expect(text).toBe("Upgrades Acme from Standard to Premium (+$300/mo).");
+  });
+
+  it("states a downgrade with no configured AI agents to lock", () => {
+    const text = planChangeBlastRadius("Acme", "Premium", "Standard", {
+      direction: "downgrade",
+      priceDeltaUsd: -300,
+      featuresLost: ["aiAgents"],
+      aiAgentsToLock: 0,
+    });
+    expect(text).toContain("Downgrades Acme from Premium to Standard (-$300/mo).");
+    expect(text).toContain("none are currently configured, so nothing is locked");
+  });
+
+  it("names the exact number of AI agents that will be locked, and states the safe-fallthrough guarantee", () => {
+    const text = planChangeBlastRadius("Acme", "Premium", "Standard", {
+      direction: "downgrade",
+      priceDeltaUsd: -300,
+      featuresLost: ["aiAgents"],
+      aiAgentsToLock: 3,
+    });
+    expect(text).toContain("3 AI agents will be locked (disabled) immediately");
+    expect(text).toContain("fall through to the human queue");
+    expect(text).toContain("nothing is deleted");
+  });
+
+  it("singularises correctly for exactly one agent", () => {
+    const text = planChangeBlastRadius("Acme", "Premium", "Standard", {
+      direction: "downgrade",
+      priceDeltaUsd: -300,
+      featuresLost: ["aiAgents"],
+      aiAgentsToLock: 1,
+    });
+    expect(text).toContain("1 AI agent will be locked");
+    expect(text).not.toContain("1 AI agents");
+  });
+
+  it("states no price change explicitly when the price is identical", () => {
+    const text = planChangeBlastRadius("Acme", "Standard", "Standard", {
+      direction: "same",
+      priceDeltaUsd: 0,
+      featuresLost: [],
+      aiAgentsToLock: 0,
+    });
+    expect(text).toBe("Changes Acme from Standard to Standard (no price change).");
   });
 });

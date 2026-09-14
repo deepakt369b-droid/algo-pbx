@@ -4,7 +4,7 @@ import { unsafeGlobalDb as db } from "@/lib/db";
 import { requirePlatformOwner } from "@/lib/platform-guard";
 import { withApiErrorHandler } from "@/lib/api-handler";
 import { recordPlatformAudit, requireReason, MissingReasonError } from "@/lib/platform/audit";
-import { isValidPlanChange } from "@/lib/platform/plan-catalog";
+import { isValidPlanChange, describePlanChange } from "@/lib/platform/plan-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,20 @@ export const dynamic = "force-dynamic";
 // change here that stops a tenant's calls would not be an enforcement lever;
 // it would be an outage their customers blame them for, on day 8 of an
 // invoice they may well be disputing.
+//
+// ONE NAMED EXCEPTION (owner plan upgrade/downgrade feature, 2026-09-14):
+// `change_plan` may flip `AiAgent.enabled` to false for every one of the
+// tenant's agents when the destination plan no longer grants the `aiAgents`
+// feature. This DOES affect what the dialplan's `AI_INBOUND_EXTENSION()`
+// ODBC lookup resolves — a locked agent stops being selected, so its inbound
+// calls fall through to the human queue instead (the same documented safe
+// failure mode `AI_INBOUND_EXTENSION()` already uses for "no match"; see
+// func_odbc.conf). That is a deliberate, narrow, DB-only side effect — no
+// PJSIP/AMI/gateway/dialplan-FILE write happens here, only a column this
+// route already had every right to touch (`AiAgent` is tenant data, same as
+// `Tenant.plan`). Audited with `telephonyAffected: true` specifically for
+// this branch, never silently folded into the `false` every other billing
+// action here still carries.
 // ============================================================================
 //
 // Owner-only. A PLATFORM_SUPPORT operator can see billing state (it is on the
@@ -89,6 +103,27 @@ export const PATCH = withApiErrorHandler(async function PATCH(
   });
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
+  // Resolved once, before the reason check, so a blocked change 409s without
+  // making the caller type a reason for something that's about to be
+  // refused anyway.
+  let planChange: ReturnType<typeof describePlanChange> | null = null;
+  if (body.action === "change_plan") {
+    const [extensionsInUse, aiAgentCount] = await Promise.all([
+      db.extension.count({ where: { tenantId: tenant.id } }),
+      db.aiAgent.count({ where: { tenantId: tenant.id } }),
+    ]);
+    planChange = describePlanChange({
+      fromPlanId: tenant.plan,
+      toPlanId: body.plan,
+      newSeats: body.seats,
+      extensionsInUse,
+      aiAgentCount,
+    });
+    if (planChange.blockers.length > 0) {
+      return NextResponse.json({ error: planChange.blockers[0] }, { status: 409 });
+    }
+  }
+
   let reason: string;
   try {
     // Enforced HERE, at the API layer, not merely in the form — a reason that
@@ -144,6 +179,13 @@ export const PATCH = withApiErrorHandler(async function PATCH(
 
   const updated = await db.$transaction(async (tx) => {
     const t = await tx.tenant.update({ where: { id: tenant.id }, data });
+
+    // See this file's header ("ONE NAMED EXCEPTION") for why this single,
+    // narrow write belongs here despite the route's no-telephony rule.
+    if (planChange && planChange.aiAgentsToLock > 0) {
+      await tx.aiAgent.updateMany({ where: { tenantId: tenant.id }, data: { enabled: false } });
+    }
+
     // Same transaction as the change: a billing override with no audit row is
     // worse than no override at all.
     await recordPlatformAudit(
@@ -164,9 +206,18 @@ export const PATCH = withApiErrorHandler(async function PATCH(
             paidUntil: t.paidUntil?.toISOString() ?? null,
             billingStatus: t.billingStatus,
           },
+          ...(planChange
+            ? {
+                direction: planChange.direction,
+                featuresLost: planChange.featuresLost,
+                featuresGained: planChange.featuresGained,
+                aiAgentsLocked: planChange.aiAgentsToLock,
+              }
+            : {}),
           // Recorded on every billing row so the audit trail itself carries
-          // the guarantee, not just our documentation of it.
-          telephonyAffected: false,
+          // the guarantee, not just our documentation of it — true only for
+          // the one named exception above (agents actually locked this call).
+          telephonyAffected: Boolean(planChange && planChange.aiAgentsToLock > 0),
         },
       },
       tx

@@ -6,6 +6,7 @@ import { withApiErrorHandler } from "@/lib/api-handler";
 import { validateTenantSlug } from "@/lib/tenant/slug";
 import { recordPlatformAudit, requireReason, MissingReasonError } from "@/lib/platform/audit";
 import { completeStep, emptyProvisioningState } from "@/lib/platform/provisioning-machine";
+import { isValidPlanChange } from "@/lib/platform/plan-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,7 @@ const CreateSchema = z.object({
   slug: z.string().min(1).max(63),
   name: z.string().min(1).max(200),
   plan: z.string().min(1).max(64).default("standard"),
-  seats: z.number().int().positive().max(10_000).default(5),
+  seats: z.number().int().positive().max(10_000).default(4),
   reason: z.string(),
 });
 
@@ -71,6 +72,19 @@ export const POST = withApiErrorHandler(async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
   const { slug, name, plan, seats } = parsed.data;
+
+  // Follow-up to the owner plan upgrade/downgrade feature (2026-09-14): this
+  // route used to accept ANY free-text plan id, so an off-catalogue plan
+  // could exist and src/lib/platform/mrr.ts would silently price it at $0.
+  // The form now sends only catalogue ids via a <Select>, but this is the
+  // layer that actually enforces it — same "validated here, not just in the
+  // UI" reasoning as ../[id]/billing/route.ts's identical check.
+  if (!isValidPlanChange(plan, seats)) {
+    return NextResponse.json(
+      { error: `"${plan}" is not a known plan, or ${seats} seats exceeds its ceiling. See the plan catalogue.` },
+      { status: 400 }
+    );
+  }
 
   let reason: string;
   try {
