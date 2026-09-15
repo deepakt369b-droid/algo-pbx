@@ -26,6 +26,7 @@ const AGENT_LIST_SELECT = {
   name: true,
   language: true,
   pipelineMode: true,
+  promptMode: true,
   enabled: true,
   outboundEnabled: true,
   dinstarPort: true,

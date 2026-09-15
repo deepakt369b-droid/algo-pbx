@@ -92,6 +92,13 @@ export const TENANT_SCOPED_MODELS: readonly string[] = [
   // as GeoLoginEvent/ExtensionUnlockRequest above — no reachable Postgres in
   // this environment to write and verify a new RLS policy migration against.
   "CallerRoutingRule",
+  // Conversation-workflow builder (2026-09-15 follow-up to §34/§35). All
+  // three carry a tenantId. Same "no reachable Postgres to verify an RLS
+  // migration" reasoning as CallerRoutingRule right above — deliberately
+  // NOT added to the RLS policy set in 20260904120000_add_rls.
+  "AiWorkflow",
+  "AiWorkflowVersion",
+  "AiWorkflowSecret",
 ];
 
 // AppSetting is the one model that does not fit the simple pattern (plan

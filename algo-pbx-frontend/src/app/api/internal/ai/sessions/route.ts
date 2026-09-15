@@ -34,6 +34,10 @@ const SessionReportSchema = z
     costTokensOutput: z.number().optional(),
     outcome: z.enum(["completed", "handed_off", "dropped", "error"]),
     handoffExtensionId: z.string().nullable().optional(),
+    // Workflow-builder debuggability (2026-09-15). Absent for a SIMPLE-mode
+    // call, exactly as before these fields existed.
+    gatheredContext: z.record(z.unknown()).nullable().optional(),
+    nodePath: z.array(z.string()).nullable().optional(),
   })
   .refine((data) => !data.handoffExtensionId || data.outcome === "handed_off", {
     message: "handoffExtensionId may only be set when outcome is \"handed_off\".",

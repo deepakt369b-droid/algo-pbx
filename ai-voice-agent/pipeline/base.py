@@ -18,8 +18,26 @@ from typing import AsyncIterator, Awaitable, Callable, Protocol, runtime_checkab
 
 @dataclass
 class ChatMessage:
+    """One conversation turn.
+
+    The tool fields exist because a tool *result* cannot be represented as a
+    plain `{role, content}` pair: OpenAI rejects a `role="tool"` message that
+    is not immediately preceded by an `assistant` message carrying a matching
+    `tool_calls[].id`. So a completed tool round is always the pair
+
+        ChatMessage(role="assistant", content="", tool_calls=[ToolCall(...)])
+        ChatMessage(role="tool", tool_call_id=<same id>, name=..., content=<json>)
+
+    and the two must never be separated (see `_trim_history` in runner.py,
+    which is careful not to split them). Every field defaults, so existing
+    `ChatMessage(role=..., content=...)` construction sites are unaffected.
+    """
+
     role: str  # "system" | "user" | "assistant" | "tool"
     content: str
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
 
 @dataclass
@@ -123,6 +141,29 @@ class RealtimeProvider(Protocol):
         `on_tool_call` for each invocation the model makes - there is no
         text-delta return channel in realtime mode, so this callback is the
         only way a realtime session can signal escalation."""
+        ...
+
+    async def send_tool_result(self, call_id: str | None, name: str, result: dict) -> None:
+        """Feed a tool's result back into the live session and prompt the
+        model to continue (each implementation's own vendor-shaped envelope,
+        e.g. OpenAI's `conversation.item.create{type:"function_call_output"}`
+        + `response.create`, or Gemini's `toolResponse.functionResponses[]`).
+        Called by the runner from within (or shortly after) `on_tool_call`,
+        using the same `call_id` the triggering `ToolCall` carried - or the
+        runner's synthesized id when the vendor gave none. Implementations
+        must no-op (log and return) if called before `run()` has established
+        a live session, rather than raising."""
+        ...
+
+    async def update_session(self, instructions: str, tools: list[ToolSpec] | None) -> None:
+        """Replace the live session's system instructions and tool set
+        without tearing down the connection - the mechanism a workflow node
+        transition uses to move a REALTIME call to a new node. Only
+        implementations that support a genuine mid-session update (OpenAI
+        Realtime's `session.update`) should do this for real; a provider
+        that cannot (Gemini Live - `setup` is send-once) must document that
+        limitation on its class and this method is simply never called for
+        it (the workflow publish-time validator rejects the combination)."""
         ...
 
 

@@ -76,6 +76,13 @@ export const TENANCY_TABLES: readonly string[] = [
   // tenancy backfill migration, so it starts life with a NOT NULL tenantId
   // and needs no backfill of its own.
   "CallerRoutingRule",
+  // Conversation-workflow builder (2026-09-15). Kept in sync with
+  // src/lib/tenancy/scope-rules.ts's TENANT_SCOPED_MODELS. Created AFTER the
+  // tenancy backfill migration, so all three start life with a NOT NULL
+  // tenantId and need no backfill of their own.
+  "AiWorkflow",
+  "AiWorkflowVersion",
+  "AiWorkflowSecret",
 ];
 
 // Platform-global tables (plan §1/§7) — never get a tenantId. Listed here

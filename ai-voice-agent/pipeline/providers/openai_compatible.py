@@ -32,6 +32,32 @@ def _tools_payload(tools: list[ToolSpec]) -> list[dict]:
     ]
 
 
+def _message_payload(m: ChatMessage) -> dict:
+    """Serialize one ChatMessage to OpenAI's wire shape. An assistant message
+    carrying `tool_calls` must send `content: null` (never ""/absent) per
+    OpenAI's own spec when tool_calls is present; a `role="tool"` message
+    must carry `tool_call_id` and is otherwise rejected."""
+    if m.role == "assistant" and m.tool_calls:
+        return {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tc.call_id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                }
+                for tc in m.tool_calls
+            ],
+        }
+    if m.role == "tool":
+        payload: dict = {"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content}
+        if m.name:
+            payload["name"] = m.name
+        return payload
+    return {"role": m.role, "content": m.content}
+
+
 @dataclass
 class _PendingToolCall:
     """Accumulates one streamed `tool_calls[<index>]` entry: OpenAI sends the
@@ -68,11 +94,20 @@ class OpenAiCompatibleLlm:
     def _body(self, messages: list[ChatMessage], *, stream: bool, tools: list[ToolSpec] | None = None) -> dict:
         body: dict = {
             "model": self.config.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [_message_payload(m) for m in messages],
             "stream": stream,
         }
         if tools:
             body["tools"] = _tools_payload(tools)
+        # Optional knobs, sent only when explicitly set (omitting is not the
+        # same as sending a provider's own default - some OpenAI-compatible
+        # gateways reject unrecognized/None-valued fields outright).
+        temperature = self.config.extra.get("temperature")
+        if temperature is not None:
+            body["temperature"] = temperature
+        max_tokens = self.config.extra.get("max_tokens")
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         return body
 
     async def generate(

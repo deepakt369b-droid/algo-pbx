@@ -1,22 +1,29 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 
-const { requireAdminSessionMock, aiAgentMock, extensionMock, aiProviderCredentialMock, unsafeGlobalAiAgentMock } =
-  vi.hoisted(() => ({
-    requireAdminSessionMock: vi.fn(),
-    aiAgentMock: { findUnique: vi.fn(), update: vi.fn() },
-    extensionMock: { findUnique: vi.fn() },
-    aiProviderCredentialMock: { findUnique: vi.fn() },
-    unsafeGlobalAiAgentMock: { findFirst: vi.fn() },
-  }));
+const {
+  requireAdminSessionMock,
+  aiAgentMock,
+  extensionMock,
+  aiProviderCredentialMock,
+  unsafeGlobalAiAgentMock,
+  unsafeGlobalTenantMock,
+} = vi.hoisted(() => ({
+  requireAdminSessionMock: vi.fn(),
+  aiAgentMock: { findUnique: vi.fn(), update: vi.fn() },
+  extensionMock: { findUnique: vi.fn() },
+  aiProviderCredentialMock: { findUnique: vi.fn() },
+  unsafeGlobalAiAgentMock: { findFirst: vi.fn() },
+  unsafeGlobalTenantMock: { findUnique: vi.fn() },
+}));
 
 vi.mock("@/lib/auth-guard", () => ({
   requireAdminSession: requireAdminSessionMock,
 }));
 
 vi.mock("@/lib/db", () => ({
-  unsafeGlobalDb: { aiAgent: unsafeGlobalAiAgentMock },
+  unsafeGlobalDb: { aiAgent: unsafeGlobalAiAgentMock, tenant: unsafeGlobalTenantMock },
 }));
 
 import { GET, PATCH } from "./route";
@@ -28,6 +35,15 @@ function fakeDb() {
 function session(tenantId = "tenant1") {
   return { session: { user: { id: "u1", tenantId } }, db: fakeDb() };
 }
+
+beforeEach(() => {
+  // Every existing test in this file assumes the tenant is on a plan with
+  // aiAgents (that's the whole premise of an AiAgent existing to PATCH) -
+  // default the plan lookup to "premium" so the new plan-gate check added
+  // 2026-09-15 doesn't require touching every pre-existing test. Tests that
+  // specifically exercise the gate override this per-test.
+  unsafeGlobalTenantMock.findUnique.mockResolvedValue({ plan: "premium" });
+});
 
 function patchRequest(body: unknown) {
   return new NextRequest("http://localhost/api/admin/ai/agents/agent1", {
@@ -72,6 +88,17 @@ describe("PATCH /api/admin/ai/agents/[id] — escalation fields", () => {
     const response = await PATCH(patchRequest({ escalationEnabled: true }), { params: { id: "agent1" } });
 
     expect(response.status).toBe(404);
+  });
+
+  it("rejects the PATCH outright when the tenant's plan no longer includes aiAgents (fixed 2026-09-15 gap)", async () => {
+    requireAdminSessionMock.mockResolvedValue(session());
+    unsafeGlobalTenantMock.findUnique.mockResolvedValue({ plan: "standard" });
+
+    const response = await PATCH(patchRequest({ escalationEnabled: true }), { params: { id: "agent1" } });
+
+    expect(response.status).toBe(403);
+    expect(aiAgentMock.findUnique).not.toHaveBeenCalled();
+    expect(aiAgentMock.update).not.toHaveBeenCalled();
   });
 
   it("rejects an unparseable phone number for handoffNumberE164", async () => {

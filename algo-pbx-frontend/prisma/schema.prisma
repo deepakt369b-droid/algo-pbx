@@ -227,6 +227,9 @@ model Tenant {
   aiAgents                AiAgent[]
   aiProviderCredentials   AiProviderCredential[]
   aiCallSessions          AiCallSession[]
+  aiWorkflows             AiWorkflow[]
+  aiWorkflowVersions      AiWorkflowVersion[]
+  aiWorkflowSecrets       AiWorkflowSecret[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -753,6 +756,42 @@ model AiAgent {
   handoffExtensionId String?
   handoffExtension   Extension? @relation("AiAgentHandoffExtension", fields: [handoffExtensionId], references: [id])
 
+  // --- Conversation workflow builder (2026-09-15 follow-up to §34/§35) ---
+  // "SIMPLE" (default — systemPrompt above is the whole conversation, exactly
+  // today's behavior) or "WORKFLOW" (a visual node graph drives the call;
+  // the graph itself lives in the related AiWorkflow row, NOT here — see
+  // that model's own comment for why). Every existing row defaults to
+  // SIMPLE and gets no AiWorkflow row at all, so this column changes nothing
+  // for any agent that existed before this migration, including the live
+  // production tenant: agent-config/route.ts emits `workflow: null` for a
+  // SIMPLE agent, and the sidecar's existing flat-loop path is unchanged.
+  // A WORKFLOW agent with no published version ALSO behaves as SIMPLE
+  // (publishing is an explicit act — a half-built draft can never answer a
+  // real call). See AiWorkflow.publishedVersionId.
+  promptMode String @default("SIMPLE")
+  workflow   AiWorkflow?
+
+  // --- Model configuration (2026-09-15) --- all nullable/defaulted so every
+  // existing row is untouched; null means "use the provider's own default",
+  // which is exactly today's behavior (see ai-voice-agent's
+  // OpenAiCompatibleLlm._body(), which now omits these keys entirely when
+  // None rather than sending a hardcoded value).
+  llmTemperature Float? // 0-2, validated at the API layer (UpdateAgentSchema)
+  llmMaxTokens   Int? // 16-8192, validated at the API layer
+  ttsSpeed       Float? // 0.5-2.0, validated at the API layer
+  sttLanguage    String? // provider-specific tag (e.g. Deepgram wants "hi", Sarvam wants "hi-IN") - distinct from `language` above, which is the agent's own BCP-47 tag surfaced to the caller/UI; see src/lib/ai/languages.ts for the mapping
+
+  // --- Interruption / VAD (2026-09-15) --- null = the sidecar's own
+  // hardcoded defaults (unchanged from before this column existed):
+  // END_OF_UTTERANCE_SILENT_FRAMES=25, VOICE_ENERGY_THRESHOLD=0.08,
+  // BargeInDetector(threshold=0.12, consecutive_frames=2). See
+  // pipeline/runner.py / audiosocket/protocol.py for where these land.
+  allowInterruption        Boolean @default(true)
+  vadEnergyThreshold       Float?
+  vadSilenceFrames         Int?
+  bargeInThreshold         Float?
+  bargeInConsecutiveFrames Int?
+
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -762,6 +801,94 @@ model AiAgent {
   @@unique([tenantId, dinstarPort])
   @@index([tenantId])
   @@index([handoffExtensionId])
+}
+
+// The conversation-workflow graph for one AiAgent (1:1 — AiAgent.promptMode
+// switches an agent between this and its own flat `systemPrompt`). Stored as
+// a JSON blob (`draftGraph`/`AiWorkflowVersion.graph`), not relational
+// node/edge tables: the graph is always read whole by agent-config/route.ts
+// (one GET per call, no "find node X" query ever happens) and always written
+// whole by the canvas (a save is a full-graph diff), so relational tables
+// would buy referential integrity that `workflow-schema.ts`'s zod validator
+// already provides, at the cost of a multi-statement transaction on the hot
+// config-read path. Precedent: AiAgent.tools and AiCallSession.transcript
+// are already Json for the same reason.
+//
+// `draftGraph` is what the canvas edits — saved on every autosave regardless
+// of validity (`.safeParse`), so in-progress work is never lost mid-edit.
+// `publishedVersionId` is null until an admin explicitly publishes (strict
+// `.parse`); agent-config/route.ts only ever reads the PUBLISHED version,
+// never the draft, so a half-built graph can never reach a live call.
+model AiWorkflow {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  agentId String  @unique
+  agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  draftGraph Json // AiWorkflowGraph shape (src/lib/ai/workflow-schema.ts), lenient-parsed
+
+  publishedVersionId String?            @unique
+  publishedVersion    AiWorkflowVersion? @relation("PublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+
+  versions AiWorkflowVersion[] @relation("AllVersions")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+// An immutable snapshot of a published graph. Never updated in place —
+// publishing always creates version = max+1 and repoints
+// AiWorkflow.publishedVersionId, which is what makes one-click revert
+// possible (repoint back to an older version's id) and what lets
+// agent-config/route.ts trust that a `graph` it already resolved credentials
+// for cannot change out from under an in-flight call.
+model AiWorkflowVersion {
+  id         String     @id @default(cuid())
+  tenantId   String
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  workflowId String
+  workflow   AiWorkflow @relation("AllVersions", fields: [workflowId], references: [id], onDelete: Cascade)
+
+  version Int
+  graph   Json // AiWorkflowGraph shape, always the STRICT-parsed shape (publish requires a clean parse)
+
+  publishedAt       DateTime @default(now())
+  // Plain String, not a FK — matches the established
+  // Extension.geoUnlockedByPlatformUserId precedent for "who did this"
+  // fields that reference a PlatformUser/User but must survive that actor
+  // being deleted later without cascading or nulling audit history.
+  publishedByUserId String?
+
+  // Back-relation for AiWorkflow.publishedVersion above.
+  publishedAsFor AiWorkflow? @relation("PublishedVersion")
+
+  @@unique([workflowId, version])
+  @@index([tenantId])
+}
+
+// Tenant-scoped secrets an HTTP-tool node's request headers/body can
+// reference via `{{secrets.NAME}}` (resolved server-side in
+// POST /api/internal/ai/http-tool — never sent to the sidecar or the
+// browser). Deliberately its own table, not a JSON blob on AiWorkflow: a
+// secret must survive a draft graph being overwritten/discarded, and
+// encrypting one field inside a larger JSON blob is exactly the kind of
+// half-measure src/lib/settings/crypto.ts's own header warns against.
+model AiWorkflowSecret {
+  id             String @id @default(cuid())
+  tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  key            String // referenced from a node as {{secrets.KEY}}
+  valueCipher    String // iv:tag:ciphertext, src/lib/settings/crypto.ts — same scheme as AiProviderCredential.apiKeyCipher
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
 }
 
 // One row per tenant+provider credential. The key is encrypted at rest with
@@ -806,6 +933,13 @@ model AiCallSession {
   costTokensOutput   Int?
   outcome            String? // "completed" | "handed_off" | "dropped" | "error"
   handoffExtensionId String? // set when the AI transferred to a human extension
+
+  // Workflow-builder debuggability (2026-09-15) — without these, a
+  // WORKFLOW-mode agent's calls are unreadable in production: there is no
+  // other record of which nodes a call visited or what it extracted. Null/
+  // empty for a SIMPLE-mode call, exactly as before this migration.
+  gatheredContext Json? // the workflow's gathered_context dict at call end
+  nodePath        String[] @default([]) // ordered list of node ids visited
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

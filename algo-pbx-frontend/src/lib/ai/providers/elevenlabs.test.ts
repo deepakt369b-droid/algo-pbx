@@ -34,8 +34,27 @@ describe("elevenlabsAdapter.listModels", () => {
     );
     expect(models).toEqual([
       { id: "eleven_multilingual_v2", label: "Multilingual v2", capabilities: ["tts"] },
-      { id: "voice-1", label: "Rachel", capabilities: ["tts"] },
+      { id: "voice-1", label: "Rachel", capabilities: ["voice"] },
     ]);
+  });
+
+  it("tags voices distinctly from models so the model dropdown isn't polluted with ~100 voice ids (fixed 2026-09-15)", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "https://api.elevenlabs.io/v1/models") {
+        return Promise.resolve(jsonResponse([{ model_id: "eleven_turbo_v2_5", name: "Turbo v2.5" }]));
+      }
+      if (url === "https://api.elevenlabs.io/v2/voices") {
+        return Promise.resolve(jsonResponse({ voices: [{ voice_id: "voice-1", name: "Rachel" }] }));
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const models = await elevenlabsAdapter.listModels({ apiKey: "el-test" });
+    const modelIds = models.filter((m) => m.capabilities.includes("tts")).map((m) => m.id);
+    const voiceIds = models.filter((m) => m.capabilities.includes("voice")).map((m) => m.id);
+    expect(modelIds).toEqual(["eleven_turbo_v2_5"]);
+    expect(voiceIds).toEqual(["voice-1"]);
   });
 
   it("throws a clear error when the models call fails", async () => {

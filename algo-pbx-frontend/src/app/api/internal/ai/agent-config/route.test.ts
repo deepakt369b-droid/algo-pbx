@@ -165,17 +165,42 @@ describe("GET /api/internal/ai/agent-config — shapes provider legs", () => {
     expect(json.agentId).toBe("agent1");
     expect(json.extensionNumber).toBe("2001");
     expect(json.pipelineMode).toBe("CASCADE");
+    expect(json.promptMode).toBe("SIMPLE");
     expect(json.realtime).toBeUndefined();
-    expect(json.stt).toEqual({ provider: "deepgram", model: "nova-2", apiKey: "decrypted:iv:tag:stt", region: "us" });
-    expect(json.llm).toEqual({ provider: "openai", model: "gpt-4o-mini", apiKey: "decrypted:iv:tag:llm", baseUrl: null });
+    expect(json.stt).toEqual({
+      provider: "deepgram",
+      model: "nova-2",
+      apiKey: "decrypted:iv:tag:stt",
+      region: "us",
+      // No AiAgent.sttLanguage override in this fixture — derived from
+      // agent.language ("hi-en") via languages.ts's sttLanguageTag().
+      language: "hi",
+    });
+    expect(json.llm).toEqual({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      apiKey: "decrypted:iv:tag:llm",
+      baseUrl: null,
+      temperature: null,
+      maxTokens: null,
+    });
     expect(json.tts).toEqual({
       provider: "elevenlabs",
       model: "eleven_turbo_v2",
       voice: "rachel",
       apiKey: "decrypted:iv:tag:tts",
       region: null,
+      baseUrl: null,
+      speed: null,
     });
     expect(json.outboundEnabled).toBe(false);
+    expect(json.vad).toEqual({
+      allowInterruption: undefined,
+      energyThreshold: null,
+      endOfUtteranceSilentFrames: null,
+      bargeInThreshold: null,
+      bargeInConsecutiveFrames: null,
+    });
     // The response carries the decrypted key (the sidecar needs it to call
     // the provider), never the raw ciphertext stored on AiProviderCredential.
     expect(JSON.stringify(json)).not.toContain("cred-stt");
@@ -265,5 +290,157 @@ describe("GET /api/internal/ai/agent-config — handoffExtensionHint", () => {
     });
     const json = await (await GET(authedRequest("?ext=2001&tenant=t1"))).json();
     expect(json.handoffExtensionHint).toBe("1002");
+  });
+});
+
+// Back-compat regression guard for the workflow-builder feature: a SIMPLE
+// agent (every agent that existed before promptMode existed, plus every new
+// agent that never opts into WORKFLOW) must behave EXACTLY as it did before
+// this feature landed — `workflow` must never appear on the response, and
+// promptMode must always read "SIMPLE", regardless of what garbage might be
+// sitting in a stale/unrelated `workflow` relation.
+describe("GET /api/internal/ai/agent-config — workflow back-compat", () => {
+  function baseAgent(overrides: Record<string, unknown>) {
+    return {
+      id: "agent1",
+      enabled: true,
+      language: "en",
+      greeting: "hi",
+      systemPrompt: "prompt",
+      pipelineMode: "CASCADE",
+      realtimeProviderId: null,
+      realtimeModel: null,
+      sttProviderId: null,
+      sttModel: null,
+      llmProviderId: null,
+      llmModel: null,
+      ttsProviderId: null,
+      ttsModel: null,
+      ttsVoice: null,
+      tools: null,
+      outboundEnabled: false,
+      escalationEnabled: false,
+      handoffTargetKind: null,
+      handoffNumberE164: null,
+      handoffExtension: null,
+      promptMode: "SIMPLE",
+      workflow: null,
+      ...overrides,
+    };
+  }
+
+  it("a SIMPLE agent (promptMode default) never emits a workflow block", async () => {
+    extensionMock.findUnique.mockResolvedValue({
+      id: "ext1",
+      number: "2001",
+      agentType: "AI",
+      aiAgent: baseAgent({}),
+    });
+    const json = await (await GET(authedRequest("?ext=2001&tenant=t1"))).json();
+    expect(json.promptMode).toBe("SIMPLE");
+    expect(json.workflow).toBeUndefined();
+  });
+
+  it("a WORKFLOW agent with no published version falls back to SIMPLE, not workflow: null-but-WORKFLOW", async () => {
+    extensionMock.findUnique.mockResolvedValue({
+      id: "ext1",
+      number: "2001",
+      agentType: "AI",
+      aiAgent: baseAgent({ promptMode: "WORKFLOW", workflow: { publishedVersion: null } }),
+    });
+    const json = await (await GET(authedRequest("?ext=2001&tenant=t1"))).json();
+    expect(json.promptMode).toBe("SIMPLE");
+    expect(json.workflow).toBeUndefined();
+  });
+
+  it("a published WORKFLOW agent emits the graph with resolved per-node credentials, deduped", async () => {
+    const graph = {
+      schemaVersion: 1,
+      nodes: [
+        {
+          kind: "START_CALL",
+          id: "start",
+          label: "Start",
+          position: { x: 0, y: 0 },
+          prompt: "",
+          allowInterruption: true,
+          variables: [],
+          modelOverride: {},
+        },
+        {
+          kind: "AGENT",
+          id: "ask",
+          label: "Ask",
+          position: { x: 0, y: 0 },
+          prompt: "Ask their name",
+          allowInterruption: true,
+          variables: [],
+          modelOverride: { llmProviderId: "cred-llm", llmModel: "gpt-4o-mini", temperature: 0.5 },
+        },
+        {
+          kind: "AGENT",
+          id: "ask2",
+          label: "Ask2",
+          position: { x: 0, y: 0 },
+          prompt: "Ask their day",
+          allowInterruption: true,
+          variables: [],
+          // Same credential id as `ask` - must be resolved only ONCE.
+          modelOverride: { llmProviderId: "cred-llm", llmModel: "gpt-4o-mini" },
+        },
+        {
+          kind: "END_CALL",
+          id: "end",
+          label: "End",
+          position: { x: 0, y: 0 },
+          prompt: "Bye",
+          allowInterruption: true,
+          variables: [],
+          modelOverride: {},
+        },
+      ],
+      edges: [
+        { id: "e1", source: "start", target: "ask", condition: "always" },
+        { id: "e2", source: "ask", target: "ask2", condition: "got name" },
+        { id: "e3", source: "ask2", target: "end", condition: "done" },
+      ],
+    };
+
+    extensionMock.findUnique.mockResolvedValue({
+      id: "ext1",
+      number: "2001",
+      agentType: "AI",
+      aiAgent: baseAgent({
+        promptMode: "WORKFLOW",
+        workflow: { publishedVersion: { version: 3, graph } },
+      }),
+    });
+    aiProviderCredentialMock.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
+      if (where.id === "cred-llm") {
+        return Promise.resolve({ id: "cred-llm", provider: "openai", apiKeyCipher: "iv:tag:llm", region: null, baseUrl: null });
+      }
+      return Promise.resolve(null);
+    });
+    decryptSettingMock.mockImplementation((cipher: string) => `decrypted:${cipher}`);
+
+    const json = await (await GET(authedRequest("?ext=2001&tenant=t1"))).json();
+
+    expect(json.promptMode).toBe("WORKFLOW");
+    expect(json.workflow.version).toBe(3);
+    expect(json.workflow.resolvedByNodeId.ask.llm).toEqual({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      apiKey: "decrypted:iv:tag:llm",
+      baseUrl: null,
+      temperature: 0.5,
+      maxTokens: null,
+    });
+    expect(json.workflow.resolvedByNodeId.ask2.llm.apiKey).toBe("decrypted:iv:tag:llm");
+    expect(json.workflow.resolvedByNodeId.start).toBeUndefined();
+    // Deduped: only one findUnique call for "cred-llm" despite two nodes referencing it.
+    const llmCalls = aiProviderCredentialMock.findUnique.mock.calls.filter(
+      (call: unknown[]) => (call[0] as { where: { id: string } }).where.id === "cred-llm",
+    );
+    expect(llmCalls).toHaveLength(1);
   });
 });

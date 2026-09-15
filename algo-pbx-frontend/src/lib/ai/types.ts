@@ -23,7 +23,7 @@ export type AiProviderKind =
   | "retell" // platform provider, routed via SIP — media stays with the vendor
   | "vapi"; // platform provider, routed via SIP — media stays with the vendor
 
-export type AiModelCapability = "stt" | "llm" | "tts" | "realtime";
+export type AiModelCapability = "stt" | "llm" | "tts" | "realtime" | "voice";
 
 export interface AiModelInfo {
   id: string;
@@ -50,13 +50,79 @@ export interface AiAgentConfigResponse {
   greeting: string; // always includes the automated-call disclosure — enforced server-side, not sidecar-side
   systemPrompt: string;
   pipelineMode: "REALTIME" | "CASCADE";
-  realtime?: { provider: AiProviderKind; model: string; apiKey: string; region?: string | null };
-  stt?: { provider: AiProviderKind; model: string; apiKey: string; region?: string | null };
-  llm?: { provider: AiProviderKind; model: string; apiKey: string; baseUrl?: string | null };
-  tts?: { provider: AiProviderKind; model: string; voice?: string | null; apiKey: string; region?: string | null };
+  // "SIMPLE" (default) means `workflow` below is omitted/null and the
+  // sidecar drives the call purely off `systemPrompt`, exactly as before
+  // this field existed. "WORKFLOW" with `workflow` present means the node
+  // graph in `workflow.graph` drives the call instead — see
+  // ai-voice-agent/pipeline/workflow.py. A WORKFLOW agent with no
+  // *published* version also resolves to SIMPLE server-side (this route
+  // never emits an unpublished draft) — publishing is explicit, so a
+  // half-built graph can never reach a live call.
+  promptMode: "SIMPLE" | "WORKFLOW";
+  workflow?: AiWorkflowRuntime | null;
+  realtime?: { provider: AiProviderKind; model: string; apiKey: string; region?: string | null; baseUrl?: string | null };
+  stt?: { provider: AiProviderKind; model: string; apiKey: string; region?: string | null; language?: string | null };
+  llm?: {
+    provider: AiProviderKind;
+    model: string;
+    apiKey: string;
+    baseUrl?: string | null;
+    temperature?: number | null;
+    maxTokens?: number | null;
+  };
+  tts?: {
+    provider: AiProviderKind;
+    model: string;
+    voice?: string | null;
+    apiKey: string;
+    region?: string | null;
+    baseUrl?: string | null;
+    speed?: number | null;
+  };
   tools: unknown | null;
   outboundEnabled: boolean; // ships false; sidecar must refuse to originate calls when false
   handoffExtensionHint?: string | null; // e.g. the tenant's support_queue, for "transfer to a human"
+  // Interruption / VAD tunables. Every field null means "use the sidecar's
+  // own hardcoded defaults" — unchanged behavior for every agent that
+  // predates these columns (see AiAgent's migration comment).
+  vad?: {
+    allowInterruption: boolean;
+    energyThreshold?: number | null;
+    endOfUtteranceSilentFrames?: number | null;
+    bargeInThreshold?: number | null;
+    bargeInConsecutiveFrames?: number | null;
+  };
+}
+
+/** One resolved leg's credential + model, used inside a workflow node's
+ * `resolved` block below — same shape as the top-level `llm`/`tts` legs
+ * above, factored out because a node's model override resolves to exactly
+ * one of these per capability it overrides. */
+export interface AiResolvedLeg {
+  provider: AiProviderKind;
+  model: string;
+  apiKey: string;
+  baseUrl?: string | null;
+  region?: string | null;
+  voice?: string | null;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  speed?: number | null;
+}
+
+/** The published workflow graph, with every node's `modelOverride` already
+ * resolved to real credentials server-side (agent-config/route.ts dedupes
+ * this by credential id across the whole graph before responding) — the
+ * sidecar stays completely credential-ignorant, exactly like the top-level
+ * legs above. `graph` is `AiWorkflowGraph` from workflow-schema.ts (kept as
+ * `unknown` here to avoid a frontend-lib→sidecar-adjacent circular import;
+ * the sidecar's own `pipeline/workflow.py` parses it against the same shape
+ * independently, per the "frozen contract, mirrored not shared" convention
+ * this file already uses). */
+export interface AiWorkflowRuntime {
+  version: number;
+  graph: unknown;
+  resolvedByNodeId: Record<string, { llm?: AiResolvedLeg | null; tts?: AiResolvedLeg | null }>;
 }
 
 /** POST /api/internal/ai/sessions — sidecar reports what happened on a call. */
@@ -71,6 +137,12 @@ export interface AiSessionReportRequest {
   costTokensOutput?: number;
   outcome: "completed" | "handed_off" | "dropped" | "error";
   handoffExtensionId?: string | null;
+  // Workflow-builder debuggability (2026-09-15) — absent/undefined for a
+  // SIMPLE-mode call, exactly as before these fields existed. See
+  // AiCallSession's schema comment for why this is the only record of
+  // which nodes a workflow call visited.
+  gatheredContext?: Record<string, unknown> | null;
+  nodePath?: string[] | null;
 }
 
 // --- Compliance (W8), called from W6's agent-config route -------------------

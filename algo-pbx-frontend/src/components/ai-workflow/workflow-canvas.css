@@ -1,0 +1,58 @@
+/* React Flow theming overrides — the library ships opinionated light-mode
+   CSS that fights the Apple-black design system's CSS-var tokens (see
+   src/app/globals.css). Overriding its own custom properties, rather than
+   fighting individual element rules, is the mechanism React Flow itself
+   documents for theming (https://reactflow.dev/learn/customization/theming).
+   Node/edge CHROME itself is fully custom (see nodes/*.tsx) — these
+   variables only affect the canvas background, default edge stroke, and
+   the built-in Controls/MiniMap panels. */
+
+.ai-workflow-canvas {
+  --xy-background-color: rgb(var(--canvas));
+  --xy-background-pattern-dots-color: rgb(var(--hairline-strong));
+  --xy-edge-stroke-default: rgb(var(--text-tertiary));
+  --xy-edge-stroke-width-default: 1.5;
+  --xy-edge-stroke-selected-default: rgb(var(--accent));
+  --xy-controls-button-background-color-default: rgb(var(--surface));
+  --xy-controls-button-background-color-hover-default: rgb(var(--surface-hover));
+  --xy-controls-button-border-color-default: rgb(var(--hairline));
+  --xy-controls-button-color-default: rgb(var(--text-secondary));
+  --xy-controls-button-color-hover-default: rgb(var(--text-primary));
+  --xy-minimap-background-color-default: rgb(var(--surface));
+  --xy-minimap-mask-background-color-default: rgb(var(--hairline-strong));
+  height: 100%;
+  width: 100%;
+}
+
+.ai-workflow-canvas .react-flow__attribution {
+  display: none;
+}
+
+.ai-workflow-node {
+  min-width: 220px;
+  max-width: 260px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgb(var(--hairline));
+  background: rgb(var(--surface));
+  padding: 10px 12px;
+  font-size: 12px;
+  color: rgb(var(--text-primary));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+
+.ai-workflow-node[data-invalid="true"] {
+  border-color: rgb(var(--danger));
+  box-shadow: 0 0 0 2px rgb(var(--danger-subtle));
+}
+
+.ai-workflow-node[data-selected="true"] {
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 2px rgb(var(--accent-subtle));
+}
+
+.ai-workflow-node .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: rgb(var(--text-tertiary));
+  border: 2px solid rgb(var(--surface));
+}

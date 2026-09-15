@@ -34,10 +34,16 @@ export const elevenlabsAdapter: AiProviderAdapter = {
       { headers },
       "elevenlabs"
     )) as ElevenLabsVoicesResponse;
+    // Fixed 2026-09-15 (workflow-builder plan, blocker #7): this used to be
+    // tagged "tts" — the same capability as the model entries above — which
+    // meant the admin editor's TTS *model* dropdown showed ~100 voice IDs
+    // mixed in with the 3 real models (modelsFor() filters purely on
+    // capability). Voices are a distinct thing from models; tag them
+    // distinctly so the UI can render them in their own picker.
     const voiceEntries: AiModelInfo[] = (voicesBody.voices ?? []).map((voice) => ({
       id: voice.voice_id,
       label: voice.name,
-      capabilities: ["tts"],
+      capabilities: ["voice"],
     }));
 
     return [...modelEntries, ...voiceEntries];

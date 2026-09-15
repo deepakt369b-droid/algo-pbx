@@ -5,6 +5,17 @@ import { requireAdminSession } from "@/lib/auth-guard";
 import { withApiErrorHandler } from "@/lib/api-handler";
 import { unsafeGlobalDb } from "@/lib/db";
 import { normalizeToE164 } from "@/lib/phone-normalize";
+import { planHasFeature } from "@/lib/platform/plan-catalog";
+
+// Same lookup as ../route.ts's own tenantPlan() — duplicated rather than
+// shared across the two files, matching this codebase's existing preference
+// for a small inlined helper over a new shared module for a two-line query
+// (see e.g. seat-guard.ts vs admin/layout.tsx, which both go through
+// unsafeGlobalDb for this same lookup independently).
+async function tenantPlan(tenantId: string): Promise<string> {
+  const tenant = await unsafeGlobalDb.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } });
+  return tenant?.plan ?? "standard";
+}
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +51,16 @@ const AGENT_DETAIL_SELECT = {
   handoffNumberE164: true,
   handoffExtensionId: true,
   handoffExtension: { select: { id: true, number: true } },
+  promptMode: true,
+  llmTemperature: true,
+  llmMaxTokens: true,
+  ttsSpeed: true,
+  sttLanguage: true,
+  allowInterruption: true,
+  vadEnergyThreshold: true,
+  vadSilenceFrames: true,
+  bargeInThreshold: true,
+  bargeInConsecutiveFrames: true,
   enabled: true,
   createdAt: true,
   updatedAt: true,
@@ -109,6 +130,25 @@ const UpdateAgentSchema = z.object({
   handoffTargetKind: z.enum(["NUMBER", "EXTENSION"]).nullable().optional(),
   handoffNumberE164: z.string().nullable().optional(),
   handoffExtensionId: z.string().nullable().optional(),
+  // Conversation-workflow builder (2026-09-15). Switching to WORKFLOW here
+  // only changes which prompt path the sidecar takes IF a published
+  // AiWorkflow version also exists (see agent-config/route.ts) — flipping
+  // this alone, with no workflow ever built, is equivalent to staying on
+  // SIMPLE. The workflow graph itself is edited through its own dedicated
+  // route (workflow/route.ts), not here.
+  promptMode: z.enum(["SIMPLE", "WORKFLOW"]).optional(),
+  // Model configuration (2026-09-15). null = "use the provider's own
+  // default" — see AiAgent's migration comment for why every field here is
+  // nullable rather than defaulted to a specific number.
+  llmTemperature: z.number().min(0).max(2).nullable().optional(),
+  llmMaxTokens: z.number().int().min(16).max(8192).nullable().optional(),
+  ttsSpeed: z.number().min(0.5).max(2.0).nullable().optional(),
+  sttLanguage: z.string().max(20).nullable().optional(),
+  allowInterruption: z.boolean().optional(),
+  vadEnergyThreshold: z.number().min(0).max(1).nullable().optional(),
+  vadSilenceFrames: z.number().int().min(1).max(200).nullable().optional(),
+  bargeInThreshold: z.number().min(0).max(1).nullable().optional(),
+  bargeInConsecutiveFrames: z.number().int().min(1).max(50).nullable().optional(),
 });
 
 const CREDENTIAL_ID_FIELDS = ["realtimeProviderId", "sttProviderId", "llmProviderId", "ttsProviderId"] as const;
@@ -116,7 +156,20 @@ const CREDENTIAL_ID_FIELDS = ["realtimeProviderId", "sttProviderId", "llmProvide
 export const PATCH = withApiErrorHandler(async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdminSession();
   if ("response" in guard) return guard.response;
-  const { db } = guard;
+  const { db, session } = guard;
+
+  // Fixed 2026-09-15 (workflow-builder plan): this route was the ONE AI
+  // admin write path with no plan gate at all — POST (create) and every
+  // providers route already checked planHasFeature, but a tenant that lost
+  // (or never had) the aiAgents feature could still PATCH an existing
+  // AiAgent row indefinitely. An agent can only exist via POST, which IS
+  // gated, so this was reachable only after a downgrade locked the agent
+  // (billing/route.ts sets enabled:false) — but PATCH itself never checked,
+  // so a locked agent's config remained fully editable past the downgrade.
+  const plan = await tenantPlan(session.user.tenantId);
+  if (!planHasFeature(plan, "aiAgents")) {
+    return NextResponse.json({ error: "AI agents are not included on this plan." }, { status: 403 });
+  }
 
   const existing = await db.aiAgent.findUnique({ where: { id: params.id }, select: { id: true } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });

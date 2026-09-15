@@ -69,5 +69,5 @@ def build_realtime(config: ProviderLegConfig, *, system_prompt: str = ""):
     if config.provider == "openai":
         return OpenAiRealtime(config=config, system_prompt=system_prompt)
     if config.provider == "gemini":
-        return GeminiRealtime(config=config)
+        return GeminiRealtime(config=config, system_prompt=system_prompt)
     raise UnknownProviderError(f"no realtime provider registered for '{config.provider}'")

@@ -5,14 +5,8 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/client/api";
 import { Switch, Select, type SelectOption } from "@/components/ui";
-import type { AiModelInfo, AiProviderKind } from "@/lib/ai/types";
-
-interface Credential {
-  id: string;
-  provider: AiProviderKind;
-  label: string;
-  cachedModels: AiModelInfo[] | null;
-}
+import { AI_LANGUAGES } from "@/lib/ai/languages";
+import { LegPicker, VoicePicker, type Credential } from "@/components/ai-agents/leg-pickers";
 
 interface AgentDetail {
   id: string;
@@ -45,6 +39,21 @@ interface AgentDetail {
   handoffExtensionId: string | null;
   enabled: boolean;
   extension: { id: string; number: string } | null;
+  // Conversation-workflow builder (2026-09-15). "WORKFLOW" only actually
+  // takes effect once a graph is published at /admin/ai-agents/[id]/workflow
+  // — see AiAgent.promptMode's schema comment.
+  promptMode: "SIMPLE" | "WORKFLOW";
+  // Model configuration (2026-09-15). All null = provider defaults, exactly
+  // as before these fields existed.
+  llmTemperature: number | null;
+  llmMaxTokens: number | null;
+  ttsSpeed: number | null;
+  sttLanguage: string | null;
+  allowInterruption: boolean;
+  vadEnergyThreshold: number | null;
+  vadSilenceFrames: number | null;
+  bargeInThreshold: number | null;
+  bargeInConsecutiveFrames: number | null;
 }
 
 // A same-tenant extension eligible as an escalation target — from
@@ -70,86 +79,12 @@ interface AgentListRow {
 
 const DINSTAR_PORT_VALUES = ["none", "1", "2", "3", "4"] as const;
 
-const LANGUAGE_OPTIONS: SelectOption<string>[] = [
-  { value: "en", label: "English" },
-  { value: "hi", label: "Hindi" },
-  { value: "hi-en", label: "Hindi/English (code-mix)" },
-  { value: "ar", label: "Arabic" },
-];
+const LANGUAGE_OPTIONS: SelectOption<string>[] = AI_LANGUAGES.map((l) => ({ value: l.tag, label: l.label }));
 
 const HOUR_OPTIONS: SelectOption<string>[] = [
   { value: "none", label: "No restriction" },
   ...Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, "0")}:00` })),
 ];
-
-// Which model capability each leg needs — used to filter a credential's
-// cachedModels (AiModelInfo.capabilities, contracts.md) down to models
-// actually usable for that leg, rather than listing every model a provider
-// happens to expose.
-const LEG_CAPABILITY = { realtime: "realtime", stt: "stt", llm: "llm", tts: "tts" } as const;
-
-function modelsFor(credential: Credential | undefined, leg: keyof typeof LEG_CAPABILITY): AiModelInfo[] {
-  if (!credential?.cachedModels) return [];
-  const cap = LEG_CAPABILITY[leg];
-  return credential.cachedModels.filter((m) => m.capabilities.includes(cap));
-}
-
-// One provider+model leg picker (realtime, or one of stt/llm/tts under
-// CASCADE). `providerIdField`/`modelField` name the two AiAgent columns
-// this leg writes to.
-function LegPicker({
-  leg,
-  label,
-  credentials,
-  providerId,
-  model,
-  onChange,
-}: {
-  leg: keyof typeof LEG_CAPABILITY;
-  label: string;
-  credentials: Credential[];
-  providerId: string | null;
-  model: string | null;
-  onChange: (providerId: string | null, model: string | null) => void;
-}) {
-  const selectedCredential = credentials.find((c) => c.id === providerId);
-  const models = modelsFor(selectedCredential, leg);
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <p className="text-xs font-medium text-secondary">{label}</p>
-      {credentials.length === 0 ? (
-        <p className="text-xs text-tertiary">
-          No provider credentials configured yet —{" "}
-          <Link href="/admin/settings" className="text-cyan hover:underline">
-            add one in Settings
-          </Link>
-          .
-        </p>
-      ) : (
-        <div className="flex gap-2">
-          <Select
-            aria-label={`${label} provider`}
-            value={providerId}
-            onChange={(v) => onChange(v, null)}
-            placeholder="Provider credential"
-            options={credentials.map((c) => ({ value: c.id, label: `${c.label} (${c.provider})` }))}
-            className="flex-1"
-          />
-          <Select
-            aria-label={`${label} model`}
-            value={model}
-            onChange={(v) => onChange(providerId, v)}
-            placeholder={models.length ? "Model" : "No models cached — refresh in Settings"}
-            options={models.map((m) => ({ value: m.id, label: m.label ?? m.id }))}
-            disabled={!providerId || models.length === 0}
-            className="flex-1"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function AiAgentEditorPage() {
   const params = useParams<{ id: string }>();
@@ -217,6 +152,12 @@ export default function AiAgentEditorPage() {
           handoffNumberE164: agent.handoffNumberE164,
           handoffExtensionId: agent.handoffExtensionId,
           enabled: agent.enabled,
+          promptMode: agent.promptMode,
+          llmTemperature: agent.llmTemperature,
+          llmMaxTokens: agent.llmMaxTokens,
+          ttsSpeed: agent.ttsSpeed,
+          sttLanguage: agent.sttLanguage,
+          allowInterruption: agent.allowInterruption,
         },
       });
       setAgent(data.agent);
@@ -314,6 +255,36 @@ export default function AiAgentEditorPage() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Basics</h2>
           <Switch checked={agent.enabled} onChange={(v) => setAgent({ ...agent, enabled: v })} label={agent.enabled ? "Enabled" : "Disabled"} />
         </div>
+
+        <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+          <div className="flex flex-col gap-0.5">
+            <p className="text-xs font-medium text-primary">Conversation mode</p>
+            <p className="text-xs text-tertiary">
+              {agent.promptMode === "WORKFLOW"
+                ? "A visual node graph drives this call — the System prompt below becomes shared context for every node."
+                : "One flat prompt drives the whole call (today's default)."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {agent.promptMode === "WORKFLOW" && (
+              <Link
+                href={`/admin/ai-agents/${agent.id}/workflow`}
+                className="rounded-lg border border-cyan px-2 py-1 text-xs text-cyan hover:bg-cyan/10"
+              >
+                Open workflow builder →
+              </Link>
+            )}
+            <button
+              onClick={() =>
+                setAgent({ ...agent, promptMode: agent.promptMode === "WORKFLOW" ? "SIMPLE" : "WORKFLOW" })
+              }
+              className="rounded-lg border border-border px-2 py-1 text-xs text-secondary hover:border-cyan hover:text-cyan"
+            >
+              Switch to {agent.promptMode === "WORKFLOW" ? "Simple prompt" : "Workflow"}
+            </button>
+          </div>
+        </div>
+
         <label className="flex flex-col gap-1 text-xs text-secondary">
           Agent name
           <input
@@ -411,16 +382,57 @@ export default function AiAgentEditorPage() {
               model={agent.ttsModel}
               onChange={(providerId, model) => setAgent({ ...agent, ttsProviderId: providerId, ttsModel: model })}
             />
-            <label className="flex flex-col gap-1 text-xs text-secondary">
-              TTS voice (optional, provider-specific voice id)
-              <input
-                value={agent.ttsVoice ?? ""}
-                onChange={(e) => setAgent({ ...agent, ttsVoice: e.target.value || null })}
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
-              />
-            </label>
+            <VoicePicker
+              credential={credentials.find((c) => c.id === agent.ttsProviderId)}
+              voice={agent.ttsVoice}
+              speed={agent.ttsSpeed}
+              onVoiceChange={(v) => setAgent({ ...agent, ttsVoice: v })}
+              onSpeedChange={(s) => setAgent({ ...agent, ttsSpeed: s })}
+            />
           </>
         )}
+      </div>
+
+      <div className="glass-card flex w-full max-w-2xl flex-col gap-4 p-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">Model tuning</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1 text-xs text-secondary">
+            LLM temperature (0–2, blank = provider default)
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={agent.llmTemperature ?? ""}
+              onChange={(e) => setAgent({ ...agent, llmTemperature: e.target.value === "" ? null : Number(e.target.value) })}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-secondary">
+            LLM max tokens (blank = provider default)
+            <input
+              type="number"
+              min={16}
+              max={8192}
+              step={1}
+              value={agent.llmMaxTokens ?? ""}
+              onChange={(e) => setAgent({ ...agent, llmMaxTokens: e.target.value === "" ? null : Number(e.target.value) })}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-primary outline-none focus:border-cyan"
+            />
+          </label>
+        </div>
+        <label className="flex items-center justify-between gap-2 text-xs text-secondary">
+          Allow the caller to interrupt the agent while it&apos;s speaking
+          <Switch
+            checked={agent.allowInterruption}
+            onChange={(v) => setAgent({ ...agent, allowInterruption: v })}
+            label={agent.allowInterruption ? "Allowed" : "Disabled"}
+          />
+        </label>
+        <p className="text-xs text-tertiary">
+          Disabling interruption is mainly for a fixed compliance disclosure — the caller can&apos;t talk over it until
+          it finishes.
+        </p>
       </div>
 
       <div className="glass-card flex w-full max-w-2xl flex-col gap-4 p-6">

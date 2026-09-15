@@ -1,9 +1,11 @@
+import json
 import struct
 
 import pytest
 
 from config_client import AiAgentConfig, LegConfig
-from pipeline.runner import PipelineRunner, PlayerAudioSink, VOICE_ENERGY_THRESHOLD
+from pipeline.base import ChatMessage, ToolCall
+from pipeline.runner import MAX_TOOL_ROUNDS, PipelineRunner, PlayerAudioSink, VOICE_ENERGY_THRESHOLD, _trim_history
 
 
 def _silent_frame() -> bytes:
@@ -362,6 +364,120 @@ def test_escalation_tools_adds_callback_only_after_a_failed_handoff():
 
     runner.handoff_failed_once = True
     assert [t.name for t in runner._escalation_tools()] == ["request_human_handoff", "request_callback"]
+
+
+class FakeLlmRecordsThenAnswers:
+    """Yields a generic (non-escalation) tool call on the FIRST generate()
+    call, then plain text on the SECOND - simulates a workflow-style
+    record_info/goto_* tool whose result the model incorporates into its
+    final reply. Asserts the fed-back result is actually visible in
+    `messages` by the second call."""
+
+    def __init__(self, config):
+        self._calls = 0
+
+    async def generate(self, messages, tools=None):
+        from pipeline.base import LlmDelta, ToolCall
+
+        self._calls += 1
+        if self._calls == 1:
+            yield LlmDelta(tool_call=ToolCall(name="check_slots", arguments={"day": "mon"}, call_id="call_1"))
+        else:
+            # The tool result must have been appended to `messages` by now.
+            tool_msgs = [m for m in messages if m.role == "tool"]
+            assert tool_msgs, "tool result was not fed back before re-generating"
+            assert json.loads(tool_msgs[-1].content) == {"ok": False, "error": "unknown tool 'check_slots'"}
+            yield LlmDelta(text="got it, thanks")
+
+
+class FakeLlmAlwaysCallsTool:
+    """Never produces text - simulates a model stuck calling tools forever,
+    to exercise MAX_TOOL_ROUNDS."""
+
+    def __init__(self, config):
+        self.calls = 0
+
+    async def generate(self, messages, tools=None):
+        from pipeline.base import LlmDelta, ToolCall
+
+        self.calls += 1
+        yield LlmDelta(tool_call=ToolCall(name="check_slots", arguments={}, call_id=f"call_{self.calls}"))
+
+
+@pytest.mark.asyncio
+async def test_cascade_generic_tool_call_feeds_result_back_and_continues(monkeypatch):
+    monkeypatch.setattr("pipeline.runner.build_stt", lambda cfg: FakeStt(cfg))
+    monkeypatch.setattr("pipeline.runner.build_llm", lambda cfg: FakeLlmRecordsThenAnswers(cfg))
+    monkeypatch.setattr("pipeline.runner.build_tts", lambda cfg: FakeTts(cfg))
+
+    config = _cascade_config()
+    player = FakePlayer()
+    transcript = []
+    runner = PipelineRunner(
+        config=config,
+        audio_sink=PlayerAudioSink(player, lambda v: None),
+        transcript=transcript,
+        set_bot_speaking=lambda v: None,
+    )
+    runner.start()
+    runner.push_audio(_voiced_frame())
+    for _ in range(25):
+        runner.push_audio(_silent_frame())
+    await runner.stop()
+
+    assert b"audio:got it, thanks" in player.enqueued
+    roles_texts = [(t.role, t.text) for t in transcript]
+    assert ("agent", "got it, thanks") in roles_texts
+
+
+@pytest.mark.asyncio
+async def test_generate_turn_reply_gives_up_after_max_tool_rounds(monkeypatch):
+    monkeypatch.setattr("pipeline.runner.build_stt", lambda cfg: FakeStt(cfg))
+    fake_llm = FakeLlmAlwaysCallsTool(None)
+    monkeypatch.setattr("pipeline.runner.build_llm", lambda cfg: fake_llm)
+    monkeypatch.setattr("pipeline.runner.build_tts", lambda cfg: FakeTts(cfg))
+
+    config = _cascade_config()
+    runner = PipelineRunner(
+        config=config,
+        audio_sink=PlayerAudioSink(FakePlayer(), lambda v: None),
+        transcript=[],
+        set_bot_speaking=lambda v: None,
+    )
+    messages = [ChatMessage(role="system", content="be terse")]
+    reply, escalated = await runner._generate_turn_reply(messages, fake_llm, tts=None)
+
+    assert reply == ""
+    assert escalated is False
+    # One initial call + MAX_TOOL_ROUNDS re-generations, never more.
+    assert fake_llm.calls == MAX_TOOL_ROUNDS + 1
+
+
+def test_trim_history_keeps_system_and_last_n_non_system():
+    system = ChatMessage(role="system", content="be terse")
+    rest = [ChatMessage(role="user", content=f"msg {i}") for i in range(50)]
+    trimmed = _trim_history([system] + rest, max_turns=10)
+    assert trimmed[0] is system
+    assert len(trimmed) == 11
+    assert trimmed[1:] == rest[-10:]
+
+
+def test_trim_history_never_splits_a_tool_call_pair():
+    system = ChatMessage(role="system", content="be terse")
+    pair = [
+        ChatMessage(role="assistant", content="", tool_calls=[ToolCall(name="x", call_id="c1")]),
+        ChatMessage(role="tool", content="{}", tool_call_id="c1", name="x"),
+    ]
+    # 8 filler messages before the pair land the naive cut right on the
+    # `tool` half of the pair when max_turns=1 - the trim must walk back
+    # past it rather than send an orphaned tool message.
+    filler = [ChatMessage(role="user", content=f"msg {i}") for i in range(8)]
+    trimmed = _trim_history([system] + filler + pair, max_turns=1)
+    assert not any(m.role == "tool" and trimmed.index(m) == 1 for m in trimmed if m.role == "tool")
+    # Either both halves of the pair survive, or neither does.
+    has_assistant_tool_calls = any(m.role == "assistant" and m.tool_calls for m in trimmed)
+    has_tool = any(m.role == "tool" for m in trimmed)
+    assert has_assistant_tool_calls == has_tool
 
 
 @pytest.mark.asyncio

@@ -388,6 +388,14 @@ class AudioSocketServer:
             # leg has since resumed it (migrated_to set), in which case that
             # leg owns reporting instead - never both, never neither.
             if config is not None and call_uuid is not None:
+                # None for a runner that never ran a workflow (SIMPLE-mode
+                # calls, or a call that hung up before `runner` was even
+                # constructed) - _report_session only sets
+                # gatheredContext/nodePath on the outgoing report when these
+                # are non-empty, so a SIMPLE call's report is byte-identical
+                # to before these fields existed.
+                gathered_context = runner.gathered_context if runner is not None else None
+                node_path = runner.node_path if runner is not None else None
                 if is_resumed_leg and live_session is not None:
                     await self._report_session(
                         config,
@@ -395,9 +403,13 @@ class AudioSocketServer:
                         transcript,
                         outcome="handed_off",
                         handoff_extension_id=live_session.handoff_target_label,
+                        gathered_context=gathered_context,
+                        node_path=node_path,
                     )
                 elif live_session is None or live_session.migrated_to is None:
-                    await self._report_session(config, call_uuid, transcript)
+                    await self._report_session(
+                        config, call_uuid, transcript, gathered_context=gathered_context, node_path=node_path
+                    )
                 # else: this original leg was resumed by another leg, which
                 # owns reporting - skip.
 
@@ -420,6 +432,8 @@ class AudioSocketServer:
         *,
         outcome: str = "completed",
         handoff_extension_id: Optional[str] = None,
+        gathered_context: Optional[dict] = None,
+        node_path: Optional[list] = None,
     ) -> None:
         report = SessionReport(
             agent_id=config.agent_id,
@@ -427,6 +441,13 @@ class AudioSocketServer:
             transcript=transcript,
             outcome=outcome,
             handoff_extension_id=handoff_extension_id,
+            # Empty dict/list (a SIMPLE-mode call, or a workflow call that
+            # never got past Start Call) collapses to None here rather than
+            # sending an empty-but-present field - matches every other
+            # optional field on SessionReport, which omits itself from the
+            # JSON payload when None (see SessionReport.to_payload()).
+            gathered_context=gathered_context or None,
+            node_path=node_path or None,
         )
         try:
             await self._session_reporter.report(report)

@@ -46,6 +46,8 @@ export async function recordAiSession(input: AiSessionReportRequest): Promise<vo
     costTokensOutput: input.costTokensOutput ?? null,
     outcome: input.outcome,
     handoffExtensionId: input.handoffExtensionId ?? null,
+    gatheredContext: (input.gatheredContext ?? null) as unknown as Prisma.InputJsonValue | null,
+    nodePath: input.nodePath ?? [],
   } as unknown as Prisma.AiCallSessionUncheckedCreateInput;
 
   await db.aiCallSession.create({ data: sessionData });

@@ -39,6 +39,12 @@ class SessionReport:
     cost_tokens_input: Optional[int] = None
     cost_tokens_output: Optional[int] = None
     handoff_extension_id: Optional[str] = None
+    # Workflow-builder debuggability (2026-09-15) - None for a SIMPLE-mode
+    # call, exactly as before these fields existed. See AiCallSession's
+    # schema comment for why this is the only record of which nodes a
+    # workflow call visited.
+    gathered_context: Optional[dict] = None
+    node_path: Optional[list[str]] = None
 
     def to_payload(self) -> dict:
         payload = {
@@ -47,6 +53,10 @@ class SessionReport:
             "transcript": [turn.to_dict() for turn in self.transcript],
             "outcome": self.outcome,
         }
+        if self.gathered_context is not None:
+            payload["gatheredContext"] = self.gathered_context
+        if self.node_path is not None:
+            payload["nodePath"] = self.node_path
         if self.summary is not None:
             payload["summary"] = self.summary
         if self.latency_ms_p50 is not None:

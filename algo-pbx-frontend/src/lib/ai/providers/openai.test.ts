@@ -24,10 +24,34 @@ describe("openaiAdapter.listModels", () => {
       "https://api.openai.com/v1/models",
       expect.objectContaining({ headers: { Authorization: "Bearer sk-test" } })
     );
-    expect(models).toEqual([
+    expect(models.filter((m) => m.capabilities.includes("llm") || m.capabilities.includes("realtime"))).toEqual([
       { id: "gpt-4o", capabilities: ["llm"] },
       { id: "gpt-4o-realtime-preview", capabilities: ["realtime"] },
     ]);
+    // Fixed 2026-09-15 (workflow-builder plan, blocker #7): the static
+    // voice catalog is always appended, distinctly capability-tagged.
+    expect(models.filter((m) => m.capabilities.includes("voice")).map((m) => m.id)).toEqual([
+      "alloy",
+      "echo",
+      "fable",
+      "onyx",
+      "nova",
+      "shimmer",
+    ]);
+  });
+
+  it("classifies tts-*/whisper models distinctly and drops embedding models entirely", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        data: [{ id: "tts-1" }, { id: "whisper-1" }, { id: "text-embedding-3-small" }],
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const models = await openaiAdapter.listModels({ apiKey: "sk-test" });
+    expect(models.find((m) => m.id === "tts-1")?.capabilities).toEqual(["tts"]);
+    expect(models.find((m) => m.id === "whisper-1")?.capabilities).toEqual(["stt"]);
+    expect(models.find((m) => m.id === "text-embedding-3-small")).toBeUndefined();
   });
 
   it("throws a clear error when the apiKey is missing", async () => {

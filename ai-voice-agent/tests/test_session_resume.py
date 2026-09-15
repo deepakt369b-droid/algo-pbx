@@ -77,6 +77,8 @@ class FakePipelineRunner:
         self.kwargs = kwargs
         self.escalation_request = None
         self.escalation_outcome = None
+        self.gathered_context: dict = {}
+        self.node_path: list = []
         FakePipelineRunner.instances.append(self)
 
     def start(self) -> None:

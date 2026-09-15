@@ -56,6 +56,30 @@ def test_parse_agent_config_missing_required_field_raises_keyerror():
         parse_agent_config(payload)
 
 
+def test_parse_leg_extra_round_trip():
+    """Regression guard for the bug where ProviderLegConfig.extra was always
+    empty in production: config_client.LegConfig had no `extra` field at
+    all, so runner._leg_config() had nothing to forward. temperature/
+    maxTokens/language/speed on a leg must all land in LegConfig.extra under
+    their snake_case provider-facing names."""
+    payload = dict(FIXTURE_PAYLOAD)
+    payload["llm"] = dict(payload["llm"], temperature=0.4, maxTokens=200)
+    payload["stt"] = dict(payload["stt"], language="hi-IN")
+    payload["tts"] = dict(payload["tts"], speed=1.2)
+
+    config = parse_agent_config(payload)
+    assert config.llm.extra == {"temperature": 0.4, "max_tokens": 200}
+    assert config.stt.extra == {"language": "hi-IN"}
+    assert config.tts.extra == {"speed": 1.2}
+
+
+def test_parse_leg_extra_empty_when_no_optional_fields_present():
+    config = parse_agent_config(FIXTURE_PAYLOAD)
+    assert config.stt.extra == {}
+    assert config.llm.extra == {}
+    assert config.tts.extra == {}
+
+
 @pytest.mark.asyncio
 async def test_config_client_sends_shared_secret_header_and_params(monkeypatch):
     captured = {}

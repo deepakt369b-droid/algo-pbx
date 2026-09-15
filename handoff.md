@@ -1,4 +1,33 @@
-# Handoff — Owner plan upgrade/downgrade + caller-routing rules — **BOTH BUILT AND GATED GREEN, NOT LIVE-TESTED, NOT COMMITTED** (2026-09-14, same day, follow-up to the AI escalation work below)
+# Handoff — Conversation-workflow builder + real model configuration — **BUILT, GATED GREEN, NOT LIVE-TESTED, NOT COMMITTED** (2026-09-15, follow-up to §34/§35)
+
+Full detail in `LLM.md` §36 — read that, not this summary, before continuing. Plan at `~/.claude/plans/currently-we-have-forked-mutable-giraffe.md`.
+
+**What this closes:** the owner asked yesterday's session to fork/build against the AI voice agent, expecting a Dograh-style visual conversation graph — what actually got built (§34) was flat form fields, one `systemPrompt`, no graph. Traced to yesterday's own plan explicitly dropping the upstream UI in favor of merging config into flat admin pages. This session built the real thing: a visual node-graph workflow builder (Start Call/Agent/End Call/Transfer/Global/HTTP Tool nodes, LLM-decided branching via tool-calling, variable extraction), plus the model-configuration surface (temperature, max tokens, voice picker, speed, interruption controls, a real ~30-language catalog) that was also missing.
+
+**Sidecar prerequisite bugs fixed first, not new scope:** tool-calling results were never fed back to the LLM (a protocol gap that would have made node-graph transitions impossible); `ProviderLegConfig.extra` was always empty in production regardless of what the API sent; Gemini Live silently dropped the system prompt entirely. All three fixed and tested (`ai-voice-agent`: 78→97 tests) before any workflow code was written on top of them.
+
+**Built:** schema (`AiWorkflow`/`AiWorkflowVersion`/`AiWorkflowSecret`, `AiAgent.promptMode` + 9 model-config columns, all additive — the live production tenant is untouched); a shared zod validator (`workflow-schema.ts`, 28 tests) used by both the API and the canvas; a pure Python graph interpreter (`pipeline/workflow.py`, 18 tests) wired into the runner for **both CASCADE and REALTIME** (OpenAI only — Gemini Live can't update instructions mid-session, blocked at publish); the workflow draft/publish/revert API (21 tests); an HTTP-tool node executed server-side (never in the sidecar, which runs `network_mode: host`) with the same SSRF guard §34 built (11 tests); a real voice/speed picker (fixed a live bug along the way — ElevenLabs/Cartesia were mislabeling ~100 voice IDs as "models", polluting that dropdown); and the actual visual canvas (`@xyflow/react`, new dependency) — drag nodes, connect edges with an LLM-facing condition, a properties panel, a validation panel, publish/revert.
+
+**Two real bugs caught during self-review, not by the user, fixed before calling this done:** (1) the first pass only wired workflow-graph execution into CASCADE mode — a published REALTIME+OpenAI workflow would have silently run the old flat-prompt loop instead of the graph. Caught before declaring done, not by a failing test; `_run_workflow_realtime()` was added as a direct result. (2) that new method also had a `node_path` bug (bookkeeping, not behavior) caught immediately by its own new tests failing on first run.
+
+**Also fixed en route, independent of this feature:** `PATCH /api/admin/ai/agents/[id]` had no plan-gate at all (only POST did) — a tenant that lost the `aiAgents` feature could still edit an existing agent's config indefinitely.
+
+**Gates, all green:** frontend `npm run typecheck`/`test`/`lint`/`build` all clean — **1150/1150** tests (76 new since §35's 1074), production build includes the new `/admin/ai-agents/[id]/workflow` route and both new API routes. Sidecar `python -m pytest`: **127/127** (30 new on top of the prerequisite-fix round's 97).
+
+**NOT done, stated plainly:** nothing here has touched a live Asterisk instance or a real LLM — every protocol fix is written from public docs, same standing caveat every provider module in this repo already carried. Whether a real LLM reliably calls the graph's `goto_*`/`record_info` tools is untested by construction (no fake-LLM test can answer it). Turn latency under the new tool-feedback round-trip is unmeasured. The migration is hand-written, syntax-reviewed, never diff-verified against a real Postgres (standing constraint, no reachable DB in this environment). Realtime workflows lose per-node model overrides by design (one persistent vendor session per call). **Nothing committed, nothing deployed, nothing pushed** — left in the working tree deliberately.
+
+## ▶ "claude continue" — next steps for this feature
+
+1. **Review the full working-tree diff** against LLM.md §36's file list, then commit.
+2. **Place one real test call** through a published CASCADE workflow (confirm `goto_*` tool calls actually fire and move the node) and one through a published OpenAI-realtime workflow (confirm `session.update` actually retargets the live session) — this is the single biggest unverified assumption in the whole feature.
+3. Only after that: decide on deploy, using the same VPS method §35 used (`git reset --hard origin/main` + `docker compose build --no-cache web` + `up -d web`, migration applies automatically via the container's own `prisma migrate deploy`).
+4. Everything else queued from prior sessions (§34's ConfBridge live-test, per-Dinstar-port routing, Gate 1b, wildcard DNS, CA signing flow v2) is **unchanged, carried over** — none of it was touched this session.
+
+---
+
+# Handoff — Owner plan upgrade/downgrade + caller-routing rules — **BUILT, GATED GREEN, COMMITTED, PUSHED, AND DEPLOYED to production** (2026-09-14 build, deploy confirmed 2026-09-15 — this file and LLM.md §35 were stale about commit/deploy state until this correction)
+
+**Correction, 2026-09-15**: this entry originally said "NOT LIVE-TESTED, NOT COMMITTED." Checked the actual repo/VPS state instead of trusting that stale text: `git log` shows this work committed (`a758a5c`, `e944445`, docs in `5010c74`) and pushed to `origin/main`; the production VPS (`187.53.128.252`) was already running it — `algo-web`'s image was built and the container restarted 2026-09-14T14:48:49Z, all four new migrations show `finished_at`, `/admin/caller-routing` + its API routes are present in the deployed build, and `/api/health`/`/login`/`/platform/login`/apex all return 200 with zero errors in the container's logs. **What's still genuinely open, unchanged**: neither feature has been *live-tested* — no real call has exercised a BLOCK/PASS/AI caller-routing outcome, and no real plan downgrade has been tried against a tenant with extensions in use. The business-hours gap on the `PASS` action (below) is also still open.
 
 Two features, both complete. Full detail in `LLM.md` §35 (§35.1 plan upgrade/downgrade, §35.2 caller routing) — read that, not this summary, before continuing.
 
